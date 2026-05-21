@@ -8,9 +8,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const minimaxKey =
-    process.env.MINIMAX_KEY ||
-    'sk-api-oIudmyqqnrwOXFVni-NLgp0QcQlOVTt6n0nih0tKXnFab7wwEWka5GoYFxjrW3uQfsS_NXCWFKzriyN-nW6e7nLSJItWyU3gwhuv4xLjqtAvxz2iRcIQGM8';
+  const minimaxKey = process.env.MINIMAX_KEY;
 
   let bodyObj;
   try {
