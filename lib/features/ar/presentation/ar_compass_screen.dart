@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:sensors_plus/sensors_plus.dart';
+import 'package:camera/camera.dart';
 import 'dart:math' as math;
 import 'dart:async';
 
@@ -10,10 +11,8 @@ import 'package:bush_track/features/ar/services/ar_compass_service.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
 import 'package:bush_track/core/models/waypoint.dart';
 import 'package:bush_track/theme/app_colors.dart';
-
-// Only import camera on non-web builds
-// camera package has partial web support but is unstable — we skip it on web
-export 'ar_compass_screen.dart';
+import 'package:bush_track/features/map/services/photo_geotagging_service.dart';
+import 'package:bush_track/features/map/presentation/photo_pin_screen.dart';
 
 class ARCompassScreen extends ConsumerStatefulWidget {
   const ARCompassScreen({super.key});
@@ -24,83 +23,219 @@ class ARCompassScreen extends ConsumerStatefulWidget {
 
 class _ARCompassScreenState extends ConsumerState<ARCompassScreen>
     with TickerProviderStateMixin {
-  double _compassHeading = 0.0;
-  bool _cameraAvailable = false;
-  bool _sensorActive = false;
-  Object? _cameraController; // dynamic ref to avoid import on web
+  // Camera
+  CameraController? _cameraController;
+  bool _cameraReady = false;
+  bool _cameraError = false;
 
-  // Smooth heading with animation
-  late AnimationController _headingAnimController;
+  // Sensors
   double _smoothHeading = 0.0;
   double _prevHeading = 0.0;
-
+  bool _sensorActive = false;
   final List<StreamSubscription> _subs = [];
+
+  // Photo service
+  final PhotoGeotaggingService _photoService = PhotoGeotaggingService();
+  bool _capturing = false;
 
   @override
   void initState() {
     super.initState();
-    _headingAnimController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 150),
-    );
     _startSensors();
-    if (!kIsWeb) _initCamera();
+    _initCamera();
+    _photoService.initialize();
   }
 
+  // ── Sensors ────────────────────────────────────────────────────────────────
+
   void _startSensors() {
-    // Magnetometer → compass heading
-    final magSub = magnetometerEvents.listen((e) {
+    final sub = magnetometerEvents.listen((e) {
       if (!mounted) return;
       double h = math.atan2(e.y, e.x) * 180 / math.pi;
       if (h < 0) h += 360;
+      double diff = h - _prevHeading;
+      if (diff > 180) diff -= 360;
+      if (diff < -180) diff += 360;
       setState(() {
-        _compassHeading = h;
-        _sensorActive = true;
-        // Smooth wrap-around
-        double diff = h - _prevHeading;
-        if (diff > 180) diff -= 360;
-        if (diff < -180) diff += 360;
-        _smoothHeading = _prevHeading + diff * 0.3;
+        _smoothHeading = _prevHeading + diff * 0.25;
         _prevHeading = _smoothHeading;
+        _sensorActive = true;
       });
     });
-    _subs.add(magSub);
+    _subs.add(sub);
   }
 
+  // ── Camera ─────────────────────────────────────────────────────────────────
+
   Future<void> _initCamera() async {
-    // Dynamically use camera — skip entirely on web
+    if (kIsWeb) {
+      // Web camera via CameraController is unreliable — skip, show dark BG
+      setState(() => _cameraError = false);
+      return;
+    }
     try {
-      // We don't import camera at the top so web won't fail
-      // On native, camera initialises via image_picker flow — for AR preview
-      // we rely on the camera plugin directly
-      setState(() => _cameraAvailable = false);
-    } catch (_) {
-      setState(() => _cameraAvailable = false);
+      final cameras = await availableCameras();
+      if (cameras.isEmpty) {
+        setState(() => _cameraError = true);
+        return;
+      }
+      // Prefer rear camera
+      final camera = cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.back,
+        orElse: () => cameras.first,
+      );
+      final ctrl = CameraController(
+        camera,
+        ResolutionPreset.high,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
+      await ctrl.initialize();
+      if (!mounted) {
+        ctrl.dispose();
+        return;
+      }
+      setState(() {
+        _cameraController = ctrl;
+        _cameraReady = true;
+      });
+    } catch (e) {
+      debugPrint('AR camera init error: $e');
+      if (mounted) setState(() => _cameraError = true);
+    }
+  }
+
+  Future<void> _switchCamera() async {
+    if (kIsWeb || _cameraController == null) return;
+    try {
+      final cameras = await availableCameras();
+      if (cameras.length < 2) return;
+      final current = _cameraController!.description;
+      final next = cameras.firstWhere(
+        (c) => c.lensDirection != current.lensDirection,
+        orElse: () => cameras.first,
+      );
+      await _cameraController!.dispose();
+      setState(() {
+        _cameraReady = false;
+        _cameraController = null;
+      });
+      final ctrl = CameraController(next, ResolutionPreset.high,
+          enableAudio: false,
+          imageFormatGroup: ImageFormatGroup.jpeg);
+      await ctrl.initialize();
+      if (!mounted) {
+        ctrl.dispose();
+        return;
+      }
+      setState(() {
+        _cameraController = ctrl;
+        _cameraReady = true;
+      });
+    } catch (e) {
+      debugPrint('AR switch camera error: $e');
+    }
+  }
+
+  // ── Photo capture & pin drop ───────────────────────────────────────────────
+
+  Future<void> _captureAndDropPin() async {
+    final locationState = ref.read(locationProvider);
+    final lat = locationState.stats.currentLat;
+    final lon = locationState.stats.currentLon;
+
+    if (lat == null || lon == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No GPS fix yet — move outside and wait a moment'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _capturing = true);
+
+    try {
+      GeotaggedPhoto? geoPhoto;
+      if (_cameraReady && _cameraController != null && !kIsWeb) {
+        // Take photo directly from AR camera preview
+        final xfile = await _cameraController!.takePicture();
+        geoPhoto = await _photoService.processFile(
+          xfile.path,
+          location: LatLng(lat, lon),
+          altitude: locationState.stats.currentAltitude,
+        );
+      } else {
+        // Web / no camera: launch system camera via image_picker
+        geoPhoto = await _photoService.takePhoto(
+          location: LatLng(lat, lon),
+          altitude: locationState.stats.currentAltitude,
+        );
+      }
+
+      if (geoPhoto == null) {
+        setState(() => _capturing = false);
+        return;
+      }
+
+      // Navigate to pin detail screen — AR screen stays in stack
+      if (mounted) {
+        final saved = await Navigator.push<bool>(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PhotoPinScreen(
+              photo: geoPhoto!,
+              location: LatLng(lat, lon),
+            ),
+          ),
+        );
+        if (saved == true && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Pin dropped!'),
+              backgroundColor: Color(0xFF1B5E20),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('AR capture error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('Capture failed: $e'),
+              backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _capturing = false);
     }
   }
 
   @override
   void dispose() {
-    for (final s in _subs) {
-      s.cancel();
-    }
-    _headingAnimController.dispose();
+    for (final s in _subs) s.cancel();
+    _cameraController?.dispose();
     super.dispose();
   }
+
+  // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     final locationState = ref.watch(locationProvider);
-    final currentLat = locationState.stats.currentLat;
-    final currentLon = locationState.stats.currentLon;
+    final lat = locationState.stats.currentLat;
+    final lon = locationState.stats.currentLon;
 
     final allWaypoints = locationState.waypoints
         .where((w) => w.latitude != null && w.longitude != null)
         .toList();
 
-    // Sort by distance, keep nearest 8
-    if (currentLat != null && currentLon != null) {
-      final here = LatLng(currentLat, currentLon);
+    // Sort nearest 8
+    if (lat != null && lon != null) {
+      final here = LatLng(lat, lon);
       allWaypoints.sort((a, b) {
         final da = ARCompassService.staticDistance(
             here, LatLng(a.latitude!, a.longitude!));
@@ -116,22 +251,23 @@ class _ARCompassScreenState extends ConsumerState<ARCompassScreen>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Background: camera preview on native, dark gradient on web
-          _cameraAvailable
-              ? _buildCameraPreview()
-              : _buildDarkBackground(),
+          // ── Camera / background ─────────────────────────────────────────
+          if (_cameraReady && _cameraController != null)
+            CameraPreview(_cameraController!)
+          else
+            _buildBackground(),
 
-          // AR HUD overlay
-          if (currentLat != null && currentLon != null)
+          // ── AR waypoint HUD ─────────────────────────────────────────────
+          if (lat != null && lon != null)
             _ARHudOverlay(
               waypoints: nearby,
-              currentLat: currentLat,
-              currentLon: currentLon,
+              currentLat: lat,
+              currentLon: lon,
               heading: _smoothHeading,
-              onPinTap: (wp) => _showPinDetails(wp),
+              onPinTap: _showPinDetails,
             ),
 
-          // Top bar
+          // ── Top gradient + controls ──────────────────────────────────────
           Positioned(
             top: 0,
             left: 0,
@@ -141,7 +277,7 @@ class _ARCompassScreenState extends ConsumerState<ARCompassScreen>
                 top: MediaQuery.of(context).padding.top + 8,
                 left: 16,
                 right: 16,
-                bottom: 12,
+                bottom: 14,
               ),
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
@@ -152,66 +288,103 @@ class _ARCompassScreenState extends ConsumerState<ARCompassScreen>
               ),
               child: Row(
                 children: [
-                  GestureDetector(
-                    onTap: () => Navigator.pop(context),
-                    child: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                            color: Colors.white24, width: 1),
-                      ),
-                      child: const Icon(Icons.close,
-                          color: Colors.white, size: 20),
-                    ),
-                  ),
+                  _topButton(Icons.close, () => Navigator.pop(context)),
                   const SizedBox(width: 12),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       const Text(
-                        'AR WAYPOINTS',
+                        'AR VIEW',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 16,
                           fontWeight: FontWeight.w900,
-                          letterSpacing: 1.5,
+                          letterSpacing: 2,
                         ),
                       ),
                       Text(
                         _sensorActive
-                            ? '${_smoothHeading.toStringAsFixed(0)}° · ${nearby.length} pins visible'
-                            : 'Calibrating sensors…',
+                            ? '${_smoothHeading.toStringAsFixed(0)}°  ·  ${nearby.length} pins'
+                            : 'Calibrating…',
                         style: const TextStyle(
-                            color: Colors.white54, fontSize: 12),
+                            color: Colors.white54, fontSize: 11),
                       ),
                     ],
                   ),
                   const Spacer(),
-                  if (!_sensorActive)
-                    const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: AppColors.primaryOrange),
-                    ),
+                  // Switch camera (native only)
+                  if (!kIsWeb && !_cameraError)
+                    _topButton(Icons.flip_camera_ios, _switchCamera),
                 ],
               ),
             ),
           ),
 
-          // Bottom horizon line + compass strip
+          // ── Bottom controls ──────────────────────────────────────────────
           Positioned(
             bottom: 0,
             left: 0,
             right: 0,
-            child: _CompassStrip(heading: _smoothHeading),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Compass strip
+                _CompassStrip(heading: _smoothHeading),
+                // Shutter row
+                Container(
+                  height: 110,
+                  padding: const EdgeInsets.only(bottom: 24),
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.bottomCenter,
+                      end: Alignment.topCenter,
+                      colors: [Colors.black87, Colors.transparent],
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      GestureDetector(
+                        onTap: _capturing ? null : _captureAndDropPin,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          width: _capturing ? 64 : 72,
+                          height: _capturing ? 64 : 72,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white.withValues(alpha: 0.9),
+                            border: Border.all(
+                                color: AppColors.primaryOrange, width: 3),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.primaryOrange
+                                    .withValues(alpha: 0.4),
+                                blurRadius: 16,
+                              ),
+                            ],
+                          ),
+                          child: _capturing
+                              ? const Padding(
+                                  padding: EdgeInsets.all(18),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 3,
+                                    color: AppColors.primaryOrange,
+                                  ),
+                                )
+                              : const Icon(Icons.camera_alt,
+                                  color: Colors.black87, size: 32),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
 
-          // No GPS overlay
-          if (currentLat == null)
+          // ── No GPS message ───────────────────────────────────────────────
+          if (lat == null)
             Center(
               child: Container(
                 margin: const EdgeInsets.all(32),
@@ -219,8 +392,8 @@ class _ARCompassScreenState extends ConsumerState<ARCompassScreen>
                 decoration: BoxDecoration(
                   color: Colors.black87,
                   borderRadius: BorderRadius.circular(20),
-                  border:
-                      Border.all(color: AppColors.primaryOrange, width: 1),
+                  border: Border.all(
+                      color: AppColors.primaryOrange, width: 1),
                 ),
                 child: const Column(
                   mainAxisSize: MainAxisSize.min,
@@ -228,55 +401,15 @@ class _ARCompassScreenState extends ConsumerState<ARCompassScreen>
                     Icon(Icons.gps_off,
                         color: AppColors.primaryOrange, size: 48),
                     SizedBox(height: 16),
-                    Text(
-                      'Waiting for GPS fix',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold),
-                    ),
+                    Text('Waiting for GPS',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold)),
                     SizedBox(height: 8),
-                    Text(
-                      'Step outside and wait a moment.',
-                      style:
-                          TextStyle(color: Colors.white54, fontSize: 14),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-          // No waypoints hint
-          if (currentLat != null && nearby.isEmpty)
-            Center(
-              child: Container(
-                margin: const EdgeInsets.all(32),
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: Colors.black87,
-                  borderRadius: BorderRadius.circular(20),
-                  border:
-                      Border.all(color: Colors.white24, width: 1),
-                ),
-                child: const Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.location_off,
-                        color: Colors.white38, size: 48),
-                    SizedBox(height: 16),
-                    Text(
-                      'No waypoints saved',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold),
-                    ),
-                    SizedBox(height: 8),
-                    Text(
-                      'Drop a pin on the map first.',
-                      style:
-                          TextStyle(color: Colors.white54, fontSize: 14),
-                    ),
+                    Text('Step outside — GPS needed for AR pins',
+                        style:
+                            TextStyle(color: Colors.white54, fontSize: 13)),
                   ],
                 ),
               ),
@@ -286,24 +419,31 @@ class _ARCompassScreenState extends ConsumerState<ARCompassScreen>
     );
   }
 
-  Widget _buildCameraPreview() {
-    // Native camera preview — currently stubbed, real impl attaches CameraController
-    return Container(color: Colors.black);
-  }
-
-  Widget _buildDarkBackground() {
+  Widget _buildBackground() {
     return Container(
       decoration: const BoxDecoration(
         gradient: RadialGradient(
           center: Alignment.center,
           radius: 1.2,
-          colors: [
-            Color(0xFF0A1628),
-            Color(0xFF050A14),
-          ],
+          colors: [Color(0xFF0A1628), Color(0xFF050A14)],
         ),
       ),
       child: CustomPaint(painter: _StarfieldPainter()),
+    );
+  }
+
+  Widget _topButton(IconData icon, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white24),
+        ),
+        child: Icon(icon, color: Colors.white, size: 20),
+      ),
     );
   }
 
@@ -311,12 +451,12 @@ class _ARCompassScreenState extends ConsumerState<ARCompassScreen>
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => _PinDetailSheet(waypoint: wp),
+      builder: (_) => _PinDetailSheet(waypoint: wp),
     );
   }
 }
 
-// ─── AR HUD overlay ────────────────────────────────────────────────────────
+// ─── AR HUD overlay ─────────────────────────────────────────────────────────
 
 class _ARHudOverlay extends StatelessWidget {
   final List<Waypoint> waypoints;
@@ -337,10 +477,23 @@ class _ARHudOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
     final here = LatLng(currentLat, currentLon);
-    const fovDeg = 70.0; // horizontal FOV in degrees
+    const fovDeg = 70.0;
     final halfW = size.width / 2;
 
     final widgets = <Widget>[];
+
+    // Horizon line
+    widgets.add(
+      Positioned(
+        top: size.height * 0.48,
+        left: 0,
+        right: 0,
+        child: Container(
+          height: 1,
+          color: Colors.white.withValues(alpha: 0.12),
+        ),
+      ),
+    );
 
     for (int i = 0; i < waypoints.length; i++) {
       final wp = waypoints[i];
@@ -348,90 +501,116 @@ class _ARHudOverlay extends StatelessWidget {
       final bearing = ARCompassService.staticBearing(here, target);
       final distance = ARCompassService.staticDistance(here, target);
 
-      // Relative bearing from camera centre
       double rel = bearing - heading;
       if (rel > 180) rel -= 360;
       if (rel < -180) rel += 360;
 
-      // Only render pins within FOV + 10° margin
-      if (rel.abs() > fovDeg / 2 + 10) continue;
+      // Off-screen arrows
+      if (rel.abs() > fovDeg / 2 + 5) {
+        final arrowX = rel < 0 ? 16.0 : size.width - 44.0;
+        widgets.add(
+          Positioned(
+            left: arrowX,
+            top: size.height * 0.42,
+            child: _OffscreenArrow(
+              direction: rel < 0 ? -1 : 1,
+              label: distance >= 1000
+                  ? '${(distance / 1000).toStringAsFixed(1)}km'
+                  : '${distance.toStringAsFixed(0)}m',
+            ),
+          ),
+        );
+        continue;
+      }
 
-      // Horizontal pixel position
       final px = halfW + (rel / (fovDeg / 2)) * halfW;
-
-      // Vertical: stack closest pins higher on screen
-      final baseY = size.height * 0.30 + i * 10.0;
+      // Stagger vertically so overlapping pins don't stack
+      final baseY = size.height * 0.22 + (i % 3) * 20.0;
 
       widgets.add(
         Positioned(
-          left: px - 70, // bubble width is ~140
+          left: (px - 70).clamp(4.0, size.width - 144.0),
           top: baseY,
           child: GestureDetector(
             onTap: () => onPinTap(wp),
-            child: _ARPinBubble(
-              waypoint: wp,
-              distance: distance,
-              isInFov: rel.abs() <= fovDeg / 2,
-            ),
+            child: _ARPinBubble(waypoint: wp, distance: distance),
           ),
         ),
       );
 
-      // Direction arrow when pin is off-screen
-      if (rel.abs() > fovDeg / 2) {
-        final arrowX = rel < 0 ? 20.0 : size.width - 30.0;
-        widgets.add(
-          Positioned(
-            left: arrowX,
-            top: size.height * 0.45,
-            child: Icon(
-              rel < 0 ? Icons.chevron_left : Icons.chevron_right,
-              color: AppColors.primaryOrange.withValues(alpha: 0.8),
-              size: 28,
-            ),
+      // Vertical drop line from bubble to horizon
+      widgets.add(
+        Positioned(
+          left: px - 0.5,
+          top: baseY + 90,
+          child: Container(
+            width: 1,
+            height: (size.height * 0.48 - baseY - 90).clamp(0.0, 200.0),
+            color: _pinColor(wp).withValues(alpha: 0.3),
           ),
-        );
-      }
-    }
-
-    // Horizon line
-    widgets.add(
-      Positioned(
-        top: (size.height * 0.50).toDouble(),
-        left: 0,
-        right: 0,
-        child: Container(
-          height: 1,
-          color: Colors.white.withValues(alpha: 0.15),
         ),
-      ),
-    );
+      );
+    }
 
     return Stack(children: widgets);
   }
+
+  Color _pinColor(Waypoint wp) {
+    final c = wp.color;
+    if (c != null && c.isNotEmpty) {
+      try {
+        return Color(int.parse(c.replaceFirst('#', '0xFF')));
+      } catch (_) {}
+    }
+    return AppColors.primaryOrange;
+  }
 }
 
-// ─── AR Pin Bubble ──────────────────────────────────────────────────────────
+// ─── Off-screen arrow indicator ─────────────────────────────────────────────
+
+class _OffscreenArrow extends StatelessWidget {
+  final int direction; // -1 = left, 1 = right
+  final String label;
+
+  const _OffscreenArrow({required this.direction, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          direction < 0 ? Icons.chevron_left : Icons.chevron_right,
+          color: AppColors.primaryOrange.withValues(alpha: 0.85),
+          size: 28,
+        ),
+        Text(
+          label,
+          style: const TextStyle(
+            color: AppColors.primaryOrange,
+            fontSize: 9,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─── AR Pin Bubble ───────────────────────────────────────────────────────────
 
 class _ARPinBubble extends StatelessWidget {
   final Waypoint waypoint;
   final double distance;
-  final bool isInFov;
 
-  const _ARPinBubble({
-    required this.waypoint,
-    required this.distance,
-    required this.isInFov,
-  });
+  const _ARPinBubble({required this.waypoint, required this.distance});
 
-  String get _distanceLabel {
-    if (distance >= 1000) {
-      return '${(distance / 1000).toStringAsFixed(1)} km';
-    }
+  String get _dist {
+    if (distance >= 1000) return '${(distance / 1000).toStringAsFixed(1)} km';
     return '${distance.toStringAsFixed(0)} m';
   }
 
-  Color get _pinColor {
+  Color get _color {
     final c = waypoint.color;
     if (c != null && c.isNotEmpty) {
       try {
@@ -443,110 +622,92 @@ class _ARPinBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Opacity(
-      opacity: isInFov ? 1.0 : 0.5,
-      child: Container(
-        width: 140,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.78),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: _pinColor.withValues(alpha: 0.8), width: 1.5),
-          boxShadow: [
-            BoxShadow(
-              color: _pinColor.withValues(alpha: 0.3),
+    return Container(
+      width: 140,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _color.withValues(alpha: 0.85), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+              color: _color.withValues(alpha: 0.25),
               blurRadius: 12,
-              spreadRadius: 1,
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Photo thumbnail or icon
-            if (waypoint.thumbnailPath != null &&
-                waypoint.thumbnailPath!.isNotEmpty)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.network(
-                  waypoint.thumbnailPath!,
-                  width: double.infinity,
-                  height: 60,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => _iconFallback(),
-                ),
-              )
-            else
-              _iconFallback(),
-            const SizedBox(height: 6),
-            // Name
-            Text(
-              waypoint.label ?? 'Pin',
-              style: const TextStyle(
+              spreadRadius: 1),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Thumbnail or icon row
+          if (waypoint.thumbnailPath != null &&
+              waypoint.thumbnailPath!.isNotEmpty)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.network(
+                waypoint.thumbnailPath!,
+                width: double.infinity,
+                height: 56,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _iconBox(),
+              ),
+            )
+          else
+            _iconBox(),
+          const SizedBox(height: 5),
+          Text(
+            waypoint.label ?? 'Pin',
+            style: const TextStyle(
                 color: Colors.white,
                 fontSize: 12,
-                fontWeight: FontWeight.bold,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 2),
-            // Distance badge
-            Row(
-              children: [
-                Icon(Icons.navigation, color: _pinColor, size: 12),
-                const SizedBox(width: 3),
-                Text(
-                  _distanceLabel,
+                fontWeight: FontWeight.bold),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 2),
+          Row(
+            children: [
+              Icon(Icons.navigation, color: _color, size: 11),
+              const SizedBox(width: 3),
+              Text(_dist,
                   style: TextStyle(
-                    color: _pinColor,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
+                      color: _color,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ],
       ),
     );
   }
 
-  Widget _iconFallback() {
+  Widget _iconBox() {
     return Container(
       width: double.infinity,
-      height: 36,
+      height: 34,
       decoration: BoxDecoration(
-        color: _pinColor.withValues(alpha: 0.15),
+        color: _color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: Icon(Icons.location_on, color: _pinColor, size: 22),
+      child: Icon(Icons.location_on, color: _color, size: 20),
     );
   }
 }
 
-// ─── Bottom compass strip ───────────────────────────────────────────────────
+// ─── Compass strip ───────────────────────────────────────────────────────────
 
 class _CompassStrip extends StatelessWidget {
   final double heading;
-
   const _CompassStrip({required this.heading});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 80,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.bottomCenter,
-          end: Alignment.topCenter,
-          colors: [Colors.black87, Colors.transparent],
-        ),
-      ),
+    return SizedBox(
+      height: 48,
+      width: double.infinity,
       child: CustomPaint(
         painter: _CompassStripPainter(heading: heading),
-        size: Size(MediaQuery.of(context).size.width, 80),
       ),
     );
   }
@@ -554,75 +715,57 @@ class _CompassStrip extends StatelessWidget {
 
 class _CompassStripPainter extends CustomPainter {
   final double heading;
-
   _CompassStripPainter({required this.heading});
+
+  static const _labels = {
+    0.0: 'N', 45.0: 'NE', 90.0: 'E', 135.0: 'SE',
+    180.0: 'S', 225.0: 'SW', 270.0: 'W', 315.0: 'NW',
+  };
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.6)
-      ..strokeWidth = 1;
-
-    final textStyle = const TextStyle(
-      color: Colors.white,
-      fontSize: 10,
-      fontWeight: FontWeight.bold,
-    );
-
-    final tickLabels = {
-      0.0: 'N',
-      45.0: 'NE',
-      90.0: 'E',
-      135.0: 'SE',
-      180.0: 'S',
-      225.0: 'SW',
-      270.0: 'W',
-      315.0: 'NW',
-      360.0: 'N',
-    };
-
-    const degreesPerPx = 0.5; // 1 degree = 2px
+    final paint = Paint()..strokeWidth = 1;
+    const tickY = 14.0;
     final centreX = size.width / 2;
-    const stripY = 30.0;
+    const pxPerDeg = 2.0;
 
-    // Draw ticks every 5 degrees across ±180 degrees of view
-    for (double d = heading - 180; d <= heading + 180; d += 5) {
-      final normalised = ((d % 360) + 360) % 360;
-      final relDeg = d - heading;
-      final x = centreX + relDeg / degreesPerPx;
-
+    for (double d = heading - 100; d <= heading + 100; d += 5) {
+      final norm = ((d % 360) + 360) % 360;
+      final rel = d - heading;
+      final x = centreX + rel * pxPerDeg;
       if (x < 0 || x > size.width) continue;
 
-      final isMajor = normalised % 45 == 0;
-      final tickH = isMajor ? 18.0 : 8.0;
+      final isMajor = norm % 45 == 0;
       paint.color = isMajor
           ? Colors.white.withValues(alpha: 0.9)
-          : Colors.white.withValues(alpha: 0.35);
-
+          : Colors.white.withValues(alpha: 0.3);
       canvas.drawLine(
-        Offset(x, stripY),
-        Offset(x, stripY + tickH),
+        Offset(x, tickY),
+        Offset(x, tickY + (isMajor ? 16.0 : 7.0)),
         paint,
       );
 
-      if (isMajor && tickLabels.containsKey(normalised)) {
+      if (isMajor && _labels.containsKey(norm)) {
         final tp = TextPainter(
-          text: TextSpan(text: tickLabels[normalised], style: textStyle),
+          text: TextSpan(
+            text: _labels[norm],
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.bold),
+          ),
           textDirection: TextDirection.ltr,
         )..layout();
-        tp.paint(canvas, Offset(x - tp.width / 2, stripY + tickH + 2));
+        tp.paint(canvas, Offset(x - tp.width / 2, tickY + 18));
       }
     }
 
     // Centre pointer
-    final pointerPaint = Paint()
+    final ptr = Paint()
       ..color = AppColors.primaryOrange
       ..strokeWidth = 2;
     canvas.drawLine(
-      Offset(centreX, stripY - 6),
-      Offset(centreX, stripY + 22),
-      pointerPaint,
-    );
+        Offset(centreX, tickY - 4), Offset(centreX, tickY + 18), ptr);
   }
 
   @override
@@ -630,11 +773,10 @@ class _CompassStripPainter extends CustomPainter {
       old.heading != heading;
 }
 
-// ─── Pin detail bottom sheet ────────────────────────────────────────────────
+// ─── Pin detail bottom sheet ─────────────────────────────────────────────────
 
 class _PinDetailSheet extends StatelessWidget {
   final Waypoint waypoint;
-
   const _PinDetailSheet({required this.waypoint});
 
   @override
@@ -645,13 +787,13 @@ class _PinDetailSheet extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFF0E1624),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: AppColors.primaryOrange.withValues(alpha: 0.4)),
+        border: Border.all(
+            color: AppColors.primaryOrange.withValues(alpha: 0.4)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Handle
           Center(
             child: Container(
               width: 40,
@@ -663,124 +805,94 @@ class _PinDetailSheet extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          // Header
           Row(
             children: [
               const Icon(Icons.location_on,
-                  color: AppColors.primaryOrange, size: 28),
+                  color: AppColors.primaryOrange, size: 26),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   waypoint.label ?? 'Unnamed Pin',
                   style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold),
                 ),
               ),
               GestureDetector(
                 onTap: () => Navigator.pop(context),
-                child: const Icon(Icons.close, color: Colors.white54),
+                child:
+                    const Icon(Icons.close, color: Colors.white54),
               ),
             ],
           ),
           const SizedBox(height: 12),
-          // Coordinates
           if (waypoint.latitude != null)
-            _DetailRow(
-              icon: Icons.gps_fixed,
-              label: 'Coordinates',
-              value:
-                  '${waypoint.latitude!.toStringAsFixed(6)}, ${waypoint.longitude!.toStringAsFixed(6)}',
-            ),
-          // Notes
+            _Row(Icons.gps_fixed, 'Coords',
+                '${waypoint.latitude!.toStringAsFixed(6)}, ${waypoint.longitude!.toStringAsFixed(6)}'),
           if (waypoint.notes != null && waypoint.notes!.isNotEmpty)
-            _DetailRow(
-              icon: Icons.notes,
-              label: 'Notes',
-              value: waypoint.notes!,
-            ),
-          // Timestamp
+            _Row(Icons.notes, 'Notes', waypoint.notes!),
           if (waypoint.timestamp != null)
-            _DetailRow(
-              icon: Icons.access_time,
-              label: 'Saved',
-              value: _formatDate(waypoint.timestamp!),
-            ),
-          // Photos
-          if (waypoint.photoPaths != null && waypoint.photoPaths!.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'PHOTOS',
-                    style: TextStyle(
-                        color: Colors.white54,
-                        fontSize: 11,
-                        letterSpacing: 1.2),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
+            _Row(Icons.access_time, 'Saved', _fmt(waypoint.timestamp!)),
+          if (waypoint.photoPaths != null &&
+              waypoint.photoPaths!.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            const Text('PHOTOS',
+                style: TextStyle(
+                    color: Colors.white54,
+                    fontSize: 11,
+                    letterSpacing: 1.2)),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 80,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: waypoint.photoPaths!.length,
+                separatorBuilder: (_, __) =>
+                    const SizedBox(width: 8),
+                itemBuilder: (_, i) => ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.network(
+                    waypoint.photoPaths![i],
+                    width: 80,
                     height: 80,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: waypoint.photoPaths!.length,
-                      separatorBuilder: (_, __) =>
-                          const SizedBox(width: 8),
-                      itemBuilder: (ctx, i) => ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: Image.network(
-                          waypoint.photoPaths![i],
-                          width: 80,
-                          height: 80,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
-                            width: 80,
-                            height: 80,
-                            color: Colors.white10,
-                            child: const Icon(Icons.broken_image,
-                                color: Colors.white38),
-                          ),
-                        ),
-                      ),
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      width: 80,
+                      height: 80,
+                      color: Colors.white10,
+                      child: const Icon(Icons.broken_image,
+                          color: Colors.white38),
                     ),
                   ),
-                ],
+                ),
               ),
             ),
+          ],
           const SizedBox(height: 8),
         ],
       ),
     );
   }
 
-  String _formatDate(DateTime dt) {
-    return '${dt.day}/${dt.month}/${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-  }
+  String _fmt(DateTime dt) =>
+      '${dt.day}/${dt.month}/${dt.year}  ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
 }
 
-class _DetailRow extends StatelessWidget {
+class _Row extends StatelessWidget {
   final IconData icon;
   final String label;
   final String value;
-
-  const _DetailRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
+  const _Row(this.icon, this.label, this.value);
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: AppColors.primaryOrange, size: 16),
+          Icon(icon, color: AppColors.primaryOrange, size: 15),
           const SizedBox(width: 8),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -790,7 +902,7 @@ class _DetailRow extends StatelessWidget {
                       color: Colors.white54, fontSize: 11)),
               Text(value,
                   style: const TextStyle(
-                      color: Colors.white, fontSize: 14)),
+                      color: Colors.white, fontSize: 13)),
             ],
           ),
         ],
@@ -799,19 +911,19 @@ class _DetailRow extends StatelessWidget {
   }
 }
 
-// ─── Starfield background painter ──────────────────────────────────────────
+// ─── Starfield BG ────────────────────────────────────────────────────────────
 
 class _StarfieldPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final rng = math.Random(42); // fixed seed = same stars every frame
-    final paint = Paint()..color = Colors.white;
-
-    for (int i = 0; i < 120; i++) {
+    final rng = math.Random(42);
+    final paint = Paint();
+    for (int i = 0; i < 140; i++) {
       final x = rng.nextDouble() * size.width;
-      final y = rng.nextDouble() * size.height * 0.65;
+      final y = rng.nextDouble() * size.height;
       final r = rng.nextDouble() * 1.2 + 0.2;
-      paint.color = Colors.white.withValues(alpha: rng.nextDouble() * 0.5 + 0.1);
+      paint.color =
+          Colors.white.withValues(alpha: rng.nextDouble() * 0.45 + 0.08);
       canvas.drawCircle(Offset(x, y), r, paint);
     }
   }

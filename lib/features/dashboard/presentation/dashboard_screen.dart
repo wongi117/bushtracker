@@ -617,13 +617,19 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                     description:
                         'Add a waypoint marker at the center of the screen'),
                 const SizedBox(height: 12),
-                // Camera Pin — take photo, drop GPS pin instantly
+                // Camera / AR — opens live AR waypoint overlay with capture
                 _buildFloatingButton(
                   Icons.camera_alt,
-                  () => _takePhotoAndDropPin(locationState),
-                  tooltip: 'Photo Pin',
+                  () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) => const ARCompassScreen()),
+                    );
+                  },
+                  tooltip: 'AR Camera',
                   description:
-                      'Take a photo — drops a GPS pin with the image attached',
+                      'See your waypoints floating in AR through the camera',
                 ),
                 const SizedBox(height: 12),
                 // Clear all waypoints
@@ -690,18 +696,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                     tooltip: 'Route Navigation',
                     description:
                         'Get turn-by-turn directions to any destination'),
-                const SizedBox(height: 12),
-                // AR Compass
-                _buildFloatingButton(Icons.compass_calibration, () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => const ARCompassScreen()),
-                  );
-                },
-                    tooltip: 'AR Compass',
-                    description:
-                        'Augmented reality compass overlay on camera view'),
                 const SizedBox(height: 12),
                 // SOS - with confirmation dialog for safety
                 _buildFloatingButton(Icons.sos, () {

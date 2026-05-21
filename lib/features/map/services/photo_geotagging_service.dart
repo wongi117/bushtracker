@@ -106,6 +106,27 @@ class PhotoGeotaggingService {
     }
   }
 
+  /// Process a photo file that was already captured (e.g. via CameraController).
+  Future<GeotaggedPhoto?> processFile(
+    String filePath, {
+    required LatLng location,
+    double? altitude,
+    String? notes,
+  }) async {
+    if (!_isInitialized) await initialize();
+    try {
+      return await _processPhoto(
+        File(filePath),
+        location: location,
+        altitude: altitude,
+        notes: notes,
+      );
+    } catch (e) {
+      print('❌ Error processing file: $e');
+      return null;
+    }
+  }
+
   /// Process and save a geotagged photo
   Future<GeotaggedPhoto> _processPhoto(
     File sourceFile, {
