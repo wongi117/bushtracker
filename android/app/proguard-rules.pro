@@ -35,3 +35,21 @@
 # Sensors / Camera
 -keep class dev.fluttercommunity.plus.sensors.** { *; }
 -keep class io.flutter.plugins.camera.** { *; }
+
+# Isar native bindings
+-keep class dev.isar.** { *; }
+-keep class io.realm.** { *; }
+-dontwarn dev.isar.**
+
+# mesh_gradient / OpenGL
+-keep class android.opengl.** { *; }
+-dontwarn android.opengl.**
+
+# Connectivity Plus
+-keep class dev.fluttercommunity.plus.connectivity.** { *; }
+
+# url_launcher
+-keep class io.flutter.plugins.urllauncher.** { *; }
+
+# path_provider
+-keep class io.flutter.plugins.pathprovider.** { *; }

@@ -50,8 +50,14 @@ void main() async {
   // Initialize native database only for mobile platforms
   dynamic isar;
   if (!kIsWeb) {
-    isar = await initializeIsar();
-    debugPrint('🟢 Isar database initialized successfully');
+    try {
+      isar = await initializeIsar();
+      debugPrint('🟢 Isar database initialized successfully');
+    } catch (e) {
+      // Isar native lib may fail on some devices/configs; app continues with SQLite only
+      debugPrint('⚠️ Isar initialization skipped: $e');
+      isar = null;
+    }
   }
 
   runApp(

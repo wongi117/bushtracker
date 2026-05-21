@@ -148,7 +148,10 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                 onPositionChanged: (position, hasGesture) {
                   setState(() {
                     _currentZoom = position.zoom ?? 13.0;
-                    _currentRotation = position.rotation;
+                    // rotation lives on the camera, not MapPosition
+                    try {
+                      _currentRotation = _mapController.camera.rotation * (math.pi / 180.0);
+                    } catch (_) {}
                   });
                 },
               ),
