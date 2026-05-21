@@ -148,6 +148,7 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                 onPositionChanged: (position, hasGesture) {
                   setState(() {
                     _currentZoom = position.zoom ?? 13.0;
+                    _currentRotation = position.rotation;
                   });
                 },
               ),
@@ -989,7 +990,7 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
 
   // ── GPX share ────────────────────────────────────────────────────────────
 
-  Future<void> _shareTrailAsGpx(trail) async {
+  Future<void> _shareTrailAsGpx(Trail trail) async {
     try {
       final gpx = GPXService.exportTrail(trail);
       final dir = await getTemporaryDirectory();

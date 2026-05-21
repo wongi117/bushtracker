@@ -1,13 +1,11 @@
 import 'dart:async';
+import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:latlong2/latlong.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/models/breadcrumb.dart';
 import '../../../core/models/waypoint.dart';
 import '../../../core/services/database_service.dart';
-import '../../map/services/offline_map_manager.dart';
 import '../../../main.dart';
 
 // Use the database service provider from main.dart for cross-platform support
@@ -105,10 +103,7 @@ class LocationState {
     this.stats = const TrackStats(),
   });
 
-  LocationState copyWith(
-      {List<Waypoint>? waypoints,
-      List<Breadcrumb>? breadcrumbs,
-      TrackStats? stats}) {
+  LocationState copyWith({List<Waypoint>? waypoints, List<Breadcrumb>? breadcrumbs, TrackStats? stats}) {
     return LocationState(
       waypoints: waypoints ?? this.waypoints,
       breadcrumbs: breadcrumbs ?? this.breadcrumbs,
@@ -124,7 +119,6 @@ class LocationNotifier extends StateNotifier<LocationState> {
   StreamSubscription<Position>? _positionSub;
   Timer? _elapsedTimer;
   Timer? _mockTimer;
-  Timer? _breadcrumbTimer;
   Position? _lastPosition;
   final List<Position> _recentPositions = <Position>[];
   double _totalDistance = 0;
@@ -134,20 +128,17 @@ class LocationNotifier extends StateNotifier<LocationState> {
   bool _batterySaver = false;
   _TrackingProfile _profile = _TrackingProfile.highAccuracy;
   final String _sessionId = DateTime.now().millisecondsSinceEpoch.toString();
-  bool _autoRegionTriggered = false;
 
   LocationNotifier(this.databaseService) : super(const LocationState()) {
     _loadWaypoints();
     _loadBreadcrumbs();
     _startGpsTracking();
     _startElapsedTimer();
-    _startBreadcrumbTimer();
   }
 
   Future<void> _loadWaypoints() async {
     try {
-      final List<Map<String, dynamic>> maps =
-          await databaseService.getWaypoints();
+      final List<Map<String, dynamic>> maps = await databaseService.getWaypoints();
       final waypoints = maps.map((map) => Waypoint.fromMap(map)).toList();
       state = state.copyWith(waypoints: waypoints);
     } catch (e) {
@@ -157,8 +148,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
 
   Future<void> _loadBreadcrumbs() async {
     try {
-      final List<Map<String, dynamic>> maps =
-          await databaseService.getBreadcrumbs(_sessionId);
+      final List<Map<String, dynamic>> maps = await databaseService.getBreadcrumbs(_sessionId);
       final breadcrumbs = maps.map((map) => Breadcrumb.fromMap(map)).toList();
       state = state.copyWith(breadcrumbs: breadcrumbs);
     } catch (e) {
@@ -185,7 +175,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
 
     _trackStart = DateTime.now();
     _positionSub = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
+      locationSettings: LocationSettings(
         accuracy: LocationAccuracy.bestForNavigation,
         distanceFilter: 5,
       ),
@@ -207,8 +197,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
     _updateTrackingProfile(nextProfile);
 
     final shouldEmit = _lastEmissionAt == null ||
-        now.difference(_lastEmissionAt!) >=
-            _updateIntervalForProfile(nextProfile);
+        now.difference(_lastEmissionAt!) >= _updateIntervalForProfile(nextProfile);
 
     if (!shouldEmit) {
       return;
@@ -226,12 +215,6 @@ class LocationNotifier extends StateNotifier<LocationState> {
       );
       _totalDistance += dist;
     }
-    // Trigger auto region download on very first GPS fix (mobile only)
-    if (!kIsWeb && !_autoRegionTriggered && _lastPosition == null) {
-      _autoRegionTriggered = true;
-      _maybeAutoDownloadRegion(averaged.latitude, averaged.longitude);
-    }
-
     _lastPosition = averaged;
 
     if (speedKmh < 2.0) {
@@ -248,18 +231,6 @@ class LocationNotifier extends StateNotifier<LocationState> {
         ? DateTime.now().difference(_trackStart!)
         : Duration.zero;
 
-    state = state.copyWith(
-      stats: state.stats.copyWith(
-        distanceMeters: _totalDistance,
-        currentSpeedMs: averaged.speed < 0 ? 0 : averaged.speed,
-        currentAccuracyM: averaged.accuracy,
-        elapsed: elapsed,
-        currentLat: averaged.latitude,
-        currentLon: averaged.longitude,
-        currentAltitude: averaged.altitude,
-      ),
-    );
-
     // Save breadcrumb trail separately from user pins.
     final breadcrumb = Breadcrumb(
       latitude: averaged.latitude,
@@ -271,7 +242,20 @@ class LocationNotifier extends StateNotifier<LocationState> {
       sessionId: _sessionId,
     );
     await databaseService.insertBreadcrumb(breadcrumb.toMap());
-    await _loadBreadcrumbs();
+
+    state = state.copyWith(
+      // Append breadcrumb in-memory — avoids a full DB reload on every GPS tick
+      breadcrumbs: [...state.breadcrumbs, breadcrumb],
+      stats: state.stats.copyWith(
+        distanceMeters: _totalDistance,
+        currentSpeedMs: averaged.speed < 0 ? 0 : averaged.speed,
+        currentAccuracyM: averaged.accuracy,
+        elapsed: elapsed,
+        currentLat: averaged.latitude,
+        currentLon: averaged.longitude,
+        currentAltitude: averaged.altitude,
+      ),
+    );
 
     // Also save a track waypoint for compatibility with existing route logic.
     final waypoint = Waypoint(
@@ -289,22 +273,10 @@ class LocationNotifier extends StateNotifier<LocationState> {
     _loadWaypoints();
   }
 
-  Future<void> _maybeAutoDownloadRegion(double lat, double lon) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final done = prefs.getBool('auto_region_downloaded') ?? false;
-      if (done) return;
-      await prefs.setBool('auto_region_downloaded', true);
-      await OfflineMapManager().autoDetectAndDownloadRegion(LatLng(lat, lon));
-    } catch (e) {
-      debugPrint('Auto region detection error: $e');
-    }
-  }
-
   Position _averageRecentPosition() {
-    final samples = _recentPositions.isEmpty
-        ? <Position>[_lastPosition ?? _recentPositions.last]
-        : _recentPositions;
+    final samples = _recentPositions.isNotEmpty
+        ? _recentPositions
+        : (_lastPosition != null ? [_lastPosition!] : <Position>[]);
     double lat = 0;
     double lon = 0;
     double alt = 0;
@@ -404,28 +376,6 @@ class LocationNotifier extends StateNotifier<LocationState> {
     });
   }
 
-  /// Saves a breadcrumb every 30 seconds regardless of movement distance,
-  /// fulfilling the "record position every 30 seconds automatically" requirement.
-  void _startBreadcrumbTimer() {
-    _breadcrumbTimer =
-        Timer.periodic(const Duration(seconds: 30), (_) async {
-      final lat = state.stats.currentLat;
-      final lon = state.stats.currentLon;
-      if (lat == null || lon == null) return;
-      final crumb = Breadcrumb(
-        latitude: lat,
-        longitude: lon,
-        altitude: state.stats.currentAltitude ?? 0,
-        accuracy: state.stats.currentAccuracyM,
-        speed: state.stats.currentSpeedMs,
-        timestamp: DateTime.now(),
-        sessionId: _sessionId,
-      );
-      await databaseService.insertBreadcrumb(crumb.toMap());
-      await _loadBreadcrumbs();
-    });
-  }
-
   Future<void> addManualWaypoint(double lat, double lon, String label,
       {String? notes, String? color, String? icon, int? order}) async {
     final waypoint = Waypoint(
@@ -445,36 +395,6 @@ class LocationNotifier extends StateNotifier<LocationState> {
     _loadWaypoints();
   }
 
-  /// Drop a pin at the given location with an attached photo.
-  Future<Waypoint> addPhotoWaypoint({
-    required double lat,
-    required double lon,
-    required String photoPath,
-    required String thumbnailPath,
-    String? label,
-    String? notes,
-    double? altitude,
-  }) async {
-    final waypoint = Waypoint(
-      latitude: lat,
-      longitude: lon,
-      altitude: altitude,
-      timestamp: DateTime.now(),
-      label: label ?? 'Photo Pin',
-      notes: notes,
-      type: WaypointType.manual,
-      color: WaypointColors.neonCyan,
-      icon: WaypointIcon.pin,
-      isPin: true,
-      photoPaths: [photoPath],
-      thumbnailPath: thumbnailPath,
-    );
-
-    await databaseService.insertWaypoint(waypoint.toMap());
-    _loadWaypoints();
-    return waypoint;
-  }
-
   Future<void> updateWaypoint(Waypoint waypoint) async {
     await databaseService.updateWaypoint(waypoint.toMap());
     _loadWaypoints();
@@ -484,7 +404,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
     await databaseService.deleteWaypoint(id);
     _loadWaypoints();
   }
-
+  
   Future<void> deleteAllWaypoints() async {
     await databaseService.deleteAllWaypoints();
     _loadWaypoints();
@@ -497,7 +417,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
       (w) => w.id == id,
       orElse: () => throw Exception('Waypoint not found'),
     );
-
+    
     final updated = Waypoint(
       id: waypoint.id,
       latitude: lat,
@@ -516,7 +436,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
       order: waypoint.order,
       isPin: waypoint.isPin,
     );
-
+    
     await updateWaypoint(updated);
   }
 
@@ -527,7 +447,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
       (w) => w.id == id,
       orElse: () => throw Exception('Waypoint not found'),
     );
-
+    
     final updated = Waypoint(
       id: waypoint.id,
       latitude: waypoint.latitude,
@@ -546,7 +466,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
       order: waypoint.order,
       isPin: waypoint.isPin,
     );
-
+    
     await updateWaypoint(updated);
   }
 
@@ -557,7 +477,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
       (w) => w.id == id,
       orElse: () => throw Exception('Waypoint not found'),
     );
-
+    
     final updated = Waypoint(
       id: waypoint.id,
       latitude: waypoint.latitude,
@@ -576,21 +496,23 @@ class LocationNotifier extends StateNotifier<LocationState> {
       order: waypoint.order,
       isPin: waypoint.isPin,
     );
-
+    
     await updateWaypoint(updated);
   }
 
   /// Set battery saver mode - reduce GPS update frequency
   void setBatterySaverMode(bool enabled) {
     _batterySaver = enabled;
-    _updateTrackingProfile(enabled
-        ? _TrackingProfile.batterySaver
-        : _profileForSpeed(state.stats.currentSpeedMs * 3.6));
+    _updateTrackingProfile(enabled ? _TrackingProfile.batterySaver : _profileForSpeed(state.stats.currentSpeedMs * 3.6));
   }
 
-  Future<void> clearBreadcrumbs() async {
-    await databaseService.clearBreadcrumbs(_sessionId);
-    state = state.copyWith(breadcrumbs: []);
+  /// Restart GPS tracking with current settings
+  Future<void> _restartGpsTracking() async {
+    // Cancel existing subscription
+    _positionSub?.cancel();
+    
+    // Restart with new settings
+    await _startGpsTracking();
   }
 
   @override
@@ -598,7 +520,6 @@ class LocationNotifier extends StateNotifier<LocationState> {
     _positionSub?.cancel();
     _elapsedTimer?.cancel();
     _mockTimer?.cancel();
-    _breadcrumbTimer?.cancel();
     super.dispose();
   }
 }
