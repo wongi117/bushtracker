@@ -1,4 +1,4 @@
-import 'dart:math';
+﻿import 'dart:math';
 
 /// Offline AI Service - Local survival intelligence that works without internet
 /// Provides contextual survival responses based on location, time, and situation
@@ -7,9 +7,9 @@ class OfflineAIService {
   // Survival response templates for common scenarios
   static final Map<String, List<String>> _survivalResponses = {
     'greeting': [
-      "Antigravity online. I'm your local survival intelligence. How can I assist?",
-      "Systems active. I'm Antigravity, your backup in the bush. What do you need?",
-      "Antigravity ready. No signal, no problem. I'm running offline. What's your status?",
+      "Future Gen AI online. I'm your local survival intelligence. How can I assist?",
+      "Systems active. I'm Future Gen AI, your backup in the bush. What do you need?",
+      "Future Gen AI ready. No signal, no problem. I'm running offline. What's your status?",
     ],
     'location': [
       "Your position is locked. I've got your coordinates cached for emergency reference.",
@@ -57,9 +57,9 @@ class OfflineAIService {
       "Ground yourself. Feel your feet. Hear my voice. We'll get through this together.",
     ],
     'default': [
-      "I'm Antigravity, your offline survival AI. Ask me about navigation, camps, weather, or emergency procedures.",
+      "I'm Future Gen AI, your offline survival AI. Ask me about navigation, camps, weather, or emergency procedures.",
       "Running in local mode. I can help with: finding camp, navigation, breadcrumbs, SOS, and mesh networking.",
-      "Antigravity offline intelligence at your service. What survival information do you need?",
+      "Future Gen AI offline intelligence at your service. What survival information do you need?",
     ],
   };
 

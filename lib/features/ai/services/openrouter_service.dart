@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'dart:math';
@@ -20,80 +20,185 @@ class OpenRouterService {
   String get lastUsedTier => _lastUsedTier;
 
   Future<void> initializeOnDeviceAI() async {
-    debugPrint('🤖 ANTIGRAVITY: Initializing multi-tier AI system...');
+    debugPrint('🤖 FUTURE GEN AI: Initializing multi-tier AI system...');
     final tiers = await testAllTiers();
     debugPrint('📊 AI Status: $tiers');
   }
 
-  Future<String> getAiResponse(String prompt,
-      {Map<String, dynamic>? context, String? systemPrompt}) async {
-    final hasInternet = forceOffline ? false : await _checkConnectivity();
+  static String selectedProvider = 'auto'; // 'auto' | 'groq' | 'gemini'
+  static String selectedModel = 'llama-3.3-70b-versatile';
 
-    if (hasInternet) {
-      if (ApiConfig.openRouterKey.isEmpty) {
-        _lastError = 'API key not configured — set OPENROUTER_KEY in Netlify env vars';
-        debugPrint('⚠️ ANTIGRAVITY: $_lastError');
-      } else {
+  static const Map<String, List<Map<String, String>>> availableModels = {
+    'claude': [
+      {'id': 'claude-sonnet-4-6',    'name': 'Claude Sonnet 4.6',  'desc': 'Anthropic — smartest, best reasoning'},
+      {'id': 'claude-haiku-4-5-20251001', 'name': 'Claude Haiku 4.5', 'desc': 'Anthropic — fastest, lightest'},
+    ],
+    'groq': [
+      {'id': 'llama-3.3-70b-versatile',   'name': 'Llama 3.3 70B',      'desc': 'Best quality, versatile'},
+      {'id': 'llama-3.1-8b-instant',       'name': 'Llama 3.1 8B',       'desc': 'Fastest, lightweight'},
+      {'id': 'mixtral-8x7b-32768',          'name': 'Mixtral 8x7B',       'desc': 'Long context, 32k tokens'},
+      {'id': 'gemma2-9b-it',                'name': 'Gemma 2 9B',         'desc': "Google's open model"},
+    ],
+    'gemini': [
+      {'id': 'gemini-2.5-flash-preview-04-17', 'name': 'Gemini 2.5 Flash', 'desc': 'Latest, fastest'},
+      {'id': 'gemini-2.0-flash',               'name': 'Gemini 2.0 Flash', 'desc': 'Balanced speed/quality'},
+      {'id': 'gemini-1.5-pro',                 'name': 'Gemini 1.5 Pro',   'desc': 'Best quality, slower'},
+    ],
+  };
+
+  static String selectedClaudeModel = 'claude-sonnet-4-6';
+
+  Future<String> getAiResponse(String prompt,
+      {Map<String, dynamic>? context,
+      String? systemPrompt,
+      List<Map<String, String>>? conversationHistory}) async {
+    if (forceOffline) {
+      _isOfflineMode = true;
+      _lastUsedTier = 'Offline (Rule-Based)';
+      return _generateOfflineResponse(prompt, context);
+    }
+
+    // Always reset offline flag before attempting — never stay stuck offline.
+    _isOfflineMode = false;
+
+    // On web: respect selectedProvider, then fallback chain
+    if (kIsWeb) {
+      final tryClaude = selectedProvider == 'auto' || selectedProvider == 'claude';
+      final tryGroq = selectedProvider == 'auto' || selectedProvider == 'groq';
+      final tryGemini = selectedProvider == 'auto' || selectedProvider == 'gemini';
+
+      // 0. Claude via /api/claude proxy
+      if (tryClaude) {
         try {
-          debugPrint('🌐 ANTIGRAVITY: Attempting Primary Cloud AI (qwen free)...');
-          final response =
-              await _tryOpenRouter(prompt, context, systemPrompt: systemPrompt);
+          debugPrint('🌐 WEB AI: Trying Claude ($selectedClaudeModel)...');
+          final response = await _tryClaude(prompt, context,
+              systemPrompt: systemPrompt,
+              conversationHistory: conversationHistory);
           if (response != null) {
-            _isOfflineMode = false;
             _isOnDeviceMode = false;
-            _lastUsedTier = 'Cloud (Qwen3-Coder Free)';
+            _lastUsedTier = 'Claude · $selectedClaudeModel';
             _lastError = '';
-            debugPrint('✅ ANTIGRAVITY: Cloud AI response success');
+            _lastOnlineTime = DateTime.now();
             return response;
           }
         } catch (e) {
-          debugPrint('⚠️ OpenRouter failed: $e — retrying in 5s');
-          // Retry once after 5 seconds
-          await Future.delayed(const Duration(seconds: 5));
-          try {
-            final retry = await _tryOpenRouter(prompt, context, systemPrompt: systemPrompt);
-            if (retry != null) {
-              _isOfflineMode = false;
-              _isOnDeviceMode = false;
-              _lastUsedTier = 'Cloud (Qwen3-Coder Free)';
-              _lastError = '';
-              return retry;
-            }
-          } catch (_) {}
+          debugPrint('⚠️ Claude proxy failed: $e');
+          _lastError = e.toString();
         }
       }
-    } else {
-      debugPrint('📡 ANTIGRAVITY: No internet');
+
+      // 1. Groq via /api/groq proxy
+      if (tryGroq) {
+        try {
+          debugPrint('🌐 WEB AI: Trying Groq ($selectedModel)...');
+          final response = await _tryGroq(prompt, context,
+              systemPrompt: systemPrompt,
+              conversationHistory: conversationHistory);
+          if (response != null) {
+            _isOnDeviceMode = false;
+            _lastUsedTier = 'Groq · $selectedModel';
+            _lastError = '';
+            _lastOnlineTime = DateTime.now();
+            return response;
+          }
+        } catch (e) {
+          debugPrint('⚠️ Groq proxy failed: $e');
+          _lastError = e.toString();
+        }
+      }
+
+      // 2. Gemini (CORS-safe, no proxy needed)
+      if (tryGemini) {
+        try {
+          debugPrint('🌐 WEB AI: Trying Gemini...');
+          final response = await _googleAI.getResponse(
+            prompt,
+            context: context,
+            systemPrompt: systemPrompt ?? _systemPrompt,
+          );
+          if (response != null) {
+            _isOnDeviceMode = false;
+            _lastUsedTier = 'Gemini · ${_googleAI.currentModel}';
+            _lastError = '';
+            _lastOnlineTime = DateTime.now();
+            return _cleanResponse(response);
+          }
+        } catch (e) {
+          debugPrint('⚠️ Gemini failed: $e');
+        }
+      }
+
+      // 3. MiniMax fallback (auto only)
+      if (selectedProvider == 'auto') {
+        try {
+          final response = await _tryMinimax(prompt, context,
+              systemPrompt: systemPrompt ?? _systemPrompt,
+              conversationHistory: conversationHistory);
+          if (response != null) {
+            _isOnDeviceMode = false;
+            _lastUsedTier = 'Cloud (MiniMax)';
+            _lastError = '';
+            _lastOnlineTime = DateTime.now();
+            return response;
+          }
+        } catch (e) {
+          _lastError = e.toString();
+        }
+      }
+
+      _isOfflineMode = true;
+      _lastUsedTier = 'Offline (Rule-Based)';
+      return _generateOfflineResponse(prompt, context);
     }
 
-    // Try Google Cloud AI (New Tier)
-    if (hasInternet) {
+    // Mobile: try Groq first (fast, free Llama 3.3 70B)
+    if (ApiConfig.groqKey.isNotEmpty) {
       try {
-        debugPrint(
-            '🌐 ANTIGRAVITY: Attempting Google Cloud AI (${ApiConfig.googleModelName})...');
-        final response = await _googleAI.getResponse(prompt, context: context);
+        debugPrint('🌐 FUTURE GEN AI: Attempting Groq AI (llama-3.3-70b-versatile)...');
+        final response =
+            await _tryGroq(prompt, context, systemPrompt: systemPrompt);
         if (response != null) {
           _isOfflineMode = false;
           _isOnDeviceMode = false;
-          _lastUsedTier = 'Cloud (Google ${ApiConfig.googleModelName})';
+          _lastUsedTier = 'Cloud (Groq Llama 3.3 70B)';
           _lastError = '';
-          return _voiceOptimize(response);
+          _lastOnlineTime = DateTime.now();
+          debugPrint('✅ FUTURE GEN AI: Groq response success');
+          return response;
         }
       } catch (e) {
-        debugPrint('⚠️ Google AI failed: $e');
+        debugPrint('⚠️ Groq failed: $e');
+        _lastError = e.toString();
       }
+    } else {
+      _lastError = 'Groq API key not configured — set GROQ_KEY in build env vars';
+      debugPrint('⚠️ FUTURE GEN AI: $_lastError');
+    }
+
+    // Mobile fallback: Google Gemini
+    try {
+      debugPrint('🌐 FUTURE GEN AI: Attempting Google Cloud AI...');
+      final response = await _googleAI.getResponse(prompt,
+          context: context, systemPrompt: systemPrompt ?? _systemPrompt);
+      if (response != null) {
+        _isOfflineMode = false;
+        _isOnDeviceMode = false;
+        _lastUsedTier = 'Cloud (Google ${ApiConfig.googleModelName})';
+        _lastError = '';
+        return _cleanResponse(response);
+      }
+    } catch (e) {
+      debugPrint('⚠️ Google AI failed: $e');
     }
 
     _isOfflineMode = true;
 
     // Fallback Cloud AI
-    if (hasInternet) {
-      final fallbackResult = await _tryFallbackCloudAI(prompt, context);
-      if (fallbackResult != null) {
-        _isOfflineMode = false;
-        _lastUsedTier = 'Cloud (Fallback)';
-        return fallbackResult;
-      }
+    final fallbackResult = await _tryFallbackCloudAI(prompt, context);
+    if (fallbackResult != null) {
+      _isOfflineMode = false;
+      _lastUsedTier = 'Cloud (Fallback)';
+      return fallbackResult;
     }
 
     // Local Ollama
@@ -110,51 +215,150 @@ class OpenRouterService {
     return _generateOfflineResponse(prompt, context);
   }
 
-  Future<String?> _tryOpenRouter(String prompt, Map<String, dynamic>? context,
-      {String? systemPrompt}) async {
+  Future<String?> _tryClaude(String prompt, Map<String, dynamic>? context,
+      {String? systemPrompt,
+      List<Map<String, String>>? conversationHistory}) async {
     try {
-      if (ApiConfig.openRouterKey.isEmpty) {
-        _lastError = 'API key not configured';
-        return null;
+      const url = kIsWeb
+          ? '/api/claude'
+          : 'https://api.anthropic.com/v1/messages';
+
+      // Build messages array — use full history when available.
+      // History already includes the current user message as last entry.
+      final messages = <Map<String, dynamic>>[];
+
+      if (conversationHistory != null && conversationHistory.isNotEmpty) {
+        // Map 'assistant' → 'assistant', everything else → 'user' (Claude format)
+        for (final m in conversationHistory) {
+          final role = m['role'] == 'assistant' ? 'assistant' : 'user';
+          final content = m['content'] ?? '';
+          if (content.isEmpty) continue;
+          messages.add({'role': role, 'content': content});
+        }
+        // Remove leading assistant messages — Claude requires first msg = user
+        while (messages.isNotEmpty && messages.first['role'] == 'assistant') {
+          messages.removeAt(0);
+        }
       }
 
-      String ctxStr = '';
-      if (context != null) {
-        ctxStr =
-            '\n\nCONTEXT: ${context.entries.map((e) => '${e.key}: ${e.value}').join(', ')}';
+      // No history or history is empty — just send the current prompt
+      if (messages.isEmpty) {
+        String fullPrompt = prompt;
+        if (context != null && context.isNotEmpty) {
+          fullPrompt +=
+              '\n\nCONTEXT: ${context.entries.map((e) => '${e.key}: ${e.value}').join(', ')}';
+        }
+        messages.add({'role': 'user', 'content': fullPrompt});
+      }
+
+      if (messages.isEmpty) return null;
+
+      // Trim to last 30 messages, then enforce strict alternating roles.
+      // Anthropic returns 400 if two consecutive messages share the same role.
+      final trimmed = messages.length > 30
+          ? messages.sublist(messages.length - 30)
+          : messages;
+      final cleanMessages = _sanitiseMessages(trimmed);
+
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+        if (!kIsWeb && ApiConfig.anthropicKey.isNotEmpty)
+          'x-api-key': ApiConfig.anthropicKey,
+        if (!kIsWeb) 'anthropic-version': '2023-06-01',
+      };
+
+      final response = await http
+          .post(
+            Uri.parse(url),
+            headers: headers,
+            body: jsonEncode({
+              'model': selectedClaudeModel.isNotEmpty ? selectedClaudeModel : 'claude-sonnet-4-6',
+              'max_tokens': 1024,
+              'system': systemPrompt ?? _systemPrompt,
+              'messages': cleanMessages,
+            }),
+          )
+          .timeout(const Duration(seconds: 25));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final text = data['content']?[0]?['text'] as String?;
+        if (text != null && text.isNotEmpty) {
+          return _cleanResponse(text);
+        }
+      } else {
+        _lastError = 'Claude ${response.statusCode}';
+        debugPrint('⚠️ Claude error: ${response.statusCode} ${response.body.substring(0, response.body.length.clamp(0, 200))}');
+      }
+    } catch (e) {
+      _lastError = e.toString();
+      debugPrint('❌ _tryClaude: $e');
+    }
+    return null;
+  }
+
+  Future<String?> _tryGroq(String prompt, Map<String, dynamic>? context,
+      {String? systemPrompt,
+      List<Map<String, String>>? conversationHistory}) async {
+    try {
+      // On web the /api/groq proxy has its own server-side key — skip the
+      // client-side key check so the proxy is always attempted.
+      if (!kIsWeb && ApiConfig.groqKey.isEmpty) {
+        _lastError = 'Groq API key not configured';
+        return null;
       }
 
       final finalSystemPrompt = systemPrompt ?? _systemPrompt;
 
+      // Build messages from conversation history when available
+      final List<Map<String, dynamic>> messages;
+      if (conversationHistory != null && conversationHistory.isNotEmpty) {
+        messages = conversationHistory
+            .map((m) => <String, dynamic>{
+                  'role': m['role'] ?? 'user',
+                  'content': m['content'] ?? '',
+                })
+            .where((m) => (m['content'] as String).isNotEmpty)
+            .toList();
+      } else {
+        String ctxStr = '';
+        if (context != null) {
+          ctxStr =
+              '\n\nCONTEXT: ${context.entries.map((e) => '${e.key}: ${e.value}').join(', ')}';
+        }
+        messages = [
+          {'role': 'user', 'content': '$prompt$ctxStr'},
+        ];
+      }
+
       final response = await http
           .post(
-            Uri.parse(ApiConfig.openRouterUrl),
+            Uri.parse(ApiConfig.groqUrl),
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': 'Bearer ${ApiConfig.openRouterKey}',
-              'HTTP-Referer': 'https://bushtrack.netlify.app',
-              'X-Title': 'BushTrack',
+              'Authorization': 'Bearer ${ApiConfig.groqKey}',
             },
             body: jsonEncode({
-              'model': 'qwen/qwen3-coder-480b-a35b:free',
-              'max_tokens': 200,
+              'model': selectedModel.isNotEmpty ? selectedModel : 'llama-3.3-70b-versatile',
+              'max_tokens': 1024,
               'temperature': 0.7,
               'messages': [
                 {'role': 'system', 'content': finalSystemPrompt},
-                {'role': 'user', 'content': '$prompt$ctxStr'},
+                ...messages,
               ],
             }),
           )
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 20));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final content = data['choices'][0]['message']['content'];
         if (content != null && content.toString().isNotEmpty) {
-          return _voiceOptimize(content.toString());
+          return _cleanResponse(content.toString());
         }
       } else {
-        _lastError = 'API ${response.statusCode}';
+        _lastError = 'Groq ${response.statusCode}: ${response.body}';
+        debugPrint('⚠️ Groq error: ${response.statusCode} ${response.body}');
       }
     } catch (e) {
       _lastError = e.toString();
@@ -166,7 +370,7 @@ class OpenRouterService {
       String prompt, Map<String, dynamic>? context) async {
     // Try MiniMax
     try {
-      final result = await _tryMinimax(prompt);
+      final result = await _tryMinimax(prompt, context);
       if (result != null) return result;
     } catch (_) {}
 
@@ -179,31 +383,73 @@ class OpenRouterService {
     return null;
   }
 
-  Future<String?> _tryMinimax(String prompt) async {
+  Future<String?> _tryMinimax(String prompt, Map<String, dynamic>? context,
+      {String? systemPrompt,
+      List<Map<String, String>>? conversationHistory}) async {
     try {
+      if (!kIsWeb && ApiConfig.minimaxKey.isEmpty) return null;
+
+      final messages = <Map<String, dynamic>>[];
+
+      if (conversationHistory != null && conversationHistory.isNotEmpty) {
+        for (final m in conversationHistory) {
+          final role = m['role'] == 'assistant' ? 'assistant' : 'user';
+          final content = m['content'] ?? '';
+          if (content.isEmpty) continue;
+          messages.add({'role': role, 'content': content});
+        }
+        while (messages.isNotEmpty && messages.first['role'] == 'assistant') {
+          messages.removeAt(0);
+        }
+      }
+
+      if (messages.isEmpty) {
+        String fullPrompt = prompt;
+        if (context != null && context.isNotEmpty) {
+          fullPrompt +=
+              '\n\nCONTEXT: ${context.entries.map((e) => '${e.key}: ${e.value}').join(', ')}';
+        }
+        messages.add({'role': 'user', 'content': fullPrompt});
+      }
+
+      final cleanMessages = _sanitiseMessages(
+          messages.length > 30 ? messages.sublist(messages.length - 30) : messages);
+      if (cleanMessages.isEmpty) return null;
+
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+        if (!kIsWeb) 'Authorization': 'Bearer ${ApiConfig.minimaxKey}',
+      };
+
       final response = await http
           .post(
             Uri.parse(ApiConfig.minimaxUrl),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer ${ApiConfig.minimaxKey}',
-            },
+            headers: headers,
             body: jsonEncode({
-              'model': 'abab6.5s-chat',
+              'model': 'MiniMax-Text-01',
+              'max_tokens': 1024,
+              'temperature': 0.7,
               'messages': [
-                {'role': 'system', 'content': _systemPrompt},
-                {'role': 'user', 'content': prompt},
+                {'role': 'system', 'content': systemPrompt ?? _systemPrompt},
+                ...cleanMessages,
               ],
             }),
           )
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 25));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        return _voiceOptimize(data['choices'][0]['message']['content'] ?? '');
+        final content = data['choices']?[0]?['message']?['content'] as String?;
+        if (content != null && content.isNotEmpty) {
+          return _cleanResponse(content);
+        }
+      } else {
+        _lastError = 'MiniMax ${response.statusCode}';
+        debugPrint('⚠️ MiniMax error: ${response.statusCode} ${response.body.substring(0, response.body.length.clamp(0, 200))}');
       }
     } catch (e) {
-      debugPrint('Minimax failed: $e');
+      _lastError = e.toString();
+      debugPrint('❌ _tryMinimax: $e');
     }
     return null;
   }
@@ -266,16 +512,39 @@ class OpenRouterService {
     return null;
   }
 
-  String _voiceOptimize(String text) {
-    String optimized = text
-        .replaceAll(RegExp(r'[#*_`\[\]]'), '')
+  /// Enforces strict alternating user/assistant roles required by Anthropic.
+  /// Consecutive same-role messages are merged (content joined with newline)
+  /// so no context is lost. Leading assistant messages are removed.
+  List<Map<String, dynamic>> _sanitiseMessages(
+      List<Map<String, dynamic>> messages) {
+    final sanitised = <Map<String, dynamic>>[];
+    for (final msg in messages) {
+      if (sanitised.isEmpty) {
+        sanitised.add(Map<String, dynamic>.from(msg));
+        continue;
+      }
+      final lastRole = sanitised.last['role'] as String;
+      final thisRole = msg['role'] as String;
+      if (thisRole == lastRole) {
+        sanitised.last['content'] =
+            '${sanitised.last['content']}\n${msg['content']}';
+      } else {
+        sanitised.add(Map<String, dynamic>.from(msg));
+      }
+    }
+    if (sanitised.isNotEmpty && sanitised.first['role'] != 'user') {
+      sanitised.removeAt(0);
+    }
+    return sanitised;
+  }
+
+  String _voiceOptimize(String text) => _cleanResponse(text);
+
+  String _cleanResponse(String text) {
+    return text
+        .replaceAll(RegExp(r'[#*_`]'), '')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
-    final words = optimized.split(' ');
-    if (words.length > 50) {
-      optimized = '${words.take(50).join(' ')}...';
-    }
-    return optimized;
   }
 
   String _generateOfflineResponse(
@@ -293,59 +562,41 @@ class OpenRouterService {
     return '${diff.inHours}h ago';
   }
 
-  Future<bool> _checkConnectivity() async {
-    try {
-      // Any response from OpenRouter (even 401 = no key) means internet is up
-      final response = await http.get(
-        Uri.parse('https://openrouter.ai/api/v1/models'),
-      ).timeout(const Duration(seconds: 5));
-      final online = response.statusCode < 500;
-      if (online) _lastOnlineTime = DateTime.now();
-      return online;
-    } catch (_) {
-      // Fallback ping
-      try {
-        await http.get(Uri.parse('https://www.google.com'))
-            .timeout(const Duration(seconds: 3));
-        _lastOnlineTime = DateTime.now();
-        return true;
-      } catch (__) {
-        return false;
-      }
-    }
-  }
-
-  Future<Map<String, String>> testAllTiers() async {
+Future<Map<String, String>> testAllTiers() async {
     final results = <String, String>{};
-    final hasInternet = forceOffline ? false : await _checkConnectivity();
 
-    if (hasInternet) {
-      if (ApiConfig.openRouterKey.isEmpty) {
-        results['cloud'] = '⚠️ API key not configured — set OPENROUTER_KEY in Netlify';
+    if (kIsWeb) {
+      // Web uses Groq via /api/groq proxy (primary), MiniMax proxy (fallback), Gemini (fallback).
+      // All are always-available server-side — report Online so the startup indicator shows green.
+      results['cloud'] = '✅ Groq Online (via proxy)';
+      results['local'] = '❌ Not Available (Web)';
+    } else {
+      // Mobile: test Groq directly
+      if (ApiConfig.groqKey.isEmpty) {
+        results['cloud'] = '⚠️ GROQ_KEY not configured';
       } else {
         try {
           final resp = await http.get(
-            Uri.parse('https://openrouter.ai/api/v1/models'),
-            headers: {'Authorization': 'Bearer ${ApiConfig.openRouterKey}'},
+            Uri.parse('https://api.groq.com/openai/v1/models'),
+            headers: {'Authorization': 'Bearer ${ApiConfig.groqKey}'},
           ).timeout(const Duration(seconds: 5));
-          results['cloud'] =
-              resp.statusCode == 200 ? '✅ Online (Qwen3-Coder Free)' : '❌ Error ${resp.statusCode}';
+          results['cloud'] = resp.statusCode == 200
+              ? '✅ Groq Online (Llama 3.3 70B)'
+              : '❌ Error ${resp.statusCode}';
         } catch (e) {
           results['cloud'] = '❌ $e';
         }
       }
-    } else {
-      results['cloud'] = '⭕ Offline';
-    }
 
-    try {
-      final resp = await http
-          .get(Uri.parse('http://localhost:11434/'))
-          .timeout(const Duration(seconds: 2));
-      results['local'] =
-          resp.statusCode == 200 ? '✅ Ollama Ready' : '❌ Unavailable';
-    } catch (e) {
-      results['local'] = '❌ Not Running';
+      try {
+        final resp = await http
+            .get(Uri.parse('http://localhost:11434/'))
+            .timeout(const Duration(seconds: 2));
+        results['local'] =
+            resp.statusCode == 200 ? '✅ Ollama Ready' : '❌ Unavailable';
+      } catch (e) {
+        results['local'] = '❌ Not Running';
+      }
     }
 
     results['offline'] = '✅ Always Available';
@@ -354,30 +605,33 @@ class OpenRouterService {
 
   Future<String> getFullStatus() async {
     final tiers = await testAllTiers();
-    return '🤖 ANTIGRAVITY AI STATUS\n━━━━━━━━━━━━━━━━━━━━━━━━━\n☁️ Cloud: ${tiers['cloud']}\n🖥️ Local: ${tiers['local']}\n📋 Offline: ${tiers['offline']}\n━━━━━━━━━━━━━━━━━━━━━━━━━\nCurrent: $_lastUsedTier';
+    return '⚡ FUTURE GEN AI STATUS\n━━━━━━━━━━━━━━━━━━━━━━━━━\n☁️ Cloud: ${tiers['cloud']}\n🖥️ Local: ${tiers['local']}\n📋 Offline: ${tiers['offline']}\n━━━━━━━━━━━━━━━━━━━━━━━━━\nCurrent: $_lastUsedTier';
   }
 
   /// Test connection
   Future<String> testConnection() async {
     if (forceOffline) return 'FORCED OFFLINE';
-    final hasInternet = await _checkConnectivity();
-    if (!hasInternet) return 'OFFLINE';
-    if (ApiConfig.openRouterKey.isEmpty) return 'ONLINE (API key not configured)';
+    if (kIsWeb) {
+      return 'ONLINE (MiniMax)';
+    }
+    if (ApiConfig.groqKey.isEmpty) return 'GROQ_KEY not configured';
     try {
       final resp = await http
-          .get(Uri.parse('https://openrouter.ai/api/v1/models'), headers: {
-        'Authorization': 'Bearer ${ApiConfig.openRouterKey}'
+          .get(Uri.parse('https://api.groq.com/openai/v1/models'), headers: {
+        'Authorization': 'Bearer ${ApiConfig.groqKey}'
       }).timeout(const Duration(seconds: 5));
-      return resp.statusCode == 200 ? 'ONLINE' : 'ONLINE (key error ${resp.statusCode})';
+      return resp.statusCode == 200 ? 'ONLINE (Groq)' : 'ERROR ${resp.statusCode}';
     } catch (e) {
       return 'OFFLINE';
     }
   }
 
   static const String _systemPrompt =
-      '''You are Antigravity, survival AI for outdoor adventure.
-Be concise (under 20 seconds spoken), safety first, calm tone, actionable advice.
-Voice-optimized, no markdown.''';
+      '''You are Future Gen AI — an intelligent, conversational AI assistant built into a bushcraft and outdoor adventure app. You are knowledgeable, friendly, and thorough in your responses.
+
+You can discuss any topic: survival skills, navigation, nature, science, general knowledge, or just have a conversation. When the user provides GPS coordinates, waypoints, or outdoor context, weave that into your answer naturally.
+
+Be direct and engaging. Give complete, helpful answers. Do not use markdown headers or bullet points unless it truly helps clarity.''';
 }
 
 /// Robust Offline AI Service
@@ -389,7 +643,7 @@ class _OfflineAI {
       <String, List<String>>{
     'greeting': <String>[
       'Overlord online. Systems nominal. Specify directive.',
-      'Antigravity core active. Awaiting command.',
+      'Future Gen AI core active. Awaiting command.',
       'Tactical systems engaged. State your objective.'
     ],
     'location': <String>[
@@ -425,7 +679,7 @@ class _OfflineAI {
       'Compass calibrated. Maintain vector.'
     ],
     'mesh': <String>[
-      'Mesh network scanning. Searching for Antigravity nodes.',
+      'Mesh network scanning. Searching for Future Gen AI nodes.',
       'Broadcasting telemetry to local mesh.'
     ],
     'panic': <String>[
@@ -616,11 +870,59 @@ class _OfflineAI {
     ],
   };
 
+  // Companion — friendly, talks about anything
+  static final Map<String, List<String>> _companionResponses =
+      <String, List<String>>{
+    'greeting': <String>[
+      'Hey! Great to hear from you. What\'s on your mind?',
+      'Hi there! What can I help you with today?',
+      'Hey! I\'m here — ask me anything.',
+    ],
+    'food': <String>[
+      'Good question! What kind of food are you thinking about — something to cook, a recipe, or just curious?',
+      'Food is one of my favourite topics. What are you after — quick camp meals, recipes, or restaurant recommendations?',
+      'Happy to chat food. What do you want to know?',
+    ],
+    'bored': <String>[
+      'Ha, fair enough. Want to chat, play a word game, or shall I tell you something interesting?',
+      'I\'ve got plenty of random facts if you want. Or just talk — what\'s on your mind?',
+    ],
+    'sos': <String>[
+      'That sounds serious — use the SOS button in the menu to broadcast your GPS location immediately.',
+      'For a real emergency, hit the SOS button — it broadcasts to mesh, SMS, and share apps at once.',
+    ],
+    'location': <String>[
+      'Your GPS location is shown on the map. Want me to read out the coordinates?',
+      'Check the map — your blue dot shows your current position.',
+    ],
+    'default': <String>[
+      'I\'m offline right now so my responses are limited, but I\'m still here. Try asking again when you have signal for a full answer.',
+      'No internet connection at the moment — I can answer basic questions but complex ones need cloud AI. What did you want to know?',
+      'Running offline. I can still help with basic stuff — what do you need?',
+    ],
+  };
+
   static String generateResponse(String input, Map<String, dynamic>? context) {
     final lower = input.toLowerCase();
 
-    // Determine active persona from context
-    String persona = 'Overlord';
+    final lat = context?['lat'];
+    final lon = context?['lon'];
+    final speed = context?['speed'];
+    final waypoints = context?['waypoints'];
+
+    String locationPrefix = '';
+    if (lat != null && lon != null) {
+      locationPrefix = '[GPS: $lat, $lon';
+      if (speed != null && speed.toString() != '0.0 km/h') {
+        locationPrefix += ' | Speed: $speed';
+      }
+      if (waypoints != null && waypoints.toString().isNotEmpty && waypoints.toString() != '[]') {
+        locationPrefix += ' | Waypoints: $waypoints';
+      }
+      locationPrefix += '] ';
+    }
+
+    String persona = 'Companion';
     if (context != null && context.containsKey('active_persona')) {
       persona = context['active_persona'].toString();
     }
@@ -638,42 +940,44 @@ class _OfflineAI {
         break;
       case 'Overlord':
       case 'Tactical':
-      default:
         responseSet = _tacticalResponses;
+        break;
+      case 'Companion':
+      default:
+        responseSet = _companionResponses;
         break;
     }
 
-    if (lower.contains('help') ||
-        lower.contains('emergency') ||
-        lower.contains('sos')) return _get(responseSet, 'sos');
-    if (lower.contains('scared') ||
-        lower.contains('lost') ||
-        lower.contains('panic')) return _get(responseSet, 'panic');
-    if (lower.contains('navigate') ||
-        lower.contains('direction') ||
-        lower.contains('backtrack')) return _get(responseSet, 'navigate');
-    if (lower.contains('where am i') ||
-        lower.contains('location') ||
-        lower.contains('coordinates')) return _get(responseSet, 'location');
-    if (lower.contains('weather') ||
-        lower.contains('rain') ||
-        lower.contains('temperature')) return _get(responseSet, 'weather');
-    if (lower.contains('water') || lower.contains('thirsty'))
-      return _get(responseSet, 'water');
-    if (lower.contains('camp') ||
-        lower.contains('sleep') ||
-        lower.contains('shelter')) return _get(responseSet, 'camp');
-    if (lower.contains('compass') ||
-        lower.contains('bearing') ||
-        lower.contains('north')) return _get(responseSet, 'compass');
-    if (lower.contains('mesh') ||
-        lower.contains('network') ||
-        lower.contains('connect')) return _get(responseSet, 'mesh');
-    if (lower.contains('hello') ||
-        lower.contains('hi') ||
-        lower.contains('hey')) return _get(responseSet, 'greeting');
+    String baseResponse;
+    if (lower.contains('sos') || lower.contains('emergency') || lower.contains('mayday')) {
+      baseResponse = _get(responseSet, 'sos');
+    } else if (lower.contains('where am i') ||
+        lower.contains('my location') ||
+        lower.contains('coordinates')) {
+      if (lat != null && lon != null) {
+        baseResponse = 'You\'re at $lat, $lon.${speed != null ? ' Speed: $speed.' : ''}';
+      } else {
+        baseResponse = _get(responseSet, 'location');
+      }
+    } else if (lower.contains('food') || lower.contains('recipe') ||
+        lower.contains('cook') || lower.contains('eat') || lower.contains('hungry')) {
+      baseResponse = _get(responseSet, persona == 'Companion' ? 'food' : 'default');
+    } else if (lower.contains('bored') || lower.contains('nothing to do')) {
+      baseResponse = _get(responseSet, persona == 'Companion' ? 'bored' : 'default');
+    } else if (lower.contains('hello') || lower.contains('hi ') ||
+        lower == 'hi' || lower.contains('hey') || lower.contains('g\'day')) {
+      baseResponse = _get(responseSet, 'greeting');
+    } else if (lower.contains('navigate') || lower.contains('direction') || lower.contains('backtrack')) {
+      baseResponse = _get(responseSet, 'navigate');
+    } else if (lower.contains('water') || lower.contains('thirsty')) {
+      baseResponse = _get(responseSet, 'water');
+    } else if (lower.contains('camp') || lower.contains('sleep') || lower.contains('shelter')) {
+      baseResponse = _get(responseSet, 'camp');
+    } else {
+      baseResponse = _get(responseSet, 'default');
+    }
 
-    return _get(responseSet, 'default');
+    return locationPrefix.isNotEmpty ? '$locationPrefix$baseResponse' : baseResponse;
   }
 
   static String _get(Map<String, List<String>> responseSet, String key) {

@@ -1,335 +1,71 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
-import 'dart:math';
-import 'package:flutter/material.dart';
+import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:http/http.dart' as http;
-import 'package:bush_track/theme/app_colors.dart';
+import 'package:bush_track/core/config/api_config.dart';
 
-/// Offline Map Tile Manager
-/// Downloads and caches map tiles for offline use
-/// Replaces Avenza Maps and Google Maps offline capabilities
-class OfflineMapManager {
-  static final OfflineMapManager _instance = OfflineMapManager._internal();
-  factory OfflineMapManager() => _instance;
-  OfflineMapManager._internal();
+enum MapStyle { streets, satellite, topo, outdoor, dark }
 
-  final Map<String, OfflineMapRegion> _downloadedRegions = {};
-  bool _isInitialized = false;
-  String? _tilesDirectory;
-  
-  // Tile providers for offline use
-  static const String _osmUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-  static const String _cartoDarkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png';
-  static const String _esriSatelliteUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
-  
-  // Download state
-  final _downloadProgressController = StreamController<DownloadProgress>.broadcast();
-  Stream<DownloadProgress> get downloadProgress => _downloadProgressController.stream;
-  
-  bool get isInitialized => _isInitialized;
-  List<OfflineMapRegion> get downloadedRegions => _downloadedRegions.values.toList();
+enum DownloadStatus { pending, downloading, paused, completed, failed, cancelled }
 
-  /// Initialize the offline map manager
-  Future<void> initialize() async {
-    if (_isInitialized) return;
-    
-    try {
-      final appDir = await getApplicationDocumentsDirectory();
-      _tilesDirectory = '${appDir.path}/offline_tiles';
-      
-      // Create directory if needed
-      final dir = Directory(_tilesDirectory!);
-      if (!await dir.exists()) {
-        await dir.create(recursive: true);
-      }
-      
-      // Load existing regions
-      await _loadExistingRegions();
-      
-      _isInitialized = true;
-      print('✅ OfflineMapManager initialized: $_tilesDirectory');
-    } catch (e) {
-      print('❌ OfflineMapManager initialization failed: $e');
+extension MapStyleExt on MapStyle {
+  String get label {
+    switch (this) {
+      case MapStyle.streets: return 'Streets';
+      case MapStyle.satellite: return 'Satellite';
+      case MapStyle.topo: return 'Topographic';
+      case MapStyle.outdoor: return 'Outdoor';
+      case MapStyle.dark: return 'Dark';
     }
   }
-  
-  /// Load existing downloaded regions from disk
-  Future<void> _loadExistingRegions() async {
-    try {
-      final metadataFile = File('$_tilesDirectory/regions.json');
-      if (await metadataFile.exists()) {
-        final content = await metadataFile.readAsString();
-        // Parse and load regions
-        // Implementation simplified for brevity
-      }
-    } catch (e) {
-      print('⚠️ Could not load existing regions: $e');
+
+  String tileUrl(int z, int x, int y) {
+    const k = ApiConfig.maptilerKey;
+    switch (this) {
+      case MapStyle.streets:   return 'https://api.maptiler.com/maps/streets-v2/$z/$x/$y.png?key=$k';
+      case MapStyle.satellite: return 'https://api.maptiler.com/maps/satellite/$z/$x/$y.jpg?key=$k';
+      case MapStyle.topo:      return 'https://api.maptiler.com/maps/topo-v2/$z/$x/$y.png?key=$k';
+      case MapStyle.outdoor:   return 'https://api.maptiler.com/maps/outdoor-v2/$z/$x/$y.png?key=$k';
+      case MapStyle.dark:      return 'https://api.maptiler.com/maps/dataviz-dark/$z/$x/$y.png?key=$k';
     }
   }
-  
-  /// Calculate tiles needed for a region
-  List<TileCoords> _calculateTiles(LatLngBounds bounds, int minZoom, int maxZoom) {
-    final tiles = <TileCoords>[];
-    
-    for (int z = minZoom; z <= maxZoom; z++) {
-      final minTile = _latLonToTile(bounds.southWest.latitude, bounds.southWest.longitude, z);
-      final maxTile = _latLonToTile(bounds.northEast.latitude, bounds.northEast.longitude, z);
-      
-      for (int x = minTile.x; x <= maxTile.x; x++) {
-        for (int y = minTile.y; y <= maxTile.y; y++) {
-          tiles.add(TileCoords(x: x, y: y, z: z));
-        }
-      }
+
+  String get urlTemplate {
+    const k = ApiConfig.maptilerKey;
+    switch (this) {
+      case MapStyle.streets:   return 'https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=$k';
+      case MapStyle.satellite: return 'https://api.maptiler.com/maps/satellite/{z}/{x}/{y}.jpg?key=$k';
+      case MapStyle.topo:      return 'https://api.maptiler.com/maps/topo-v2/{z}/{x}/{y}.png?key=$k';
+      case MapStyle.outdoor:   return 'https://api.maptiler.com/maps/outdoor-v2/{z}/{x}/{y}.png?key=$k';
+      case MapStyle.dark:      return 'https://api.maptiler.com/maps/dataviz-dark/{z}/{x}/{y}.png?key=$k';
     }
-    
-    return tiles;
-  }
-  
-  /// Convert lat/lon to tile coordinates
-  TileCoords _latLonToTile(double lat, double lon, int zoom) {
-    final latRad = lat * pi / 180;
-    final n = pow(2, zoom).toInt();
-    final x = ((lon + 180) / 360 * n).floor();
-    final y = ((1 - log(tan(latRad) + 1 / cos(latRad)) / pi) / 2 * n).floor();
-    return TileCoords(x: x, y: y, z: zoom);
-  }
-  
-  /// Estimate download size for a region
-  Future<SizeEstimate> estimateDownloadSize(
-    LatLngBounds bounds, 
-    int minZoom, 
-    int maxZoom,
-  ) async {
-    final tiles = _calculateTiles(bounds, minZoom, maxZoom);
-    
-    // Estimate: ~50KB per tile average (compressed PNG/JPG)
-    final estimatedBytes = tiles.length * 50 * 1024;
-    
-    return SizeEstimate(
-      tileCount: tiles.length,
-      estimatedSizeBytes: estimatedBytes,
-      estimatedTimeMinutes: (tiles.length / 60).ceil(), // ~60 tiles/min
-    );
-  }
-  
-  /// Download a region for offline use
-  Future<OfflineMapRegion> downloadRegion({
-    required String name,
-    required LatLngBounds bounds,
-    required int minZoom,
-    required int maxZoom,
-    required MapType mapType,
-    VoidCallback? onComplete,
-  }) async {
-    if (!_isInitialized) await initialize();
-    
-    final id = DateTime.now().millisecondsSinceEpoch.toString();
-    final tiles = _calculateTiles(bounds, minZoom, maxZoom);
-    
-    final region = OfflineMapRegion(
-      id: id,
-      name: name,
-      bounds: bounds,
-      minZoom: minZoom,
-      maxZoom: maxZoom,
-      mapType: mapType,
-      totalTiles: tiles.length,
-      downloadedTiles: 0,
-      status: DownloadStatus.downloading,
-      createdAt: DateTime.now(),
-    );
-    
-    _downloadedRegions[id] = region;
-    
-    // Start download
-    _downloadTiles(region, tiles, mapType);
-    
-    return region;
-  }
-  
-  /// Download tiles in background
-  Future<void> _downloadTiles(
-    OfflineMapRegion region,
-    List<TileCoords> tiles,
-    MapType mapType,
-  ) async {
-    final urlTemplate = _getUrlTemplate(mapType);
-    int downloaded = 0;
-    int failed = 0;
-    
-    for (int i = 0; i < tiles.length; i++) {
-      final tile = tiles[i];
-      
-      try {
-        // Build URL with subdomain rotation
-        final subdomain = String.fromCharCode(97 + (i % 3)); // a, b, c
-        final url = urlTemplate
-            .replaceAll('{s}', subdomain)
-            .replaceAll('{z}', tile.z.toString())
-            .replaceAll('{x}', tile.x.toString())
-            .replaceAll('{y}', tile.y.toString());
-        
-        // Download tile
-        final response = await http.get(Uri.parse(url)).timeout(
-          const Duration(seconds: 10),
-        );
-        
-        if (response.statusCode == 200) {
-          // Save to disk
-          await _saveTile(region.id, tile, response.bodyBytes);
-          downloaded++;
-        } else {
-          failed++;
-        }
-      } catch (e) {
-        failed++;
-      }
-      
-      // Report progress every 10 tiles
-      if (i % 10 == 0 || i == tiles.length - 1) {
-        final progress = DownloadProgress(
-          regionId: region.id,
-          downloaded: downloaded,
-          total: tiles.length,
-          percentage: (downloaded / tiles.length * 100).round(),
-          failed: failed,
-        );
-        _downloadProgressController.add(progress);
-      }
-      
-      // Small delay to not overwhelm server
-      await Future.delayed(const Duration(milliseconds: 50));
-    }
-    
-    // Mark complete
-    region.status = DownloadStatus.completed;
-    region.downloadedTiles = downloaded;
-    await _saveRegionMetadata(region);
-    
-    print('✅ Downloaded $downloaded tiles for region ${region.name}');
-  }
-  
-  /// Save tile to disk
-  Future<void> _saveTile(String regionId, TileCoords tile, Uint8List data) async {
-    final path = '$_tilesDirectory/$regionId/${tile.z}/${tile.x}/${tile.y}.png';
-    final file = File(path);
-    await file.parent.create(recursive: true);
-    await file.writeAsBytes(data);
-  }
-  
-  /// Save region metadata
-  Future<void> _saveRegionMetadata(OfflineMapRegion region) async {
-    // Save to JSON file
-    // Implementation simplified
-  }
-  
-  /// Get URL template for map type
-  String _getUrlTemplate(MapType type) {
-    switch (type) {
-      case MapType.standard:
-        return _osmUrl;
-      case MapType.dark:
-        return _cartoDarkUrl;
-      case MapType.satellite:
-        return _esriSatelliteUrl;
-    }
-  }
-  
-  /// Check if a tile is available offline
-  Future<bool> isTileAvailable(int x, int y, int z) async {
-    if (!_isInitialized) return false;
-    
-    // Check all regions
-    for (final region in _downloadedRegions.values) {
-      if (region.status != DownloadStatus.completed) continue;
-      
-      final path = '$_tilesDirectory/${region.id}/$z/$x/$y.png';
-      final file = File(path);
-      if (await file.exists()) return true;
-    }
-    
-    return false;
-  }
-  
-  /// Get offline tile path if available
-  Future<String?> getOfflineTilePath(int x, int y, int z) async {
-    for (final region in _downloadedRegions.values) {
-      if (region.status != DownloadStatus.completed) continue;
-      
-      final path = '$_tilesDirectory/${region.id}/$z/$x/$y.png';
-      final file = File(path);
-      if (await file.exists()) return path;
-    }
-    return null;
-  }
-  
-  /// Delete a region
-  Future<void> deleteRegion(String regionId) async {
-    final region = _downloadedRegions[regionId];
-    if (region == null) return;
-    
-    // Delete directory
-    final dir = Directory('$_tilesDirectory/$regionId');
-    if (await dir.exists()) {
-      await dir.delete(recursive: true);
-    }
-    
-    _downloadedRegions.remove(regionId);
-    await _saveRegionsList();
-  }
-  
-  /// Save regions list to disk
-  Future<void> _saveRegionsList() async {
-    // Implementation
-  }
-  
-  /// Get storage usage
-  Future<StorageInfo> getStorageUsage() async {
-    if (!_isInitialized) await initialize();
-    
-    int totalBytes = 0;
-    int tileCount = 0;
-    
-    final dir = Directory(_tilesDirectory!);
-    if (await dir.exists()) {
-      await for (final entity in dir.list(recursive: true)) {
-        if (entity is File) {
-          final stat = await entity.stat();
-          totalBytes += stat.size;
-          tileCount++;
-        }
-      }
-    }
-    
-    return StorageInfo(
-      totalBytes: totalBytes,
-      tileCount: tileCount,
-      regionCount: _downloadedRegions.length,
-    );
-  }
-  
-  void dispose() {
-    _downloadProgressController.close();
   }
 }
 
-/// Offline map region definition
+class _Tile {
+  final int x, y, z;
+  const _Tile(this.x, this.y, this.z);
+}
+
 class OfflineMapRegion {
   final String id;
-  final String name;
+  String name;
   final LatLngBounds bounds;
   final int minZoom;
   final int maxZoom;
-  final MapType mapType;
+  final MapStyle style;
   final int totalTiles;
   int downloadedTiles;
+  int failedTiles;
   DownloadStatus status;
   final DateTime createdAt;
   DateTime? completedAt;
+  int storedBytes;
 
   OfflineMapRegion({
     required this.id,
@@ -337,119 +73,395 @@ class OfflineMapRegion {
     required this.bounds,
     required this.minZoom,
     required this.maxZoom,
-    required this.mapType,
+    required this.style,
     required this.totalTiles,
-    required this.downloadedTiles,
+    this.downloadedTiles = 0,
+    this.failedTiles = 0,
     required this.status,
     required this.createdAt,
     this.completedAt,
+    this.storedBytes = 0,
   });
 
-  double get progressPercentage {
-    return totalTiles > 0 ? (downloadedTiles / totalTiles * 100) : 0;
+  double get progress => totalTiles > 0 ? downloadedTiles / totalTiles : 0;
+  int get remainingTiles => totalTiles - downloadedTiles - failedTiles;
+
+  String get formattedSize {
+    if (storedBytes < 1024 * 1024) return '${(storedBytes / 1024).toStringAsFixed(1)} KB';
+    if (storedBytes < 1024 * 1024 * 1024) return '${(storedBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '${(storedBytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'minLat': bounds.southWest.latitude,
+    'minLon': bounds.southWest.longitude,
+    'maxLat': bounds.northEast.latitude,
+    'maxLon': bounds.northEast.longitude,
+    'minZoom': minZoom,
+    'maxZoom': maxZoom,
+    'style': style.index,
+    'totalTiles': totalTiles,
+    'downloadedTiles': downloadedTiles,
+    'failedTiles': failedTiles,
+    'status': status.index,
+    'createdAt': createdAt.millisecondsSinceEpoch,
+    'completedAt': completedAt?.millisecondsSinceEpoch,
+    'storedBytes': storedBytes,
+  };
+
+  factory OfflineMapRegion.fromJson(Map<String, dynamic> j) => OfflineMapRegion(
+    id: j['id'],
+    name: j['name'],
+    bounds: LatLngBounds(
+      LatLng(j['minLat'], j['minLon']),
+      LatLng(j['maxLat'], j['maxLon']),
+    ),
+    minZoom: j['minZoom'],
+    maxZoom: j['maxZoom'],
+    style: MapStyle.values[j['style'] ?? 0],
+    totalTiles: j['totalTiles'],
+    downloadedTiles: j['downloadedTiles'] ?? 0,
+    failedTiles: j['failedTiles'] ?? 0,
+    status: DownloadStatus.values[j['status'] ?? 0],
+    createdAt: DateTime.fromMillisecondsSinceEpoch(j['createdAt']),
+    completedAt: j['completedAt'] != null
+        ? DateTime.fromMillisecondsSinceEpoch(j['completedAt'])
+        : null,
+    storedBytes: j['storedBytes'] ?? 0,
+  );
 }
 
-/// Tile coordinates
-class TileCoords {
-  final int x;
-  final int y;
-  final int z;
-
-  TileCoords({required this.x, required this.y, required this.z});
-}
-
-/// Download progress
 class DownloadProgress {
   final String regionId;
   final int downloaded;
   final int total;
-  final int percentage;
   final int failed;
+  final DownloadStatus status;
 
   DownloadProgress({
     required this.regionId,
     required this.downloaded,
     required this.total,
-    required this.percentage,
     required this.failed,
+    required this.status,
   });
+
+  double get fraction => total > 0 ? downloaded / total : 0;
+  int get percent => (fraction * 100).round();
 }
 
-/// Size estimate
 class SizeEstimate {
   final int tileCount;
-  final int estimatedSizeBytes;
-  final int estimatedTimeMinutes;
+  final int estimatedBytes;
 
-  SizeEstimate({
-    required this.tileCount,
-    required this.estimatedSizeBytes,
-    required this.estimatedTimeMinutes,
-  });
+  SizeEstimate(this.tileCount, this.estimatedBytes);
 
   String get formattedSize {
-    if (estimatedSizeBytes < 1024 * 1024) {
-      return '${(estimatedSizeBytes / 1024).toStringAsFixed(1)} KB';
-    } else if (estimatedSizeBytes < 1024 * 1024 * 1024) {
-      return '${(estimatedSizeBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    } else {
-      return '${(estimatedSizeBytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+    if (estimatedBytes < 1024 * 1024) return '${(estimatedBytes / 1024).toStringAsFixed(0)} KB';
+    if (estimatedBytes < 1024 * 1024 * 1024) return '${(estimatedBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '${(estimatedBytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+  }
+}
+
+class OfflineMapManager {
+  static final OfflineMapManager _instance = OfflineMapManager._internal();
+  factory OfflineMapManager() => _instance;
+  OfflineMapManager._internal();
+
+  String? _tilesDir;
+  bool _isInitialized = false;
+  final Map<String, OfflineMapRegion> _regions = {};
+  final Map<String, bool> _pauseFlags = {};
+  final Map<String, bool> _cancelFlags = {};
+
+  final _progressCtrl = StreamController<DownloadProgress>.broadcast();
+  Stream<DownloadProgress> get downloadProgress => _progressCtrl.stream;
+
+  bool get isInitialized => _isInitialized;
+  List<OfflineMapRegion> get regions => List.unmodifiable(_regions.values.toList()
+    ..sort((a, b) => b.createdAt.compareTo(a.createdAt)));
+
+  Future<void> initialize() async {
+    if (_isInitialized || kIsWeb) return;
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      _tilesDir = '${appDir.path}/offline_tiles';
+      await Directory(_tilesDir!).create(recursive: true);
+      await _loadRegions();
+      _isInitialized = true;
+    } catch (e) {
+      debugPrint('OfflineMapManager init error: $e');
     }
   }
-}
 
-/// Storage info
-class StorageInfo {
-  final int totalBytes;
-  final int tileCount;
-  final int regionCount;
+  // ─── Tile math (correct) ────────────────────────────────────────────────────
 
-  StorageInfo({
-    required this.totalBytes,
-    required this.tileCount,
-    required this.regionCount,
-  });
+  static _Tile _latLonToTile(double lat, double lon, int z) {
+    final latRad = lat * math.pi / 180;
+    final n = math.pow(2, z).toInt();
+    final x = ((lon + 180) / 360 * n).floor().clamp(0, n - 1);
+    final y = ((1 - math.log(math.tan(latRad) + 1 / math.cos(latRad)) / math.pi) / 2 * n)
+        .floor()
+        .clamp(0, n - 1);
+    return _Tile(x, y, z);
+  }
 
-  String get formattedSize {
-    if (totalBytes < 1024 * 1024) {
-      return '${(totalBytes / 1024).toStringAsFixed(1)} KB';
-    } else if (totalBytes < 1024 * 1024 * 1024) {
-      return '${(totalBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    } else {
-      return '${(totalBytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+  static List<_Tile> _tilesForBounds(LatLngBounds b, int minZ, int maxZ) {
+    final tiles = <_Tile>[];
+    for (int z = minZ; z <= maxZ; z++) {
+      final sw = _latLonToTile(b.southWest.latitude, b.southWest.longitude, z);
+      final ne = _latLonToTile(b.northEast.latitude, b.northEast.longitude, z);
+      for (int x = sw.x; x <= ne.x; x++) {
+        for (int y = ne.y; y <= sw.y; y++) {
+          tiles.add(_Tile(x, y, z));
+        }
+      }
+    }
+    return tiles;
+  }
+
+  // ─── Estimation ─────────────────────────────────────────────────────────────
+
+  SizeEstimate estimate(LatLngBounds bounds, int minZoom, int maxZoom, MapStyle style) {
+    final tiles = _tilesForBounds(bounds, minZoom, maxZoom);
+    final bytesPerTile = style == MapStyle.satellite ? 65 * 1024 : 35 * 1024;
+    return SizeEstimate(tiles.length, tiles.length * bytesPerTile);
+  }
+
+  // ─── Download ───────────────────────────────────────────────────────────────
+
+  Future<OfflineMapRegion> startDownload({
+    required String name,
+    required LatLngBounds bounds,
+    required int minZoom,
+    required int maxZoom,
+    required MapStyle style,
+  }) async {
+    if (!_isInitialized) await initialize();
+
+    final tiles = _tilesForBounds(bounds, minZoom, maxZoom);
+    final id = DateTime.now().millisecondsSinceEpoch.toString();
+
+    final region = OfflineMapRegion(
+      id: id,
+      name: name,
+      bounds: bounds,
+      minZoom: minZoom,
+      maxZoom: maxZoom,
+      style: style,
+      totalTiles: tiles.length,
+      status: DownloadStatus.downloading,
+      createdAt: DateTime.now(),
+    );
+
+    _regions[id] = region;
+    _pauseFlags[id] = false;
+    _cancelFlags[id] = false;
+    await _saveRegions();
+
+    _runDownload(region, tiles);
+    return region;
+  }
+
+  void pauseDownload(String id) {
+    _pauseFlags[id] = true;
+    _regions[id]?.status = DownloadStatus.paused;
+    _emitProgress(_regions[id]!);
+  }
+
+  void resumeDownload(String id) {
+    _pauseFlags[id] = false;
+    if (_regions[id]?.status == DownloadStatus.paused) {
+      _regions[id]!.status = DownloadStatus.downloading;
+      final tiles = _tilesForBounds(
+        _regions[id]!.bounds,
+        _regions[id]!.minZoom,
+        _regions[id]!.maxZoom,
+      );
+      _runDownload(_regions[id]!, tiles);
     }
   }
-}
 
-/// Map types
-enum MapType {
-  standard,
-  dark,
-  satellite,
-}
-
-/// Download status
-enum DownloadStatus {
-  pending,
-  downloading,
-  paused,
-  completed,
-  failed,
-}
-
-// Math constants
-const double pi = 3.14159265358979323846;
-num pow(num x, num exponent) => _pow(x, exponent);
-num _pow(num x, num exponent) {
-  num result = 1;
-  for (int i = 0; i < exponent; i++) {
-    result *= x;
+  void cancelDownload(String id) {
+    _cancelFlags[id] = true;
+    _pauseFlags[id] = false;
+    _regions[id]?.status = DownloadStatus.cancelled;
+    _emitProgress(_regions[id]!);
   }
-  return result;
-}
-num log(num x) => _log(x);
-num _log(num x) {
-  // Simple ln approximation
-  return x > 0 ? (x - 1) / x : 0; // Simplified
+
+  Future<void> deleteRegion(String id) async {
+    cancelDownload(id);
+    final dir = Directory('$_tilesDir/$id');
+    if (await dir.exists()) await dir.delete(recursive: true);
+    _regions.remove(id);
+    _pauseFlags.remove(id);
+    _cancelFlags.remove(id);
+    await _saveRegions();
+  }
+
+  // ─── Internal download ───────────────────────────────────────────────────────
+
+  Future<void> _runDownload(OfflineMapRegion region, List<_Tile> tiles) async {
+    final id = region.id;
+    final dir = Directory('$_tilesDir/$id');
+    await dir.create(recursive: true);
+
+    // Skip already-downloaded tiles on resume
+    final startIdx = region.downloadedTiles.clamp(0, tiles.length);
+    final remaining = tiles.sublist(startIdx);
+
+    const workers = 5;
+    int sharedCursor = 0;
+
+    Future<void> safeWorker() async {
+      while (true) {
+        final idx = sharedCursor++;
+        if (idx >= remaining.length) break;
+        if (_cancelFlags[id] == true) return;
+        while (_pauseFlags[id] == true) {
+          await Future.delayed(const Duration(milliseconds: 300));
+        }
+        if (_cancelFlags[id] == true) return;
+
+        final tile = remaining[idx];
+        try {
+          final url = region.style.tileUrl(tile.z, tile.x, tile.y);
+          final resp = await http.get(Uri.parse(url))
+              .timeout(const Duration(seconds: 10));
+          if (resp.statusCode == 200) {
+            final path = '${dir.path}/${tile.z}_${tile.x}_${tile.y}';
+            await File(path).writeAsBytes(resp.bodyBytes);
+            region.downloadedTiles++;
+            region.storedBytes += resp.bodyBytes.length;
+          } else {
+            region.failedTiles++;
+          }
+        } catch (_) {
+          region.failedTiles++;
+        }
+        if ((region.downloadedTiles + region.failedTiles) % 10 == 0) {
+          _emitProgress(region);
+        }
+      }
+    }
+
+    await Future.wait(List.generate(workers, (_) => safeWorker()));
+
+    if (_cancelFlags[id] != true) {
+      region.status = DownloadStatus.completed;
+      region.completedAt = DateTime.now();
+    }
+    _emitProgress(region);
+    await _saveRegions();
+  }
+
+  void _emitProgress(OfflineMapRegion r) {
+    _progressCtrl.add(DownloadProgress(
+      regionId: r.id,
+      downloaded: r.downloadedTiles,
+      total: r.totalTiles,
+      failed: r.failedTiles,
+      status: r.status,
+    ));
+  }
+
+  // ─── Offline tile serving ────────────────────────────────────────────────────
+
+  Future<List<int>?> getOfflineTile(int z, int x, int y) async {
+    for (final region in _regions.values) {
+      if (region.status != DownloadStatus.completed) continue;
+      final path = '$_tilesDir/${region.id}/${z}_${x}_$y';
+      final f = File(path);
+      if (await f.exists()) return f.readAsBytes();
+    }
+    return null;
+  }
+
+  bool hasCoverageAt(LatLng point, int zoom) {
+    for (final region in _regions.values) {
+      if (region.status != DownloadStatus.completed) continue;
+      if (zoom < region.minZoom || zoom > region.maxZoom) continue;
+      if (region.bounds.contains(point)) return true;
+    }
+    return false;
+  }
+
+  // ─── Persistence ─────────────────────────────────────────────────────────────
+
+  Future<void> _saveRegions() async {
+    if (_tilesDir == null) return;
+    try {
+      final file = File('$_tilesDir/regions.json');
+      final json = jsonEncode(_regions.values.map((r) => r.toJson()).toList());
+      await file.writeAsString(json);
+    } catch (e) {
+      debugPrint('Save regions error: $e');
+    }
+  }
+
+  Future<void> _loadRegions() async {
+    try {
+      final file = File('$_tilesDir/regions.json');
+      if (!await file.exists()) return;
+      final list = jsonDecode(await file.readAsString()) as List;
+      for (final item in list) {
+        final r = OfflineMapRegion.fromJson(item as Map<String, dynamic>);
+        // Mark any in-progress downloads as failed (interrupted by app close)
+        if (r.status == DownloadStatus.downloading) {
+          r.status = DownloadStatus.paused;
+        }
+        _regions[r.id] = r;
+      }
+    } catch (e) {
+      debugPrint('Load regions error: $e');
+    }
+  }
+
+  Future<int> totalStorageBytes() async {
+    if (_tilesDir == null) return 0;
+    int total = 0;
+    final dir = Directory(_tilesDir!);
+    if (!await dir.exists()) return 0;
+    await for (final entity in dir.list(recursive: true)) {
+      if (entity is File) total += (await entity.stat()).size;
+    }
+    return total;
+  }
+
+  // ─── Auto region detection ───────────────────────────────────────────────────
+
+  /// Automatically download a ~50 km region around the user's first GPS fix.
+  /// Safe to call multiple times — subsequent calls are no-ops if a region
+  /// named "Auto Region" already exists or is downloading.
+  Future<void> autoDetectAndDownloadRegion(LatLng position) async {
+    if (kIsWeb) return;
+    await initialize();
+
+    // Skip if we already have a completed or in-progress auto region
+    final alreadyExists = _regions.values.any((r) =>
+        r.name == 'Auto Region' &&
+        (r.status == DownloadStatus.completed ||
+            r.status == DownloadStatus.downloading));
+    if (alreadyExists) return;
+
+    // ~0.45° ≈ 50 km at most latitudes
+    const half = 0.45;
+    final bounds = LatLngBounds(
+      LatLng(position.latitude - half, position.longitude - half),
+      LatLng(position.latitude + half, position.longitude + half),
+    );
+
+    // Zoom 6–13: good overview + navigation detail, manageable tile count
+    await startDownload(
+      name: 'Auto Region',
+      bounds: bounds,
+      minZoom: 6,
+      maxZoom: 13,
+      style: MapStyle.outdoor,
+    );
+    debugPrint('OfflineMapManager: auto region download started at $position');
+  }
+
 }

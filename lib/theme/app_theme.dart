@@ -17,14 +17,12 @@ class AppTheme {
         onSecondary: Colors.black,
         onSurface: AppColors.textPrimary,
       ),
-      
       appBarTheme: const AppBarTheme(
         backgroundColor: AppColors.panelMatte,
         foregroundColor: AppColors.textPrimary,
         elevation: 0,
         centerTitle: true,
       ),
-      
       cardTheme: CardThemeData(
         color: AppColors.panelMatte,
         elevation: 8,
@@ -33,14 +31,12 @@ class AppTheme {
           borderRadius: BorderRadius.circular(16),
         ),
       ),
-      
       bottomSheetTheme: const BottomSheetThemeData(
         backgroundColor: AppColors.panelMatte,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
       ),
-      
       textTheme: GoogleFonts.outfitTextTheme(const TextTheme(
         displayLarge: TextStyle(
           color: AppColors.textPrimary,
@@ -81,7 +77,6 @@ class AppTheme {
           letterSpacing: 0.5,
         ),
       )),
-      
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: AppColors.panelLight,
@@ -91,16 +86,16 @@ class AppTheme {
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: AppColors.panelLight),
+          borderSide: const BorderSide(color: AppColors.panelLight),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: AppColors.primaryOrange, width: 2),
+          borderSide:
+              const BorderSide(color: AppColors.primaryOrange, width: 2),
         ),
         hintStyle: const TextStyle(color: AppColors.textMuted),
         labelStyle: const TextStyle(color: AppColors.textSecondary),
       ),
-      
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primaryOrange,
@@ -113,13 +108,11 @@ class AppTheme {
           ),
         ),
       ),
-      
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           foregroundColor: AppColors.primaryOrange,
         ),
       ),
-      
       floatingActionButtonTheme: FloatingActionButtonThemeData(
         backgroundColor: AppColors.primaryOrange,
         foregroundColor: Colors.white,
@@ -128,7 +121,6 @@ class AppTheme {
           borderRadius: BorderRadius.circular(16),
         ),
       ),
-      
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
@@ -143,16 +135,13 @@ class AppTheme {
           return AppColors.panelLight;
         }),
       ),
-      
       iconTheme: const IconThemeData(
         color: AppColors.textPrimary,
       ),
-      
-      dividerTheme: DividerThemeData(
+      dividerTheme: const DividerThemeData(
         color: AppColors.panelLight,
         thickness: 1,
       ),
-      
       snackBarTheme: SnackBarThemeData(
         backgroundColor: AppColors.panelMatte,
         contentTextStyle: const TextStyle(color: AppColors.textPrimary),
@@ -161,14 +150,12 @@ class AppTheme {
           borderRadius: BorderRadius.circular(12),
         ),
       ),
-      
       dialogTheme: DialogThemeData(
         backgroundColor: AppColors.panelMatte,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
         ),
       ),
-      
       bottomNavigationBarTheme: const BottomNavigationBarThemeData(
         backgroundColor: AppColors.panelMatte,
         selectedItemColor: AppColors.primaryOrange,

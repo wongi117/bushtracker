@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'color_picker.dart';
 import '../../../core/models/trail.dart';
@@ -68,7 +67,7 @@ class _TrailCreationOverlayState extends State<TrailCreationOverlay> {
                     Icon(Icons.timeline, color: Color(0xFFFF5722), size: 24),
                     SizedBox(width: 8),
                     Text(
-                      '🛤️ Create Trail',
+                      'Create Trail',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 18,
@@ -85,30 +84,31 @@ class _TrailCreationOverlayState extends State<TrailCreationOverlay> {
                       color: Colors.white.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Icon(Icons.close, color: Colors.white70, size: 20),
+                    child: const Icon(Icons.close,
+                        color: Colors.white70, size: 20),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 16),
-            
+
             // Point count
             Text(
-              '📍 Points: ${widget.draftPoints.length}',
+              'Points: ${widget.draftPoints.length}',
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.7),
                 fontSize: 14,
               ),
             ),
             const SizedBox(height: 12),
-            
+
             // Action buttons
             Row(
               children: [
                 Expanded(
                   child: _buildActionButton(
                     Icons.undo,
-                    '↩️ Undo',
+                    'Undo',
                     widget.draftPoints.isEmpty ? null : widget.onUndo,
                   ),
                 ),
@@ -116,22 +116,23 @@ class _TrailCreationOverlayState extends State<TrailCreationOverlay> {
                 Expanded(
                   child: _buildActionButton(
                     Icons.clear_all,
-                    '🗑️ Clear',
+                    'Clear',
                     widget.draftPoints.isEmpty ? null : widget.onClear,
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 16),
-            
-              // Trail name input (only show when points exist)
-              if (widget.draftPoints.length >= 2) ...[
-                TextField(
-                  controller: _nameController,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: InputDecoration(
-                    hintText: '🏷️ Trail name (optional)',
-                  hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
+
+            // Trail name input (only show when points exist)
+            if (widget.draftPoints.length >= 2) ...[
+              TextField(
+                controller: _nameController,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Trail name (optional)',
+                  hintStyle:
+                      TextStyle(color: Colors.white.withValues(alpha: 0.5)),
                   filled: true,
                   fillColor: const Color(0xFF2C2C2C),
                   border: OutlineInputBorder(
@@ -145,10 +146,10 @@ class _TrailCreationOverlayState extends State<TrailCreationOverlay> {
                 ),
               ),
               const SizedBox(height: 16),
-              
+
               // Color picker
               const Text(
-                '🎨 Trail Colour',
+                'Trail Colour',
                 style: TextStyle(
                   color: Colors.white70,
                   fontSize: 14,
@@ -163,10 +164,10 @@ class _TrailCreationOverlayState extends State<TrailCreationOverlay> {
                 },
               ),
               const SizedBox(height: 16),
-              
+
               // Line style
               const Text(
-                '📊 Line Style',
+                'Line Style',
                 style: TextStyle(
                   color: Colors.white70,
                   fontSize: 14,
@@ -176,7 +177,7 @@ class _TrailCreationOverlayState extends State<TrailCreationOverlay> {
               const SizedBox(height: 12),
               _buildLineStylePicker(),
               const SizedBox(height: 20),
-              
+
               // Save button
               SizedBox(
                 width: double.infinity,
@@ -198,8 +199,8 @@ class _TrailCreationOverlayState extends State<TrailCreationOverlay> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                    child: const Text(
-                      '💾 Save Trail',
+                  child: const Text(
+                    'Save Trail',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -224,8 +225,8 @@ class _TrailCreationOverlayState extends State<TrailCreationOverlay> {
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                    child: Text(
-                      '👆 Tap on the map to drop points. Add at least 2 points to create a trail.',
+                      child: Text(
+                        'Tap on the map to drop points. Add at least 2 points to create a trail.',
                         style: TextStyle(
                           color: Colors.white.withValues(alpha: 0.7),
                           fontSize: 13,
@@ -244,7 +245,7 @@ class _TrailCreationOverlayState extends State<TrailCreationOverlay> {
 
   Widget _buildActionButton(IconData icon, String label, VoidCallback? onTap) {
     final isEnabled = onTap != null;
-    
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -393,7 +394,7 @@ class TrailFollowingOverlay extends StatelessWidget {
                     Icon(Icons.navigation, color: Color(0xFF00FF88), size: 24),
                     SizedBox(width: 8),
                     Text(
-                      '🧭 Following Trail',
+                      'Following Trail',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 16,
@@ -403,7 +404,8 @@ class TrailFollowingOverlay extends StatelessWidget {
                   ],
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
                     color: const Color(0xFF00FF88).withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(12),
@@ -420,7 +422,7 @@ class TrailFollowingOverlay extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
-            
+
             // Navigation message
             if (message != null)
               Container(
@@ -438,7 +440,7 @@ class TrailFollowingOverlay extends StatelessWidget {
                 ),
               ),
             const SizedBox(height: 16),
-            
+
             // Distance and bearing
             if (distanceToNext != null && bearing != null)
               Row(
@@ -446,7 +448,7 @@ class TrailFollowingOverlay extends StatelessWidget {
                   Expanded(
                     child: _buildInfoCard(
                       Icons.straighten,
-                      '📏 ${(distanceToNext! / 1000).toStringAsFixed(2)} km',
+                      '${(distanceToNext! / 1000).toStringAsFixed(2)} km',
                       'Distance',
                     ),
                   ),
@@ -454,14 +456,14 @@ class TrailFollowingOverlay extends StatelessWidget {
                   Expanded(
                     child: _buildInfoCard(
                       Icons.explore,
-                      '🧭 ${bearing!.toInt()}°',
+                      '${bearing!.toInt()}°',
                       'Bearing',
                     ),
                   ),
                 ],
               ),
             const SizedBox(height: 16),
-            
+
             // Direction arrow
             if (bearing != null)
               Container(
@@ -478,7 +480,7 @@ class TrailFollowingOverlay extends StatelessWidget {
                 ),
               ),
             const SizedBox(height: 16),
-            
+
             // Stop button
             SizedBox(
               width: double.infinity,
@@ -492,8 +494,8 @@ class TrailFollowingOverlay extends StatelessWidget {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                    child: const Text(
-                      '🛑 Stop Following',
+                child: const Text(
+                  'Stop Following',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,

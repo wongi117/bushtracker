@@ -85,9 +85,9 @@ class ConnectivityNotifier extends StateNotifier<ConnectivityState> {
     );
 
     try {
-      // Ping OpenRouter — any response (even 401) means internet is up
+      // Primary: Google — reliable connectivity check
       final response = await http.get(
-        Uri.parse('https://openrouter.ai/api/v1/models'),
+        Uri.parse('https://www.google.com'),
       ).timeout(const Duration(seconds: 5));
 
       final connected = response.statusCode < 500;
@@ -98,10 +98,10 @@ class ConnectivityNotifier extends StateNotifier<ConnectivityState> {
         lastOnline: connected ? DateTime.now() : state.lastOnline,
       );
     } catch (_) {
-      // Fallback: try Google
+      // Fallback: try Cloudflare DNS
       try {
         await http.get(
-          Uri.parse('https://www.google.com'),
+          Uri.parse('https://1.1.1.1'),
         ).timeout(const Duration(seconds: 4));
         state = ConnectivityState(
           isConnected: true,

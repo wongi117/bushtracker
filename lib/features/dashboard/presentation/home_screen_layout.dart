@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,6 +23,10 @@ import 'package:bush_track/features/dashboard/presentation/widgets/ai_voice_over
 import 'package:bush_track/features/weather/widgets/weather_overlay.dart';
 import 'package:bush_track/features/map/widgets/map_loading_indicator.dart';
 import 'package:bush_track/core/models/waypoint.dart';
+import 'package:bush_track/features/places/presentation/places_search_screen.dart';
+import 'package:bush_track/features/search/presentation/natural_language_search_screen.dart';
+import 'package:bush_track/features/ar/presentation/ar_compass_screen.dart';
+import 'package:bush_track/features/map/widgets/waypoint_editor.dart';
 
 class HomeScreenLayout extends ConsumerStatefulWidget {
   const HomeScreenLayout({super.key});
@@ -34,13 +39,15 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
   final MapController _mapController = MapController();
   bool _isSatellite = false;
   double _currentZoom = 13.0;
-  double _currentRotation = 0.0;
+  final double _currentRotation = 0.0;
   bool _mapInitialized = false;
   bool _tilesLoading = true;
+  bool _hasAutocentered = false;
   LatLng? _targetPin;
   CoordinateFormat _coordinateFormat = CoordinateFormat.decimalDegrees;
   bool _showCoordinatePanel = false;
-  final GlobalKey<MeasurementToolState> _measurementKey = GlobalKey<MeasurementToolState>();
+  final GlobalKey<MeasurementToolState> _measurementKey =
+      GlobalKey<MeasurementToolState>();
   bool _showMeasurementTool = false;
 
   @override
@@ -61,7 +68,20 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
     final locationState = ref.watch(locationProvider);
     final meshState = ref.watch(meshProvider);
     final trailState = ref.watch(trailProvider);
-    final aiState = ref.watch(aiAssistantProvider);
+    ref.watch(aiAssistantProvider);
+
+    // Auto-center map on first real GPS fix
+    ref.listen<LocationState>(locationProvider, (_, next) {
+      if (!_hasAutocentered &&
+          next.stats.currentLat != null &&
+          next.stats.currentLon != null) {
+        _hasAutocentered = true;
+        _mapController.move(
+          LatLng(next.stats.currentLat!, next.stats.currentLon!),
+          15.0,
+        );
+      }
+    });
 
     try {
       ref.watch(meshSyncProvider);
@@ -135,15 +155,18 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                           point: trailState.draftPoints[i],
                           width: 50,
                           height: 50,
-                          child: _buildNumberedMarker(i + 1, const Color(0xFFFF5722)),
+                          child: _buildNumberedMarker(
+                              i + 1, const Color(0xFFFF5722)),
                         ),
                     ],
                   ),
                 MarkerLayer(
                   markers: [
-                    if (locationState.stats.currentLat != null && locationState.stats.currentLon != null)
+                    if (locationState.stats.currentLat != null &&
+                        locationState.stats.currentLon != null)
                       Marker(
-                        point: LatLng(locationState.stats.currentLat!, locationState.stats.currentLon!),
+                        point: LatLng(locationState.stats.currentLat!,
+                            locationState.stats.currentLon!),
                         width: 60,
                         height: 60,
                         child: Stack(
@@ -155,10 +178,16 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                               decoration: const BoxDecoration(
                                 color: Colors.blue,
                                 shape: BoxShape.circle,
-                                boxShadow: [BoxShadow(color: Colors.blueAccent, blurRadius: 10, spreadRadius: 5)],
+                                boxShadow: [
+                                  BoxShadow(
+                                      color: Colors.blueAccent,
+                                      blurRadius: 10,
+                                      spreadRadius: 5)
+                                ],
                               ),
                             ),
-                            const Icon(Icons.navigation, color: Colors.white, size: 20),
+                            const Icon(Icons.navigation,
+                                color: Colors.white, size: 20),
                           ],
                         ),
                       ),
@@ -170,13 +199,19 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                         child: WaypointMarker(
                           waypoint: w,
                           onEdit: () => _editWaypoint(w),
-                          onDelete: () => ref.read(locationProvider.notifier).deleteWaypoint(w.id!),
-                          onColorChanged: (color) => ref.read(locationProvider.notifier).updateWaypointColor(w.id!, color),
-                          onIconChanged: (icon) => ref.read(locationProvider.notifier).updateWaypointIcon(w.id!, icon),
+                          onDelete: () => ref
+                              .read(locationProvider.notifier)
+                              .deleteWaypoint(w.id!),
+                          onColorChanged: (color) => ref
+                              .read(locationProvider.notifier)
+                              .updateWaypointColor(w.id!, color),
+                          onIconChanged: (icon) => ref
+                              .read(locationProvider.notifier)
+                              .updateWaypointIcon(w.id!, icon),
                           onNavigate: () {
                             ref.read(aiAssistantProvider.notifier).speak(
-                              "Setting navigation target to ${w.label ?? 'waypoint'}.",
-                            );
+                                  "Setting navigation target to ${w.label ?? 'waypoint'}.",
+                                );
                           },
                         ),
                       );
@@ -190,7 +225,8 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                         point: _targetPin!,
                         width: 50,
                         height: 50,
-                        child: const Icon(Icons.location_history, color: Colors.redAccent, size: 50),
+                        child: const Icon(Icons.location_history,
+                            color: Colors.redAccent, size: 50),
                       )
                     ],
                   ),
@@ -201,19 +237,24 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                         point: LatLng(packet.latitude!, packet.longitude!),
                         width: 40,
                         height: 40,
-                        child: const Icon(Icons.person_pin_circle, color: Colors.blueAccent, size: 40),
+                        child: const Icon(Icons.person_pin_circle,
+                            color: Colors.blueAccent, size: 40),
                       );
                     }).toList(),
                   ),
-                if (_showMeasurementTool && _measurementKey.currentState != null) ...[
+                if (_showMeasurementTool &&
+                    _measurementKey.currentState != null) ...[
                   PolylineLayer(
-                    polylines: _measurementKey.currentState!.getMeasurementPolylines(),
+                    polylines:
+                        _measurementKey.currentState!.getMeasurementPolylines(),
                   ),
                   PolygonLayer(
-                    polygons: _measurementKey.currentState!.getMeasurementPolygons(),
+                    polygons:
+                        _measurementKey.currentState!.getMeasurementPolygons(),
                   ),
                   MarkerLayer(
-                    markers: _measurementKey.currentState!.getMeasurementMarkers(),
+                    markers:
+                        _measurementKey.currentState!.getMeasurementMarkers(),
                   ),
                 ],
               ],
@@ -227,7 +268,8 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
             right: 20,
             child: TacticalGlassContainer(
               borderRadius: 50.0,
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
               child: Row(
                 children: [
                   const Icon(Icons.search, color: Colors.white70, size: 24),
@@ -235,12 +277,15 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                   Expanded(
                     child: GestureDetector(
                       onTap: () => _openSearch(),
-                      child: Text("Search location or ask AI...", style: kBodyTextStyle.copyWith(color: Colors.white70)),
+                      child: Text("Search location or ask AI...",
+                          style:
+                              kBodyTextStyle.copyWith(color: Colors.white70)),
                     ),
                   ),
                   GestureDetector(
                     onTap: () => _openChat(),
-                    child: const Icon(Icons.chat_bubble_outline, color: Colors.white70, size: 30),
+                    child: const Icon(Icons.chat_bubble_outline,
+                        color: Colors.white70, size: 30),
                   ),
                 ],
               ),
@@ -251,11 +296,59 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
             top: 140,
             child: Column(
               children: [
-                _buildTacticalButton(Icons.layers, () => setState(() => _isSatellite = !_isSatellite)),
+                _buildTacticalButton(Icons.layers,
+                    () => setState(() => _isSatellite = !_isSatellite)),
                 const SizedBox(height: 16),
-                _buildTacticalButton(Icons.compass_calibration, () => _openCompass()),
-                const SizedBox(height: 16),
-                _buildTacticalButton(Icons.sos, () => _sendSOS(), size: 70.0),
+                _buildTacticalButton(
+                    Icons.compass_calibration, () => _openCompass()),
+              ],
+            ),
+          ),
+          // SOS button — distinct red, always visible, pulses to draw attention
+          Positioned(
+            right: 16,
+            bottom: 290,
+            child: Column(
+              children: [
+                GestureDetector(
+                  onTap: _sendSOS,
+                  child: Container(
+                    width: 66,
+                    height: 66,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: const RadialGradient(
+                        colors: [Color(0xFFFF3B30), Color(0xFFB80000)],
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFFFF3B30).withValues(alpha: 0.55),
+                          blurRadius: 18,
+                          spreadRadius: 3,
+                        ),
+                      ],
+                    ),
+                    child: const Icon(Icons.sos_rounded, color: Colors.white, size: 32),
+                  ),
+                )
+                    .animate(onPlay: (c) => c.repeat(reverse: true))
+                    .scale(
+                      begin: const Offset(1.0, 1.0),
+                      end: const Offset(1.08, 1.08),
+                      duration: 900.ms,
+                      curve: Curves.easeInOut,
+                    ),
+                const SizedBox(height: 5),
+                const Text(
+                  'SOS',
+                  style: TextStyle(
+                    color: Color(0xFFFF3B30),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 2.0,
+                    shadows: [Shadow(color: Colors.black54, blurRadius: 4)],
+                  ),
+                ),
               ],
             ),
           ),
@@ -263,7 +356,8 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
             bottom: 220,
             left: 20,
             child: GestureDetector(
-              onTap: () => setState(() => _showCoordinatePanel = !_showCoordinatePanel),
+              onTap: () =>
+                  setState(() => _showCoordinatePanel = !_showCoordinatePanel),
               child: _showCoordinatePanel
                   ? SizedBox(
                       width: 280,
@@ -273,9 +367,11 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                         showAllFormats: true,
                         onFormatChanged: () {
                           setState(() {
-                            final formats = CoordinateFormat.values;
-                            final currentIndex = formats.indexOf(_coordinateFormat);
-                            _coordinateFormat = formats[(currentIndex + 1) % formats.length];
+                            const formats = CoordinateFormat.values;
+                            final currentIndex =
+                                formats.indexOf(_coordinateFormat);
+                            _coordinateFormat =
+                                formats[(currentIndex + 1) % formats.length];
                           });
                         },
                       ),
@@ -285,9 +381,11 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                       format: _coordinateFormat,
                       onFormatChanged: () {
                         setState(() {
-                          final formats = CoordinateFormat.values;
-                          final currentIndex = formats.indexOf(_coordinateFormat);
-                          _coordinateFormat = formats[(currentIndex + 1) % formats.length];
+                          const formats = CoordinateFormat.values;
+                          final currentIndex =
+                              formats.indexOf(_coordinateFormat);
+                          _coordinateFormat =
+                              formats[(currentIndex + 1) % formats.length];
                         });
                       },
                     ),
@@ -316,19 +414,23 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
               draftPoints: trailState.draftPoints,
               onCancel: () {
                 ref.read(trailProvider.notifier).cancelCreatingTrail();
-                ref.read(aiAssistantProvider.notifier).speak("Trail creation cancelled.");
+                ref
+                    .read(aiAssistantProvider.notifier)
+                    .speak("Trail creation cancelled.");
               },
-              onUndo: () => ref.read(trailProvider.notifier).removeLastDraftPoint(),
-              onClear: () => ref.read(trailProvider.notifier).clearDraftPoints(),
+              onUndo: () =>
+                  ref.read(trailProvider.notifier).removeLastDraftPoint(),
+              onClear: () =>
+                  ref.read(trailProvider.notifier).clearDraftPoints(),
               onSave: (name, color, lineStyle) {
                 ref.read(trailProvider.notifier).saveDraftTrail(
-                  name: name,
-                  color: color,
-                  lineStyle: lineStyle,
-                );
+                      name: name,
+                      color: color,
+                      lineStyle: lineStyle,
+                    );
                 ref.read(aiAssistantProvider.notifier).speak(
-                  "Trail '$name' saved with ${trailState.draftPoints.length} points.",
-                );
+                      "Trail '$name' saved with ${trailState.draftPoints.length} points.",
+                    );
               },
             ),
           if (_showMeasurementTool)
@@ -350,7 +452,8 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
     );
   }
 
-  Widget _buildTacticalButton(IconData icon, VoidCallback onPressed, {double size = 60.0}) {
+  Widget _buildTacticalButton(IconData icon, VoidCallback onPressed,
+      {double size = 60.0}) {
     return GestureDetector(
       onTap: onPressed,
       child: Container(
@@ -361,7 +464,7 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
           color: AppColors.panelMatte,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.5),
+              color: Colors.black.withValues(alpha: 0.5),
               blurRadius: 10,
               offset: const Offset(0, 4),
             )
@@ -405,11 +508,11 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
 
   List<Widget> _buildTrailLayers(TrailState trailState) {
     final layers = <Widget>[];
-    
+
     if (trailState.activeTrail != null) {
       final points = trailState.activeTrail!.getWaypoints();
       final color = WaypointColors.fromHex(trailState.activeTrail!.color);
-      
+
       layers.add(
         PolylineLayer(
           polylines: [
@@ -422,13 +525,14 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
         ),
       );
     }
-    
-    for (final trail in trailState.trails.where((t) => t.id != trailState.activeTrail?.id)) {
+
+    for (final trail
+        in trailState.trails.where((t) => t.id != trailState.activeTrail?.id)) {
       final points = trail.getWaypoints();
       if (points.isEmpty) continue;
-      
+
       final color = WaypointColors.fromHex(trail.color);
-      
+
       layers.add(
         PolylineLayer(
           polylines: [
@@ -441,7 +545,7 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
         ),
       );
     }
-    
+
     return layers;
   }
 
@@ -450,38 +554,74 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
       _measurementKey.currentState!.handleMapTap(point);
       return;
     }
-    
+
     if (trailState.isCreating) {
       ref.read(trailProvider.notifier).addDraftPoint(point);
       ref.read(aiAssistantProvider.notifier).speak(
-        "Point ${trailState.draftPoints.length + 1} added.",
-      );
+            "Point ${trailState.draftPoints.length + 1} added.",
+          );
     }
   }
 
   void _onMapLongPress(LatLng point) {
     setState(() => _targetPin = point);
-    ref.read(aiAssistantProvider.notifier).speak("Pin dropped at this location.");
+    ref
+        .read(aiAssistantProvider.notifier)
+        .speak("Pin dropped at this location.");
   }
 
   void _editWaypoint(Waypoint waypoint) {
-    // Waypoint editor would be called here
+    showWaypointEditor(context, waypoint: waypoint);
   }
 
   void _openSearch() {
-    // Navigate to search screen
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const PlacesSearchScreen()),
+    );
   }
 
   void _openChat() {
-    // Navigate to chat screen
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const NaturalLanguageSearchScreen()),
+    );
   }
 
   void _openCompass() {
-    // Navigate to compass screen
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ARCompassScreen()),
+    );
   }
 
   void _sendSOS() {
-    ref.read(meshProvider.notifier).sendSOS();
-    ref.read(aiAssistantProvider.notifier).speak("S.O.S. Beacon activated. Broadcasting position to all nearby mesh nodes.");
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        title: const Text('Send SOS?', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'This will broadcast an emergency SOS beacon to all nearby mesh nodes.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('CANCEL', style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('SEND SOS', style: TextStyle(color: Color(0xFFFF3B30))),
+          ),
+        ],
+      ),
+    ).then((confirmed) {
+      if (confirmed == true) {
+        ref.read(meshProvider.notifier).sendSOS();
+        ref.read(aiAssistantProvider.notifier).speak(
+            'S.O.S. Beacon activated. Broadcasting position to all nearby mesh nodes.');
+      }
+    });
   }
 }

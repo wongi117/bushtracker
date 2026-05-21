@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bush_track/features/ai/providers/ai_assistant_provider.dart';
 import 'package:bush_track/theme/app_colors.dart';
@@ -155,8 +155,8 @@ class _AiVoiceOverlayState extends ConsumerState<AiVoiceOverlay>
                   aiState.lastError,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
-                    color: Colors.redAccent,
-                    fontSize: 16,
+                    color: AppColors.statusRed,
+                    fontSize: BushDS.fontLG,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -191,14 +191,23 @@ class _AiVoiceOverlayState extends ConsumerState<AiVoiceOverlay>
                 ),
                 child: Column(
                   children: [
-                    Text(
-                      '🤖 AI TIERS',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.6),
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1,
-                      ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.smart_toy,
+                            color: Colors.white.withValues(alpha: 0.6),
+                            size: 14),
+                        const SizedBox(width: 6),
+                        Text(
+                          'AI TIERS',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.6),
+                            fontSize: BushDS.fontXS,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     ...aiState.tierStatus.entries.map((entry) {
@@ -208,7 +217,7 @@ class _AiVoiceOverlayState extends ConsumerState<AiVoiceOverlay>
                           entry.value,
                           style: TextStyle(
                             color: Colors.white.withValues(alpha: 0.7),
-                            fontSize: 11,
+                            fontSize: BushDS.fontXS,
                           ),
                         ),
                       );
@@ -220,14 +229,18 @@ class _AiVoiceOverlayState extends ConsumerState<AiVoiceOverlay>
             const SizedBox(height: 60),
             
             // Close button
-            IconButton(
-              iconSize: 40,
-              icon: const Icon(Icons.close, color: Colors.white54),
-              onPressed: () {
-                if (aiState.isListening) {
-                  ref.read(aiAssistantProvider.notifier).stopListening();
-                }
-              },
+            SizedBox(
+              width: BushDS.tapMin,
+              height: BushDS.tapMin,
+              child: IconButton(
+                iconSize: 28,
+                icon: const Icon(Icons.close, color: AppColors.textMuted),
+                onPressed: () {
+                  if (aiState.isListening) {
+                    ref.read(aiAssistantProvider.notifier).stopListening();
+                  }
+                },
+              ),
             ),
           ],
         ),
@@ -239,11 +252,11 @@ class _AiVoiceOverlayState extends ConsumerState<AiVoiceOverlay>
   Color _getTierColor(AiState state) {
     if (state.isOfflineMode) {
       if (state.isOnDeviceMode) {
-        return const Color(0xFF9C27B0); // Purple for on-device (Gemma)
+        return AppColors.purplePrimary;
       }
-      return const Color(0xFFFF9800); // Orange for rule-based
+      return AppColors.statusYellow;
     }
-    return const Color(0xFF4CAF50); // Green for cloud (Claude-3)
+    return AppColors.statusGreen;
   }
   
   // Get icon based on AI tier
@@ -271,11 +284,11 @@ class _AiVoiceOverlayState extends ConsumerState<AiVoiceOverlay>
   // Get icon color based on state
   Color _getIconColor(AiState state) {
     if (state.isProcessing) {
-      return Colors.blue; // Processing - blue
+      return AppColors.statusBlue;
     } else if (state.isSpeaking) {
-      return AppColors.statusGreen; // Speaking - green
+      return AppColors.statusGreen;
     } else {
-      return AppColors.primaryOrange; // Listening - orange
+      return AppColors.accent;
     }
   }
   
@@ -293,11 +306,11 @@ class _AiVoiceOverlayState extends ConsumerState<AiVoiceOverlay>
   // Get status text
   String _getStatusText(AiState state) {
     if (state.isProcessing) {
-      return "🤔 Antigravity is thinking...";
+      return 'Future Gen AI is thinking...';
     } else if (state.isSpeaking) {
-      return "🔊 A.I. is speaking...";
+      return 'A.I. is speaking...';
     } else {
-      return "🎤 A.I. is listening...";
+      return 'A.I. is listening...';
     }
   }
 }

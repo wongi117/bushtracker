@@ -162,6 +162,8 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
             const SizedBox(height: 8),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
+              clipBehavior: Clip.none,
+              padding: const EdgeInsets.only(right: 16),
               child: Row(
                 children: _categories.map((cat) {
                   final isSelected = _selectedCategory == cat['id'];

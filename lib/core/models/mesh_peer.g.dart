@@ -15,7 +15,7 @@ extension GetMeshPeerCollection on Isar {
 
 const MeshPeerSchema = CollectionSchema(
   name: r'MeshPeer',
-  id: 596109330,
+  id: 5961093302, // truncated for JS compat (web build only)
   properties: {
     r'deviceType': PropertySchema(
       id: 0,

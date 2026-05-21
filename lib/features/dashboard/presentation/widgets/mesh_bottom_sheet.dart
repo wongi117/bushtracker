@@ -9,10 +9,7 @@ import 'package:bush_track/features/chat/presentation/ai_chat_screen.dart';
 import 'package:bush_track/core/models/waypoint.dart';
 
 class MeshBottomSheet extends ConsumerStatefulWidget {
-  /// Optional callback invoked when the user taps a waypoint, so
-  /// the parent dashboard can pan the map to that location.
   final void Function(LatLng)? onWaypointTapped;
-
   const MeshBottomSheet({super.key, this.onWaypointTapped});
 
   @override
@@ -22,306 +19,235 @@ class MeshBottomSheet extends ConsumerStatefulWidget {
 class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
     with SingleTickerProviderStateMixin {
   String _activeTab = 'System';
-  bool _isExpanded = false;
-  late AnimationController _animController;
-  late Animation<double> _heightAnimation;
+  int _sheetState = 0; // 0=collapsed, 1=half, 2=full
 
   static const double _collapsedHeight = 120.0;
-  static const double _expandedHeight = 0.45; // 45% of screen
 
-  @override
-  void initState() {
-    super.initState();
-    _animController = AnimationController(
-      duration: const Duration(milliseconds: 300),
-      vsync: this,
-    );
-    _heightAnimation =
-        Tween<double>(begin: _collapsedHeight, end: _expandedHeight).animate(
-      CurvedAnimation(parent: _animController, curve: Curves.easeInOut),
-    );
-  }
-
-  @override
-  void dispose() {
-    _animController.dispose();
-    super.dispose();
-  }
-
-  void _toggleExpanded() {
-    setState(() {
-      _isExpanded = !_isExpanded;
-      if (_isExpanded) {
-        _animController.forward();
-      } else {
-        _animController.reverse();
-      }
-    });
-  }
+  void _advanceState() => setState(() => _sheetState = (_sheetState + 1) % 3);
+  void _expandOne()    { if (_sheetState < 2) setState(() => _sheetState++); }
+  void _collapseOne()  { if (_sheetState > 0) setState(() => _sheetState--); }
+  bool get _isExpanded => _sheetState > 0;
 
   @override
   Widget build(BuildContext context) {
-    final meshState = ref.watch(meshProvider);
+    final meshState     = ref.watch(meshProvider);
     final locationState = ref.watch(locationProvider);
-    final stats = locationState.stats;
-    final screenHeight = MediaQuery.of(context).size.height;
+    final stats         = locationState.stats;
+    final screenHeight  = MediaQuery.of(context).size.height;
 
-    return AnimatedBuilder(
-      animation: _heightAnimation,
-      builder: (context, child) {
-        final height =
-            _isExpanded ? screenHeight * _expandedHeight : _collapsedHeight;
+    final double height = switch (_sheetState) {
+      1 => screenHeight * 0.5,
+      2 => screenHeight,
+      _ => _collapsedHeight,
+    };
 
-        return Container(
-          height: height,
-          decoration: BoxDecoration(
-            color: AppColors.panelMatte,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.3),
-                blurRadius: 20,
-                offset: const Offset(0, -5),
-              ),
-            ],
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeInOut,
+      height: height,
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: AppColors.steelGradient,
+          borderRadius:
+              const BorderRadius.vertical(top: Radius.circular(BushDS.radiusXL)),
+          border: const Border(
+            top: BorderSide(color: Color(0xFF2A2A2A)),
           ),
-          child: Column(
-            children: [
-              // Issue #1: Drag handle - swipeable
-              GestureDetector(
-                onVerticalDragEnd: (details) {
-                  if (details.velocity.pixelsPerSecond.dy < -200) {
-                    _toggleExpanded();
-                  } else if (details.velocity.pixelsPerSecond.dy > 200) {
-                    if (_isExpanded) _toggleExpanded();
-                  }
-                },
-                onTap: _toggleExpanded,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  child: Column(
-                    children: [
-                      Container(
-                        width: 40,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: AppColors.panelLight,
-                          borderRadius: BorderRadius.circular(2),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.4),
+              blurRadius: 24,
+              offset: const Offset(0, -4),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            // ── Drag handle ────────────────────────────────────────────────
+            GestureDetector(
+              onVerticalDragEnd: (d) {
+                if (d.velocity.pixelsPerSecond.dy < -200) {
+                  _expandOne();
+                } else if (d.velocity.pixelsPerSecond.dy > 200) {
+                  _collapseOne();
+                }
+              },
+              onTap: _advanceState,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.04),
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(BushDS.radiusXL)),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Pill
+                    Container(
+                      width: 48,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        gradient: AppColors.accentGradient,
+                        borderRadius: BorderRadius.circular(3),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.accent.withValues(alpha: 0.5),
+                            blurRadius: 6,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          _sheetState == 0
+                              ? Icons.keyboard_arrow_up_rounded
+                              : _sheetState == 2
+                                  ? Icons.keyboard_arrow_down_rounded
+                                  : Icons.swap_vert_rounded,
+                          color: AppColors.accent,
+                          size: 22,
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            _isExpanded
-                                ? Icons.keyboard_arrow_down
-                                : Icons.keyboard_arrow_up,
-                            color: AppColors.textSecondary,
-                            size: 20,
+                        const SizedBox(width: 6),
+                        Text(
+                          _sheetState == 0
+                              ? 'Tap to expand'
+                              : _sheetState == 1
+                                  ? 'Tap for fullscreen'
+                                  : 'Tap to collapse',
+                          style: TextStyle(
+                            color: AppColors.accent.withValues(alpha: 0.85),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.3,
                           ),
-                          const SizedBox(width: 4),
-                          Text(
-                            _isExpanded
-                                ? '⬇️ Swipe down to collapse'
-                                : '⬆️ Swipe up for more',
-                            style: const TextStyle(
-                              color: AppColors.textSecondary,
-                              fontSize: 10,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // ── Collapsed view ─────────────────────────────────────────────
+            if (!_isExpanded)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: BushDS.spMD),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    _buildCollapsedStat(
+                        Icons.speed, 'SPEED', stats.speedFormatted),
+                    Text(
+                      stats.coordsDecimal.substring(
+                          0,
+                          stats.coordsDecimal.length > 24
+                              ? 24
+                              : stats.coordsDecimal.length),
+                      style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold),
+                    ),
+                    _buildCollapsedStat(
+                        Icons.cell_tower,
+                        'NODES',
+                        '${meshState.connectedEndpoints.length}'),
+                  ],
                 ),
               ),
 
-              // When collapsed: show only speed + coords
-              if (!_isExpanded)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('🚀 SPEED',
-                              style: TextStyle(
-                                  color: AppColors.textSecondary,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700)),
-                          Text(stats.speedFormatted,
-                              style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Text(
-                            stats.coordsDecimal.substring(
-                                0,
-                                stats.coordsDecimal.length > 24
-                                    ? 24
-                                    : stats.coordsDecimal.length),
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                      ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          const Text('📡 NODES',
-                              style: TextStyle(
-                                  color: AppColors.textSecondary,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700)),
-                          Text('${meshState.connectedEndpoints.length}',
-                              style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-
-              // When expanded: show all tabs and content
-              if (_isExpanded) ...[
-                const SizedBox(height: 8),
-                // Top Navigation Tabs
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      _buildTab('⚙️ System',
-                          isActive: _activeTab == 'System',
-                          onTap: () => setState(() => _activeTab = 'System')),
-                      _buildTab('📍 Waypoints',
-                          isActive: _activeTab == 'Waypoints',
-                          onTap: () =>
-                              setState(() => _activeTab = 'Waypoints')),
-                      _buildTab('🤖 AI',
-                          isActive: _activeTab == 'AI',
-                          onTap: () => setState(() => _activeTab = 'AI')),
-                      _buildTab('💬 Chat',
-                          isActive: _activeTab == 'Chat',
-                          onTap: () => setState(() => _activeTab = 'Chat')),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Expanded(
-                  child: _buildTabContent(stats, meshState, locationState),
-                ),
-              ],
+            // ── Expanded view ──────────────────────────────────────────────
+            if (_isExpanded) ...[
+              const SizedBox(height: BushDS.spSM),
+              _buildTabBar(),
+              const SizedBox(height: BushDS.spMD),
+              Expanded(
+                child: _buildTabContent(stats, meshState, locationState),
+              ),
             ],
-          ),
-        );
-      },
+          ],
+        ),
+      ),
     );
   }
 
-  Widget _buildTabContent(
-      TrackStats stats, MeshState meshState, LocationState locationState) {
-    switch (_activeTab) {
-      case 'System':
-        return _buildSystemTab(stats, meshState);
-      case 'Waypoints':
-        return _buildWaypointsTab(locationState);
-      case 'AI':
-        return _buildAITab();
-      case 'Chat':
-        // Bug #5 fix: inline AIChatScreen instead of nested modal
-        return const AIChatScreen();
-      default:
-        return _buildSystemTab(stats, meshState);
-    }
+  // ── Collapsed stat item ────────────────────────────────────────────────────
+  Widget _buildCollapsedStat(IconData icon, String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, color: AppColors.textSecondary, size: 12),
+            const SizedBox(width: BushDS.spXS),
+            Text(label,
+                style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: BushDS.fontXS,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.0)),
+          ],
+        ),
+        Text(value,
+            style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.bold)),
+      ],
+    );
   }
 
-  Widget _buildAITab() {
+  // ── Tab bar ────────────────────────────────────────────────────────────────
+  Widget _buildTabBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: BushDS.spMD),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          _buildTab(Icons.settings,          'System',    'System'),
+          _buildTab(Icons.place,             'Waypoints', 'Waypoints'),
+          _buildTab(Icons.smart_toy,         'AI',        'AI'),
+          _buildTab(Icons.chat_bubble_outline,'Chat',     'Chat'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTab(IconData icon, String label, String key) {
+    final isActive = _activeTab == key;
     return GestureDetector(
-      onTap: () => showAIChat(context),
+      onTap: () => setState(() => _activeTab = key),
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16),
-        padding: const EdgeInsets.all(24),
+        constraints: const BoxConstraints(minHeight: BushDS.tapMin),
+        padding: const EdgeInsets.symmetric(
+            horizontal: BushDS.spSM + 4, vertical: BushDS.spSM),
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              AppColors.purplePrimary.withValues(alpha: 0.2),
-              AppColors.primaryOrange.withValues(alpha: 0.1),
-            ],
-          ),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: AppColors.purplePrimary.withValues(alpha: 0.3),
-          ),
+          gradient: isActive ? AppColors.steelGradient : null,
+          color: isActive ? null : Colors.transparent,
+          borderRadius: BorderRadius.circular(BushDS.radiusSM),
+          border: isActive
+              ? Border.all(color: AppColors.accent.withValues(alpha: 0.4))
+              : null,
         ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFFFF5722), Color(0xFFE64A19)],
-                ),
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.primaryOrange.withValues(alpha: 0.4),
-                    blurRadius: 15,
-                    spreadRadius: 2,
-                  ),
-                ],
-              ),
-              child: const Text('🤖', style: TextStyle(fontSize: 40)),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'ANTIGRAVITY',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 2,
-              ),
-            ),
-            const SizedBox(height: 8),
+            Icon(icon,
+                color: isActive ? AppColors.accent : AppColors.textSecondary,
+                size: 16),
+            const SizedBox(width: BushDS.spXS),
             Text(
-              'Your AI Field Partner',
+              label,
               style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.7),
-                fontSize: 14,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              decoration: BoxDecoration(
-                color: AppColors.panelLight,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.touch_app,
-                      color: AppColors.primaryOrange, size: 16),
-                  SizedBox(width: 8),
-                  Text(
-                    'Tap to chat',
-                    style: TextStyle(color: Colors.white, fontSize: 14),
-                  ),
-                ],
+                color:
+                    isActive ? AppColors.textPrimary : AppColors.textSecondary,
+                fontWeight:
+                    isActive ? FontWeight.bold : FontWeight.normal,
+                fontSize: BushDS.fontSM,
               ),
             ),
           ],
@@ -330,42 +256,54 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
     );
   }
 
+  // ── Tab content ────────────────────────────────────────────────────────────
+  Widget _buildTabContent(
+      TrackStats stats, MeshState meshState, LocationState locationState) {
+    return switch (_activeTab) {
+      'System'    => _buildSystemTab(stats, meshState),
+      'Waypoints' => _buildWaypointsTab(locationState),
+      'AI'        => _buildAITab(),
+      'Chat'      => const AIChatScreen(),
+      _           => _buildSystemTab(stats, meshState),
+    };
+  }
+
+  // ── System tab ─────────────────────────────────────────────────────────────
   Widget _buildSystemTab(TrackStats stats, MeshState meshState) {
+    final meshActive =
+        meshState.isAdvertising || meshState.isDiscovering;
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.symmetric(horizontal: BushDS.spMD),
       child: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Main stats row
+            // Stat row
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _buildStatItem('🚀 SPEED', stats.speedFormatted),
-                _buildStatItem('📏 DISTANCE', stats.distanceFormatted),
-                _buildStatItem('⏱️ ELAPSED', stats.elapsedFormatted),
+                _buildStatItem(Icons.speed,     'SPEED',    stats.speedFormatted),
+                _buildStatItem(Icons.straighten,'DISTANCE', stats.distanceFormatted),
+                _buildStatItem(Icons.timer,     'ELAPSED',  stats.elapsedFormatted),
               ],
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: BushDS.spLG),
             // Coordinates
-            const Text('📍 COORDINATES',
-                style: TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 11,
-                    letterSpacing: 1.2)),
-            const SizedBox(height: 4),
+            _buildSectionLabel(Icons.place, 'COORDINATES'),
+            const SizedBox(height: BushDS.spXS),
             Text(stats.coordsDecimal,
                 style: const TextStyle(
-                    color: Colors.white,
+                    color: AppColors.textPrimary,
                     fontSize: 20,
                     fontWeight: FontWeight.bold)),
-            const SizedBox(height: 6),
+            const SizedBox(height: BushDS.spXS),
             Text(stats.gpsAccuracyFormatted,
                 style: const TextStyle(
-                    color: AppColors.primaryOrange,
-                    fontSize: 14,
+                    color: AppColors.accent,
+                    fontSize: BushDS.fontMD,
                     fontWeight: FontWeight.bold)),
-            const SizedBox(height: 24),
+            const SizedBox(height: BushDS.spLG),
             // Mesh status
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -373,26 +311,21 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('📡 MESH',
-                        style: TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 11,
-                            letterSpacing: 1.2)),
-                    const SizedBox(height: 4),
+                    _buildSectionLabel(Icons.cell_tower, 'MESH'),
+                    const SizedBox(height: BushDS.spXS),
                     Text(
-                      meshState.isAdvertising || meshState.isDiscovering
+                      meshActive
                           ? 'ACTIVE'
                           : kIsWeb
                               ? 'APP ONLY'
                               : 'OFFLINE',
                       style: TextStyle(
-                        color:
-                            meshState.isAdvertising || meshState.isDiscovering
-                                ? AppColors.statusGreen
-                                : kIsWeb
-                                    ? Colors.blue
-                                    : AppColors.textSecondary,
-                        fontSize: 16,
+                        color: meshActive
+                            ? AppColors.statusGreen
+                            : kIsWeb
+                                ? AppColors.statusBlue
+                                : AppColors.textSecondary,
+                        fontSize: BushDS.fontLG,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -400,24 +333,21 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
                       const Text(
                         'Mesh needs Android/iOS app',
                         style: TextStyle(
-                            color: AppColors.textSecondary, fontSize: 10),
+                            color: AppColors.textSecondary,
+                            fontSize: BushDS.fontXS),
                       ),
                   ],
                 ),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    const Text('📡 NODES',
-                        style: TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 11,
-                            letterSpacing: 1.2)),
-                    const SizedBox(height: 4),
+                    _buildSectionLabel(Icons.hub, 'NODES'),
+                    const SizedBox(height: BushDS.spXS),
                     Text(
                       '${meshState.connectedEndpoints.length}',
                       style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
+                          color: AppColors.textPrimary,
+                          fontSize: BushDS.fontLG,
                           fontWeight: FontWeight.bold),
                     ),
                   ],
@@ -430,67 +360,74 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
     );
   }
 
+  // ── Waypoints tab ──────────────────────────────────────────────────────────
   Widget _buildWaypointsTab(LocationState state) {
-    // Bug #7 fix: only show user-created pins, not auto GPS breadcrumbs
     final pins = state.waypoints
         .where((w) => w.isPin == true || w.type == WaypointType.manual)
         .toList();
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.symmetric(horizontal: BushDS.spMD),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('📍 WAYPOINTS',
-                  style: TextStyle(
-                      color: AppColors.primaryOrange,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 1.2)),
+              _buildSectionLabel(Icons.place, 'WAYPOINTS'),
               Text('${pins.length}',
-                  style: const TextStyle(color: AppColors.textSecondary)),
+                  style:
+                      const TextStyle(color: AppColors.textSecondary)),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: BushDS.spSM),
           Expanded(
             child: pins.isEmpty
                 ? const Center(
-                    child: Text(
-                    '📍 No pins saved yet — long-press the map to add one',
-                    style: TextStyle(color: AppColors.textSecondary),
-                    textAlign: TextAlign.center,
-                  ))
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.place,
+                            color: AppColors.textMuted, size: 40),
+                        SizedBox(height: BushDS.spSM),
+                        Text(
+                          'No pins saved yet\nLong-press the map to add one',
+                          style: TextStyle(color: AppColors.textSecondary,
+                              fontSize: BushDS.fontMD),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  )
                 : ListView.builder(
                     itemCount: pins.length,
                     itemBuilder: (context, index) {
                       final w = pins[index];
-                      final icon = _getWaypointIcon(w.icon);
                       return ListTile(
                         dense: true,
                         contentPadding: EdgeInsets.zero,
-                        leading:
-                            Text(icon, style: const TextStyle(fontSize: 20)),
+                        leading: Icon(_getWaypointIcon(w.icon),
+                            color: AppColors.accent, size: 22),
                         title: Text(
-                            w.label ??
-                                'Pin at ${w.timestamp != null ? TimeOfDay.fromDateTime(w.timestamp!).format(context) : 'now'}',
-                            style: const TextStyle(
-                                color: Colors.white, fontSize: 16)),
+                          w.label ??
+                              'Pin at ${w.timestamp != null ? TimeOfDay.fromDateTime(w.timestamp!).format(context) : 'now'}',
+                          style: const TextStyle(
+                              color: AppColors.textPrimary,
+                              fontSize: BushDS.fontLG),
+                        ),
                         subtitle: Text(
                           '${w.latitude?.toStringAsFixed(4)}, ${w.longitude?.toStringAsFixed(4)}',
                           style: const TextStyle(
-                              color: AppColors.textSecondary, fontSize: 13),
+                              color: AppColors.textSecondary,
+                              fontSize: BushDS.fontSM),
                         ),
                         trailing: const Icon(Icons.chevron_right,
                             color: AppColors.textSecondary, size: 18),
                         onTap: () {
-                          // Bug #6 fix: use callback to pan the map instead of Navigator.pop
                           if (w.latitude != null && w.longitude != null) {
                             widget.onWaypointTapped
                                 ?.call(LatLng(w.latitude!, w.longitude!));
-                            // Collapse the sheet after tapping
-                            if (_isExpanded) _toggleExpanded();
+                            if (_isExpanded) _collapseOne();
                           }
                         },
                       );
@@ -498,18 +435,13 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
                   ),
           ),
           if (state.breadcrumbs.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            const Text('Breadcrumb Trail',
-                style: TextStyle(
-                    color: AppColors.primaryOrange,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14)),
-            const SizedBox(height: 8),
+            const SizedBox(height: BushDS.spSM),
+            _buildSectionLabel(Icons.timeline, 'BREADCRUMB TRAIL'),
+            const SizedBox(height: BushDS.spSM),
             Expanded(
               child: ListView.builder(
-                itemCount: state.breadcrumbs.length > 20
-                    ? 20
-                    : state.breadcrumbs.length,
+                itemCount:
+                    state.breadcrumbs.length > 20 ? 20 : state.breadcrumbs.length,
                 itemBuilder: (context, index) {
                   final breadcrumb =
                       state.breadcrumbs.reversed.elementAt(index);
@@ -520,12 +452,15 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
                         color: AppColors.textSecondary, size: 18),
                     title: Text(
                       'Track point ${state.breadcrumbs.length - index}',
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                      style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: BushDS.fontMD),
                     ),
                     subtitle: Text(
                       '${breadcrumb.latitude?.toStringAsFixed(4)}, ${breadcrumb.longitude?.toStringAsFixed(4)}',
                       style: const TextStyle(
-                          color: AppColors.textSecondary, fontSize: 12),
+                          color: AppColors.textSecondary,
+                          fontSize: BushDS.fontXS),
                     ),
                   );
                 },
@@ -537,61 +472,150 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
     );
   }
 
-// _buildChatTab removed — Chat tab now renders AIChatScreen inline
-
-  String _getWaypointIcon(String? icon) {
-    switch (icon) {
-      case 'camp':
-        return '⛺';
-      case 'water':
-        return '💧';
-      case 'hazard':
-        return '⚠️';
-      case 'fuel':
-        return '⛽';
-      case 'road':
-        return '🛣️';
-      default:
-        return '📍';
-    }
+  // ── AI tab ─────────────────────────────────────────────────────────────────
+  Widget _buildAITab() {
+    return GestureDetector(
+      onTap: () => showAIChat(context),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: BushDS.spMD),
+        padding: const EdgeInsets.all(BushDS.spLG),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              AppColors.accent.withValues(alpha: 0.12),
+              AppColors.panelMatte,
+            ],
+          ),
+          borderRadius: BorderRadius.circular(BushDS.radiusLG),
+          border: Border.all(color: AppColors.accent.withValues(alpha: 0.3)),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Icon with metallic glow
+            Container(
+              padding: const EdgeInsets.all(BushDS.spLG),
+              decoration: BoxDecoration(
+                gradient: AppColors.accentGradient,
+                borderRadius: BorderRadius.circular(BushDS.radiusLG),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.accentGlow,
+                    blurRadius: 20,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+              child: const Icon(Icons.smart_toy, color: Colors.white, size: 40),
+            ),
+            const SizedBox(height: BushDS.spLG),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ShaderMask(
+                  shaderCallback: (b) =>
+                      AppColors.accentGradient.createShader(b),
+                  child: const Icon(Icons.bolt, color: Colors.white, size: 20),
+                ),
+                const SizedBox(width: BushDS.spXS),
+                const Text(
+                  'FUTURE GEN AI',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 2,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: BushDS.spSM),
+            Text(
+              'Your AI Field Partner',
+              style: TextStyle(
+                color: AppColors.textSecondary.withValues(alpha: 0.8),
+                fontSize: BushDS.fontMD,
+              ),
+            ),
+            const SizedBox(height: BushDS.spMD),
+            Container(
+              constraints:
+                  const BoxConstraints(minHeight: BushDS.tapMin),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: BushDS.spLG, vertical: BushDS.spSM),
+              decoration: BoxDecoration(
+                gradient: AppColors.steelGradient,
+                borderRadius: BorderRadius.circular(BushDS.radiusLG),
+                border:
+                    Border.all(color: AppColors.accent.withValues(alpha: 0.4)),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.touch_app, color: AppColors.accent, size: 18),
+                  SizedBox(width: BushDS.spSM),
+                  Text(
+                    'Tap to chat',
+                    style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: BushDS.fontMD),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
-  Widget _buildStatItem(String label, String value) {
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  Widget _buildStatItem(IconData icon, String label, String value) {
     return Column(
       children: [
-        Text(label,
-            style: const TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 11,
-                letterSpacing: 1.2)),
-        const SizedBox(height: 4),
+        Row(
+          children: [
+            Icon(icon, color: AppColors.textSecondary, size: 12),
+            const SizedBox(width: BushDS.spXS),
+            Text(label,
+                style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: BushDS.fontXS,
+                    letterSpacing: 1.0)),
+          ],
+        ),
+        const SizedBox(height: BushDS.spXS),
         Text(value,
             style: const TextStyle(
-                color: Colors.white,
+                color: AppColors.textPrimary,
                 fontSize: 20,
                 fontWeight: FontWeight.bold)),
       ],
     );
   }
 
-  Widget _buildTab(String title, {bool isActive = false, VoidCallback? onTap}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: BoxDecoration(
-          color: isActive ? AppColors.panelLight : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Text(
-          title,
-          style: TextStyle(
-            color: isActive ? Colors.white : AppColors.textSecondary,
-            fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-            fontSize: 13,
-          ),
-        ),
-      ),
+  Widget _buildSectionLabel(IconData icon, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, color: AppColors.accent, size: 14),
+        const SizedBox(width: BushDS.spXS),
+        Text(label,
+            style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: BushDS.fontXS,
+                letterSpacing: 1.2,
+                fontWeight: FontWeight.w600)),
+      ],
     );
   }
+
+  IconData _getWaypointIcon(String? icon) => switch (icon) {
+        'camp'   => Icons.holiday_village,
+        'water'  => Icons.water_drop,
+        'hazard' => Icons.warning_amber_rounded,
+        'fuel'   => Icons.local_gas_station,
+        'road'   => Icons.route,
+        _        => Icons.place,
+      };
 }

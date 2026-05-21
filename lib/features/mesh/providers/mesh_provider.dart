@@ -1,8 +1,10 @@
 import 'dart:math';
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:nearby_connections/nearby_connections.dart';
 import 'package:bush_track/core/models/mesh_packet.dart';
+import 'mesh_transport.dart';
+import 'mesh_transport_web.dart'
+    if (dart.library.io) 'mesh_transport_native.dart';
 
 final meshProvider = StateNotifierProvider<MeshNotifier, MeshState>((ref) {
   return MeshNotifier();
@@ -42,7 +44,8 @@ class MeshState {
 
 class MeshNotifier extends StateNotifier<MeshState> {
   final String _userName = "BushTrack-${Random().nextInt(1000)}";
-  final Strategy _strategy = Strategy.P2P_CLUSTER;
+  late final IMeshTransport _transport = createTransport();
+  final Set<String> _connectedPeers = {};
 
   MeshNotifier() : super(MeshState());
 
@@ -55,103 +58,60 @@ class MeshNotifier extends StateNotifier<MeshState> {
   }
 
   Future<void> startMesh() async {
+    if (kIsWeb) return;
     try {
-      bool a = await Nearby().startAdvertising(
-        _userName,
-        _strategy,
-        onConnectionInitiated: _onConnectionInit,
-        onConnectionResult: (id, status) {
-          if (status == Status.CONNECTED) {
-            state = state.copyWith(
-              connectedEndpoints: [...state.connectedEndpoints, id],
-            );
-          }
+      await _transport.start(
+        userName: _userName,
+        onPeerConnected: (peerId) {
+          _connectedPeers.add(peerId);
+          state = state.copyWith(connectedEndpoints: _connectedPeers.toList());
         },
-        onDisconnected: (id) {
-          state = state.copyWith(
-            connectedEndpoints: state.connectedEndpoints.where((e) => e != id).toList(),
-          );
+        onPeerDisconnected: (peerId) {
+          _connectedPeers.remove(peerId);
+          state = state.copyWith(connectedEndpoints: _connectedPeers.toList());
         },
+        onBytesReceived: (_, bytes) => _handleIncomingBytes(bytes),
       );
-
-      bool d = await Nearby().startDiscovery(
-        _userName,
-        _strategy,
-        onEndpointFound: (id, name, serviceId) {
-          // Auto-accept connections in mesh mode
-          Nearby().requestConnection(
-            _userName,
-            id,
-            onConnectionInitiated: _onConnectionInit,
-            onConnectionResult: (id, status) {
-              if (status == Status.CONNECTED) {
-                state = state.copyWith(
-                  connectedEndpoints: [...state.connectedEndpoints, id],
-                );
-              }
-            },
-            onDisconnected: (id) {
-              state = state.copyWith(
-                connectedEndpoints: state.connectedEndpoints.where((e) => e != id).toList(),
-              );
-            },
-          );
-        },
-        onEndpointLost: (id) {},
-      );
-
-      state = state.copyWith(isAdvertising: a, isDiscovering: d);
+      state = state.copyWith(isAdvertising: true, isDiscovering: true);
     } catch (e) {
-      // debugPrint("Mesh Start Error: \$e");
+      debugPrint('MeshNotifier.startMesh error: $e');
     }
   }
 
-  void _onConnectionInit(String id, ConnectionInfo info) {
-    Nearby().acceptConnection(
-      id,
-      onPayLoadRecieved: (endpointId, payload) {
-        if (payload.type == PayloadType.BYTES) {
-          try {
-            final str = String.fromCharCodes(payload.bytes!);
-            final packet = MeshPacket.fromJson(str);
-            
-            Map<String, MeshPacket> updatedPeerLocations = Map.from(state.peerLocations);
-            if (packet.packetType == 'location' || packet.packetType == 'sos') {
-              updatedPeerLocations[packet.senderId] = packet;
-            }
+  void _handleIncomingBytes(Uint8List bytes) {
+    try {
+      final str = String.fromCharCodes(bytes);
+      final packet = MeshPacket.fromJson(str);
 
-            state = state.copyWith(
-              recentPackets: [packet, ...state.recentPackets].take(50).toList(),
-              peerLocations: updatedPeerLocations,
-            );
+      final updatedLocations = Map<String, MeshPacket>.from(state.peerLocations);
+      if (packet.packetType == 'location' || packet.packetType == 'sos') {
+        updatedLocations[packet.senderId] = packet;
+      }
 
-            // Mesh forwarding logic (if TTL > 0)
-            if (packet.ttl > 0 && packet.senderId != _userName) {
-              final forwardedPacket = MeshPacket(
-                id: packet.id, // Keep same ID for deduplication in real apps
-                senderId: packet.senderId,
-                packetType: packet.packetType,
-                payload: packet.payload,
-                latitude: packet.latitude,
-                longitude: packet.longitude,
-                ttl: packet.ttl - 1,
-                timestamp: packet.timestamp,
-              );
-              broadcastPacket(forwardedPacket);
-            }
-          } catch (e) {
-            // Invalid packet
-          }
-        }
-      },
-      onPayloadTransferUpdate: (endpointId, payloadTransferUpdate) {},
-    );
+      state = state.copyWith(
+        recentPackets: [packet, ...state.recentPackets].take(50).toList(),
+        peerLocations: updatedLocations,
+      );
+
+      if (packet.ttl > 0 && packet.senderId != _userName) {
+        broadcastPacket(MeshPacket(
+          id: packet.id,
+          senderId: packet.senderId,
+          packetType: packet.packetType,
+          payload: packet.payload,
+          latitude: packet.latitude,
+          longitude: packet.longitude,
+          ttl: packet.ttl - 1,
+          timestamp: packet.timestamp,
+        ));
+      }
+    } catch (_) {}
   }
 
   Future<void> stopMesh() async {
-    await Nearby().stopAdvertising();
-    await Nearby().stopDiscovery();
-    await Nearby().stopAllEndpoints();
+    if (kIsWeb) return;
+    await _transport.stop();
+    _connectedPeers.clear();
     state = state.copyWith(
       isAdvertising: false,
       isDiscovering: false,
@@ -160,11 +120,10 @@ class MeshNotifier extends StateNotifier<MeshState> {
   }
 
   Future<void> broadcastPacket(MeshPacket packet) async {
-    if (state.connectedEndpoints.isEmpty) return;
-    
+    if (kIsWeb || _connectedPeers.isEmpty) return;
     final bytes = Uint8List.fromList(packet.toJson().codeUnits);
-    for (var endpointId in state.connectedEndpoints) {
-      await Nearby().sendBytesPayload(endpointId, bytes);
+    for (final peerId in List<String>.from(_connectedPeers)) {
+      await _transport.sendBytes(peerId, bytes);
     }
   }
 
@@ -195,13 +154,17 @@ class MeshNotifier extends StateNotifier<MeshState> {
   }
 
   Future<void> sendSOS() async {
+    if (kIsWeb) return;
+    if (!state.isAdvertising && !state.isDiscovering) {
+      await startMesh();
+    }
     final packet = MeshPacket(
       id: 'SOS_${_userName}_${DateTime.now().millisecondsSinceEpoch}',
       senderId: _userName,
       packetType: 'sos',
       payload: 'EMERGENCY: SOS Beacon Activated',
       timestamp: DateTime.now().millisecondsSinceEpoch,
-      ttl: 5, // Higher TTL for emergency
+      ttl: 5,
     );
     await broadcastPacket(packet);
   }

@@ -14,7 +14,8 @@ class AgentManagerScreen extends ConsumerStatefulWidget {
   ConsumerState<AgentManagerScreen> createState() => _AgentManagerScreenState();
 }
 
-class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with SingleTickerProviderStateMixin {
+class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen>
+    with SingleTickerProviderStateMixin {
   late AnimationController _animController;
   final PageController _pageController = PageController(viewportFraction: 0.7);
   double _currentPage = 0.0;
@@ -22,7 +23,9 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
   @override
   void initState() {
     super.initState();
-    _animController = AnimationController(vsync: this, duration: const Duration(seconds: 10))..repeat();
+    _animController =
+        AnimationController(vsync: this, duration: const Duration(seconds: 10))
+          ..repeat();
     _pageController.addListener(() {
       setState(() {
         _currentPage = _pageController.page ?? 0.0;
@@ -43,7 +46,7 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
     final isOffline = aiState.isOfflineMode;
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: AppColors.background,
       body: Stack(
         children: [
           // Premium Mesh Gradient Background
@@ -54,19 +57,25 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
                 return MeshGradient(
                   points: [
                     MeshGradientPoint(
-                      position: Offset(-0.5 + sin(_animController.value * pi * 2), -0.5 + cos(_animController.value * pi * 2)),
+                      position: Offset(
+                          -0.5 + sin(_animController.value * pi * 2),
+                          -0.5 + cos(_animController.value * pi * 2)),
                       color: AppColors.panelMatte,
                     ),
                     MeshGradientPoint(
-                      position: Offset(1.5 - cos(_animController.value * pi * 2), -0.5 + sin(_animController.value * pi * 2)),
+                      position: Offset(
+                          1.5 - cos(_animController.value * pi * 2),
+                          -0.5 + sin(_animController.value * pi * 2)),
                       color: Colors.black,
                     ),
                     MeshGradientPoint(
-                      position: Offset(0.5, 1.5),
-                      color: isOffline ? AppColors.primaryOrange.withValues(alpha: 0.3) : Colors.cyan.withValues(alpha: 0.2),
+                      position: const Offset(0.5, 1.5),
+                      color: isOffline
+                          ? AppColors.accent.withValues(alpha: 0.3)
+                          : AppColors.statusBlue.withValues(alpha: 0.2),
                     ),
                     MeshGradientPoint(
-                      position: Offset(0.5, 0.5),
+                      position: const Offset(0.5, 0.5),
                       color: Colors.black.withValues(alpha: 0.8),
                     ),
                   ],
@@ -75,7 +84,7 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
               },
             ),
           ),
-          
+
           SafeArea(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -87,11 +96,12 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
                   padding: EdgeInsets.symmetric(horizontal: 24.0),
                   child: Text(
                     'Select your AI persona. Each agent runs specialized contextual models for your survival.',
-                    style: TextStyle(color: Colors.white70, fontSize: 16, height: 1.4),
+                    style: TextStyle(
+                        color: Colors.white70, fontSize: 16, height: 1.4),
                   ),
                 ).animate().fadeIn(duration: 600.ms, delay: 200.ms),
                 const SizedBox(height: 40),
-                
+
                 // 3D Carousel
                 Expanded(
                   child: PageView.builder(
@@ -101,10 +111,12 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
                     itemBuilder: (context, index) {
                       final persona = AiPersona.values[index];
                       final isSelected = aiState.selectedPersona == persona;
-                      
+
                       // Calculate 3D transformation
-                      final scale = max(0.8, 1 - (_currentPage - index).abs() * 0.2);
-                      final rotationY = (_currentPage - index) * 0.5; // perspective tilt
+                      final scale =
+                          max(0.8, 1 - (_currentPage - index).abs() * 0.2);
+                      final rotationY =
+                          (_currentPage - index) * 0.5; // perspective tilt
 
                       return _build3DAgentCard(
                         context: context,
@@ -139,7 +151,7 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
                 onPressed: () => Navigator.pop(context),
               ),
               const SizedBox(width: 8),
-              Text(
+              const Text(
                 'AGENT MANAGER',
                 style: TextStyle(
                   color: AppColors.primaryOrange,
@@ -157,15 +169,18 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  const Text('Force Offline', style: TextStyle(color: Colors.white70, fontSize: 10)),
+                  const Text('Force Offline',
+                      style: TextStyle(color: Colors.white70, fontSize: BushDS.fontXS)),
                   Switch(
                     value: ref.watch(aiAssistantProvider).forceOffline,
                     onChanged: (val) {
-                      ref.read(aiAssistantProvider.notifier).toggleForceOffline();
+                      ref
+                          .read(aiAssistantProvider.notifier)
+                          .toggleForceOffline();
                     },
-                    activeColor: Colors.orange,
-                    inactiveThumbColor: Colors.cyan,
-                    inactiveTrackColor: Colors.cyan.withValues(alpha: 0.3),
+                    activeThumbColor: AppColors.accent,
+                    inactiveThumbColor: AppColors.statusBlue,
+                    inactiveTrackColor: AppColors.statusBlue.withValues(alpha: 0.3),
                   ),
                 ],
               ),
@@ -174,15 +189,20 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: isOffline ? Colors.orange.withValues(alpha: 0.2) : Colors.cyan.withValues(alpha: 0.2),
+                  color: isOffline
+                      ? AppColors.accent.withValues(alpha: 0.2)
+                      : AppColors.statusBlue.withValues(alpha: 0.2),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
                   isOffline ? Icons.wifi_off_rounded : Icons.wifi_rounded,
-                  color: isOffline ? Colors.orange : Colors.cyan,
+                  color: isOffline ? AppColors.accent : AppColors.statusBlue,
                   size: 20,
                 ),
-              ).animate(onPlay: (controller) => controller.repeat(reverse: true)).fade(begin: 0.7, end: 1.0, duration: 1.seconds),
+              )
+                  .animate(
+                      onPlay: (controller) => controller.repeat(reverse: true))
+                  .fade(begin: 0.7, end: 1.0, duration: 1.seconds),
             ],
           ),
         ],
@@ -212,7 +232,8 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
-                          color: Color(aiState.statusColor).withValues(alpha: 0.5),
+                          color:
+                              Color(aiState.statusColor).withValues(alpha: 0.5),
                           blurRadius: 8,
                           spreadRadius: 2,
                         )
@@ -234,8 +255,8 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
               Text(
                 aiState.isOfflineMode ? 'LOCAL INFERENCE' : 'CLOUD SYNCED',
                 style: TextStyle(
-                  color: aiState.isOfflineMode ? Colors.orange : Colors.cyan,
-                  fontSize: 10,
+                  color: aiState.isOfflineMode ? AppColors.accent : AppColors.statusBlue,
+                  fontSize: BushDS.fontXS,
                   fontWeight: FontWeight.bold,
                   letterSpacing: 1.5,
                 ),
@@ -257,22 +278,26 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
   }) {
     Color accentColor;
     IconData icon;
-    
+
     switch (persona) {
+      case AiPersona.companion:
+        accentColor = const Color(0xFF9C27B0);
+        icon = Icons.chat_bubble_rounded;
+        break;
       case AiPersona.tactical:
-        accentColor = Colors.cyanAccent;
+        accentColor = AppColors.statusBlue;
         icon = Icons.hub_rounded;
         break;
       case AiPersona.scout:
-        accentColor = Colors.greenAccent;
+        accentColor = AppColors.statusGreen;
         icon = Icons.explore_rounded;
         break;
       case AiPersona.navigator:
-        accentColor = Colors.blueAccent;
+        accentColor = AppColors.statusBlue;
         icon = Icons.near_me_rounded;
         break;
       case AiPersona.emergency:
-        accentColor = Colors.redAccent;
+        accentColor = AppColors.statusRed;
         icon = Icons.emergency_rounded;
         break;
     }
@@ -292,19 +317,23 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
           margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 20),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(30),
-            boxShadow: isSelected ? [
-              BoxShadow(
-                color: accentColor.withValues(alpha: 0.3),
-                blurRadius: 30,
-                spreadRadius: 5,
-              )
-            ] : [],
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: accentColor.withValues(alpha: 0.3),
+                      blurRadius: 30,
+                      spreadRadius: 5,
+                    )
+                  ]
+                : [],
           ),
           child: GlassPanel(
             opacity: isSelected ? 0.2 : 0.05,
             blur: 20,
             borderRadius: 30,
-            borderColor: isSelected ? accentColor.withValues(alpha: 0.5) : Colors.white10,
+            borderColor: isSelected
+                ? accentColor.withValues(alpha: 0.5)
+                : Colors.white10,
             borderWidth: isSelected ? 2.0 : 1.0,
             child: Stack(
               children: [
@@ -320,9 +349,15 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
                         shape: BoxShape.circle,
                         color: accentColor.withValues(alpha: 0.2),
                       ),
-                    ).animate(onPlay: (c) => c.repeat(reverse: true)).scale(begin: const Offset(1, 1), end: const Offset(1.5, 1.5), duration: 2.seconds).fade(),
+                    )
+                        .animate(onPlay: (c) => c.repeat(reverse: true))
+                        .scale(
+                            begin: const Offset(1, 1),
+                            end: const Offset(1.5, 1.5),
+                            duration: 2.seconds)
+                        .fade(),
                   ),
-                  
+
                 Padding(
                   padding: const EdgeInsets.all(24.0),
                   child: Column(
@@ -333,7 +368,9 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
                         decoration: BoxDecoration(
                           color: accentColor.withValues(alpha: 0.1),
                           shape: BoxShape.circle,
-                          border: Border.all(color: accentColor.withValues(alpha: 0.4), width: 2),
+                          border: Border.all(
+                              color: accentColor.withValues(alpha: 0.4),
+                              width: 2),
                           boxShadow: [
                             BoxShadow(
                               color: accentColor.withValues(alpha: 0.2),
@@ -343,10 +380,12 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
                           ],
                         ),
                         child: Icon(icon, color: accentColor, size: 50),
-                      ).animate(target: isSelected ? 1 : 0).scale(begin: const Offset(0.8, 0.8), end: const Offset(1.1, 1.1), duration: 300.ms, curve: Curves.easeOutBack),
-                      
+                      ).animate(target: isSelected ? 1 : 0).scale(
+                          begin: const Offset(0.8, 0.8),
+                          end: const Offset(1.1, 1.1),
+                          duration: 300.ms,
+                          curve: Curves.easeOutBack),
                       const SizedBox(height: 30),
-                      
                       Text(
                         persona.label.toUpperCase(),
                         style: TextStyle(
@@ -354,12 +393,12 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
                           fontSize: 28,
                           fontWeight: FontWeight.w900,
                           letterSpacing: 2.0,
-                          shadows: isSelected ? [Shadow(color: accentColor, blurRadius: 10)] : [],
+                          shadows: isSelected
+                              ? [Shadow(color: accentColor, blurRadius: 10)]
+                              : [],
                         ),
                       ),
-                      
                       const SizedBox(height: 16),
-                      
                       Text(
                         persona.description,
                         textAlign: TextAlign.center,
@@ -369,21 +408,22 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
                           height: 1.5,
                         ),
                       ),
-                      
                       const Spacer(),
-                      
                       if (isSelected)
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 20, vertical: 10),
                           decoration: BoxDecoration(
                             color: accentColor.withValues(alpha: 0.2),
                             borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: accentColor.withValues(alpha: 0.5)),
+                            border: Border.all(
+                                color: accentColor.withValues(alpha: 0.5)),
                           ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.check_circle_rounded, color: accentColor, size: 18),
+                              Icon(Icons.check_circle_rounded,
+                                  color: accentColor, size: 18),
                               const SizedBox(width: 8),
                               Text(
                                 'ACTIVE',
@@ -395,7 +435,9 @@ class _AgentManagerScreenState extends ConsumerState<AgentManagerScreen> with Si
                               ),
                             ],
                           ),
-                        ).animate().scale(duration: 400.ms, curve: Curves.elasticOut),
+                        )
+                            .animate()
+                            .scale(duration: 400.ms, curve: Curves.elasticOut),
                     ],
                   ),
                 ),

@@ -1,192 +1,170 @@
-import 'dart:math' show sqrt, atan2, sin, cos, Random, asin;
+import 'dart:convert';
+import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:bush_track/features/elevation/services/elevation_service.dart';
 
 class GeographicAnalysisService {
-  /// Calculate the distance between two points in meters using Haversine formula
   static double calculateDistance(LatLng point1, LatLng point2) {
-    const R = 6371000.0; // Earth radius in meters
-    double dLat = _toRadians(point2.latitude - point1.latitude);
-    double dLon = _toRadians(point2.longitude - point1.longitude);
-    double a = sin(dLat / 2) * sin(dLat / 2) +
-               cos(_toRadians(point1.latitude)) * cos(_toRadians(point2.latitude)) *
-               sin(dLon / 2) * sin(dLon / 2);
-    double c = 2 * atan2(sqrt(a), sqrt(1 - a));
-    return R * c;
+    const R = 6371000.0;
+    final dLat = _toRadians(point2.latitude - point1.latitude);
+    final dLon = _toRadians(point2.longitude - point1.longitude);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_toRadians(point1.latitude)) *
+            math.cos(_toRadians(point2.latitude)) *
+            math.sin(dLon / 2) *
+            math.sin(dLon / 2);
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
   }
 
-  /// Calculate the gradient (slope) between two points
-  static Future<double> calculateGradient(LatLng point1, LatLng point2) async {
-    final elevation1 = await ElevationService.getElevation(point1) ?? 0.0;
-    final elevation2 = await ElevationService.getElevation(point2) ?? 0.0;
-    
-    final distance = calculateDistance(point1, point2);
-    if (distance == 0) return 0.0;
-    
-    final elevationDiff = elevation2 - elevation1;
-    final gradient = (elevationDiff / distance) * 100; // Percentage grade
-    
-    return gradient.abs(); // Return absolute value for flatness assessment
-  }
-
-  /// Calculate average gradient around a point (sample points in a circle)
-  static Future<double> calculateAreaFlatness(LatLng center, {double radiusMeters = 50}) async {
-    const samplePoints = 8;
-    double totalGradient = 0.0;
-    
-    for (int i = 0; i < samplePoints; i++) {
-      final angle = (2 * pi * i) / samplePoints;
-      final point = _destinationPoint(center, radiusMeters, angle);
-      final gradient = await calculateGradient(center, point);
-      totalGradient += gradient;
-    }
-    
-    return totalGradient / samplePoints;
-  }
-
-  /// Estimate distance to nearest water source (mock implementation)
-  static Future<double> estimateDistanceToWater(LatLng location) async {
-    // In a real implementation, this would check against water body databases
-    // For now, we'll use a mock algorithm based on coordinates
-    
-    // Simple mock: assume water sources at regular intervals
-    // This is just for demonstration purposes
-    final latGrid = (location.latitude * 10).round().toDouble() / 10;
-    final lonGrid = (location.longitude * 10).round().toDouble() / 10;
-    
-    // Calculate distance to nearest "water source"
-    final waterSource = LatLng(latGrid, lonGrid);
-    final distance = calculateDistance(location, waterSource);
-    
-    // Add some randomness
-    final randomFactor = 1.0 + (Random().nextDouble() * 0.5); // 0-50% variation
-    
-    return distance * randomFactor;
-  }
-
-  /// Score a potential campsite based on flatness and water proximity
-  static Future<CampSiteScore> scoreCampsite(LatLng location) async {
-    // Calculate flatness (lower is better for camping)
-    final flatness = await calculateAreaFlatness(location);
-    final flatnessScore = _calculateFlatnessScore(flatness);
-    
-    // Calculate water proximity (closer is better, but not too close)
-    final waterDistance = await estimateDistanceToWater(location);
-    final waterScore = _calculateWaterProximityScore(waterDistance);
-    
-    // Combine scores (weighted average)
-    final finalScore = (flatnessScore * 0.6) + (waterScore * 0.4);
-    
-    return CampSiteScore(
-      location: location,
-      flatness: flatness,
-      flatnessScore: flatnessScore,
-      waterDistance: waterDistance,
-      waterScore: waterScore,
-      overallScore: finalScore,
-    );
-  }
-
-  /// Find the best campsite in the vicinity
-  static Future<CampSiteScore?> findBestCampsite(LatLng currentLocation, {double searchRadiusMeters = 500}) async {
-    CampSiteScore? bestSite;
-    double bestScore = 0.0;
-    
-    // Sample points in a grid around the current location
-    const gridSize = 5; // 5x5 grid
+  /// Find the best campsite in a 500 m radius using real DEM + Overpass water data.
+  static Future<CampSiteScore?> findBestCampsite(
+    LatLng currentLocation, {
+    double searchRadiusMeters = 500,
+  }) async {
+    const gridSize = 5;
     final stepSize = searchRadiusMeters / gridSize;
-    
+
+    // 1. Build candidate grid
+    final candidates = <LatLng>[];
     for (int i = 0; i < gridSize; i++) {
       for (int j = 0; j < gridSize; j++) {
-        // Calculate offset from current location
-        final offsetLat = (i - gridSize ~/ 2) * (stepSize / 111000); // Rough conversion to degrees
-        final offsetLon = (j - gridSize ~/ 2) * (stepSize / 85000);  // Rough conversion to degrees (varies with latitude)
-        
-        final candidateLocation = LatLng(
+        final offsetLat = (i - gridSize ~/ 2) * (stepSize / 111000);
+        final offsetLon = (j - gridSize ~/ 2) * (stepSize / 85000);
+        final pt = LatLng(
           currentLocation.latitude + offsetLat,
           currentLocation.longitude + offsetLon,
         );
-        
-        // Skip if too far from original search area
-        if (calculateDistance(currentLocation, candidateLocation) > searchRadiusMeters) {
-          continue;
-        }
-        
-        final score = await scoreCampsite(candidateLocation);
-        if (score.overallScore > bestScore) {
-          bestScore = score.overallScore;
-          bestSite = score;
+        if (calculateDistance(currentLocation, pt) <= searchRadiusMeters) {
+          candidates.add(pt);
         }
       }
     }
-    
-    return bestSite;
-  }
 
-  /// Convert degrees to radians
-  static double _toRadians(double degrees) {
-    return degrees * (pi / 180);
-  }
-
-  /// Calculate flatness score (0-100, where 100 is perfectly flat)
-  static double _calculateFlatnessScore(double gradientPercent) {
-    // Perfectly flat = 0% gradient = 100 score
-    // Very steep = 50%+ gradient = 0 score
-    if (gradientPercent <= 1.0) return 100.0;
-    if (gradientPercent >= 30.0) return 0.0;
-    
-    // Linear interpolation between 1% and 30%
-    return 100.0 - ((gradientPercent - 1.0) / 29.0) * 100.0;
-  }
-
-  /// Calculate water proximity score (0-100, where 100 is ideal distance)
-  static double _calculateWaterProximityScore(double distanceMeters) {
-    // Ideal camping distance: 50-200 meters from water
-    // Too close (< 20m) = dangerous (flooding, insects) = 0 score
-    // Too far (> 1000m) = inconvenient = 0 score
-    if (distanceMeters < 20 || distanceMeters > 1000) return 0.0;
-    if (distanceMeters >= 50 && distanceMeters <= 200) return 100.0;
-    
-    // Score decreases as you move away from ideal range
-    if (distanceMeters < 50) {
-      // Getting closer to dangerous zone
-      return ((distanceMeters - 20) / 30) * 100;
-    } else {
-      // Getting farther from ideal zone
-      return ((1000 - distanceMeters) / 800) * 100;
+    // 2. For each candidate build 4 surrounding sample points (N/S/E/W at 40 m).
+    //    Batch ALL points in one Open-Elevation request.
+    const sampleDist = 40.0;
+    final allPoints = <LatLng>[];
+    for (final c in candidates) {
+      allPoints.add(c);
+      allPoints.add(_dest(c, sampleDist, 0));             // N
+      allPoints.add(_dest(c, sampleDist, math.pi));       // S
+      allPoints.add(_dest(c, sampleDist, math.pi / 2));   // E
+      allPoints.add(_dest(c, sampleDist, -math.pi / 2));  // W
     }
+
+    List<double> elevations;
+    try {
+      final raw = await ElevationService.getElevationProfile(allPoints);
+      elevations = raw.map((e) => e.elevation).toList();
+    } catch (_) {
+      elevations = List.filled(allPoints.length, 0.0);
+    }
+
+    // 3. Fetch nearest water via Overpass (single request)
+    final waterDistM = await _nearestWaterDistance(currentLocation);
+
+    // 4. Score each candidate
+    CampSiteScore? best;
+    for (int ci = 0; ci < candidates.length; ci++) {
+      final base = ci * 5;
+      final centerElev = elevations[base];
+      final maxDiff = [1, 2, 3, 4]
+          .map((k) => (elevations[base + k] - centerElev).abs())
+          .reduce((a, b) => a > b ? a : b);
+      final gradientPct = (maxDiff / sampleDist) * 100;
+
+      final flatScore = _flatnessScore(gradientPct);
+      final wScore = _waterScore(waterDistM);
+      final overall = flatScore * 0.6 + wScore * 0.4;
+
+      final score = CampSiteScore(
+        location: candidates[ci],
+        flatness: gradientPct,
+        flatnessScore: flatScore,
+        waterDistance: waterDistM,
+        waterScore: wScore,
+        overallScore: overall,
+      );
+      if (best == null || overall > best.overallScore) best = score;
+    }
+    return best;
   }
 
-  /// Calculate destination point given start point, distance, and bearing
-  static LatLng _destinationPoint(LatLng start, double distanceMeters, double bearingRadians) {
-    const R = 6371000.0; // Earth radius in meters
+  /// Query Overpass for the nearest water body within 2 km.
+  static Future<double> _nearestWaterDistance(LatLng loc) async {
+    const radius = 2000;
+    final query =
+        '[out:json][timeout:10];(node["natural"="spring"](around:$radius,${loc.latitude},${loc.longitude});'
+        'node["amenity"="drinking_water"](around:$radius,${loc.latitude},${loc.longitude});'
+        'way["natural"="water"](around:$radius,${loc.latitude},${loc.longitude});'
+        'way["waterway"](around:$radius,${loc.latitude},${loc.longitude}););out center 5;';
+    try {
+      final resp = await http
+          .post(
+            Uri.parse('https://overpass-api.de/api/interpreter'),
+            body: query,
+          )
+          .timeout(const Duration(seconds: 12));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final elements = data['elements'] as List;
+        if (elements.isEmpty) return 1200;
+        double nearest = double.infinity;
+        for (final el in elements) {
+          final lat = (el['lat'] ?? el['center']?['lat']) as double?;
+          final lon = (el['lon'] ?? el['center']?['lon']) as double?;
+          if (lat == null || lon == null) continue;
+          final d = calculateDistance(loc, LatLng(lat, lon));
+          if (d < nearest) nearest = d;
+        }
+        return nearest == double.infinity ? 1200 : nearest;
+      }
+    } catch (e) {
+      debugPrint('Overpass water query failed: $e');
+    }
+    return 800;
+  }
+
+  static double _flatnessScore(double gradientPct) {
+    if (gradientPct <= 1.0) return 100.0;
+    if (gradientPct >= 30.0) return 0.0;
+    return 100.0 - ((gradientPct - 1.0) / 29.0) * 100.0;
+  }
+
+  static double _waterScore(double distanceM) {
+    if (distanceM < 20 || distanceM > 1000) return 0.0;
+    if (distanceM >= 50 && distanceM <= 200) return 100.0;
+    if (distanceM < 50) return ((distanceM - 20) / 30) * 100;
+    return ((1000 - distanceM) / 800) * 100;
+  }
+
+  static LatLng _dest(LatLng start, double distM, double bearingRad) {
+    const R = 6371000.0;
     final lat1 = _toRadians(start.latitude);
     final lon1 = _toRadians(start.longitude);
-    
-    final angularDistance = distanceMeters / R;
-    final bearing = bearingRadians;
-    
-    final lat2 = asin(sin(lat1) * cos(angularDistance) + 
-                      cos(lat1) * sin(angularDistance) * cos(bearing));
-    final lon2 = lon1 + atan2(sin(bearing) * sin(angularDistance) * cos(lat1),
-                              cos(angularDistance) - sin(lat1) * sin(lat2));
-    
+    final d = distM / R;
+    final lat2 = math.asin(
+        math.sin(lat1) * math.cos(d) +
+        math.cos(lat1) * math.sin(d) * math.cos(bearingRad));
+    final lon2 = lon1 + math.atan2(
+        math.sin(bearingRad) * math.sin(d) * math.cos(lat1),
+        math.cos(d) - math.sin(lat1) * math.sin(lat2));
     return LatLng(_toDegrees(lat2), _toDegrees(lon2));
   }
 
-  /// Convert radians to degrees
-  static double _toDegrees(double radians) {
-    return radians * (180 / pi);
-  }
+  static double _toRadians(double deg) => deg * math.pi / 180;
+  static double _toDegrees(double rad) => rad * 180 / math.pi;
 }
 
 class CampSiteScore {
   final LatLng location;
-  final double flatness; // Gradient percentage
-  final double flatnessScore; // 0-100 score
-  final double waterDistance; // Meters to water
-  final double waterScore; // 0-100 score
-  final double overallScore; // Combined weighted score
+  final double flatness;
+  final double flatnessScore;
+  final double waterDistance;
+  final double waterScore;
+  final double overallScore;
 
   CampSiteScore({
     required this.location,

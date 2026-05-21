@@ -15,7 +15,7 @@ extension GetMapRegionCollection on Isar {
 
 const MapRegionSchema = CollectionSchema(
   name: r'MapRegion',
-  id: 290395095,
+  id: 2903950951, // truncated for JS compat (web build only)
   properties: {
     r'downloadedAt': PropertySchema(
       id: 0,

@@ -4,15 +4,16 @@ import 'package:flutter/material.dart';
 
 class WikipediaService {
   static const String _baseUrl = 'https://en.wikipedia.org/api/rest_v1';
-  
-  static Future<WikipediaArticle?> getNearbyArticle(double lat, double lon) async {
+
+  static Future<WikipediaArticle?> getNearbyArticle(
+      double lat, double lon) async {
     try {
       final url = '$_baseUrl/page/geo/0/$lat/$lon';
       final response = await http.get(
         Uri.parse(url),
         headers: {'Accept': 'application/json'},
       );
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         return WikipediaArticle(
@@ -27,10 +28,10 @@ class WikipediaService {
     }
     return null;
   }
-  
+
   static Future<WikipediaArticle?> searchArticle(String query) async {
     try {
-      final searchUrl = 'https://en.wikipedia.org/w/api.php';
+      const searchUrl = 'https://en.wikipedia.org/w/api.php';
       final searchParams = {
         'action': 'query',
         'list': 'search',
@@ -39,15 +40,15 @@ class WikipediaService {
         'origin': '*',
         'srlimit': '1',
       };
-      
+
       final searchResponse = await http.get(
         Uri.parse(searchUrl).replace(queryParameters: searchParams),
       );
-      
+
       if (searchResponse.statusCode == 200) {
         final searchData = json.decode(searchResponse.body);
         final results = searchData['query']?['search'] as List?;
-        
+
         if (results != null && results.isNotEmpty) {
           final pageId = results.first['pageid'];
           return getArticleById(pageId);
@@ -58,7 +59,7 @@ class WikipediaService {
     }
     return null;
   }
-  
+
   static Future<WikipediaArticle?> getArticleById(int pageId) async {
     try {
       final url = '$_baseUrl/page/summary/$pageId';
@@ -66,7 +67,7 @@ class WikipediaService {
         Uri.parse(url),
         headers: {'Accept': 'application/json'},
       );
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         return WikipediaArticle(
@@ -81,7 +82,7 @@ class WikipediaService {
     }
     return null;
   }
-  
+
   static Future<WikipediaArticle?> getPlaceInfo(String placeName) async {
     return searchArticle('$placeName Western Australia');
   }
@@ -92,7 +93,7 @@ class WikipediaArticle {
   final String extract;
   final String? thumbnail;
   final String? pageUrl;
-  
+
   WikipediaArticle({
     required this.title,
     required this.extract,
@@ -103,7 +104,7 @@ class WikipediaArticle {
 
 class WikipediaInfoSheet extends StatelessWidget {
   final WikipediaArticle article;
-  
+
   const WikipediaInfoSheet({super.key, required this.article});
 
   @override
@@ -126,7 +127,8 @@ class WikipediaInfoSheet extends StatelessWidget {
                   color: const Color(0xFFFF5722).withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.public, color: Color(0xFFFF5722), size: 20),
+                child: const Icon(Icons.public,
+                    color: Color(0xFFFF5722), size: 20),
               ),
               const SizedBox(width: 12),
               const Text(

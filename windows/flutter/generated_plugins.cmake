@@ -3,10 +3,13 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  battery_plus
   file_selector_windows
   flutter_tts
   geolocator_windows
   isar_flutter_libs
+  printing
+  share_plus
   speech_to_text_windows
   url_launcher_windows
 )

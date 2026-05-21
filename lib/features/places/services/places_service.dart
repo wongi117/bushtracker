@@ -3,119 +3,181 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:flutter/material.dart';
-import 'package:bush_track/core/config/api_config.dart';
 
 class PlacesService {
-  // In a real implementation, this would fetch from OSM Overpass API
-  // For now, we'll return mock data for demonstration
+  // Routes through Vercel serverless proxies to avoid CORS on Flutter Web.
+  static const _nominatimProxy = '/api/nominatim';
+  static const _overpassProxy  = '/api/overpass';
+  static const _headers = <String, String>{};
+
+  /// Global text search via Nominatim — works for any town, city, landmark.
   static Future<List<Place>> searchPlaces(String query, {LatLng? proximity}) async {
-    final key = ApiConfig.mapboxToken;
-    if (key.isEmpty) {
-      return getNearbyPlaces(proximity ?? const LatLng(-25.3444, 131.0369));
+    try {
+      final params = <String, String>{
+        'q': query,
+      };
+      if (proximity != null) {
+        params['lat'] = proximity.latitude.toString();
+        params['lon'] = proximity.longitude.toString();
+      }
+      final url = Uri.parse(_nominatimProxy).replace(queryParameters: params);
+      final response = await http.get(url, headers: _headers)
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) return [];
+
+      final data = jsonDecode(response.body) as List;
+      return data.map((item) {
+        final lat = double.tryParse(item['lat']?.toString() ?? '') ?? 0.0;
+        final lon = double.tryParse(item['lon']?.toString() ?? '') ?? 0.0;
+        final loc  = LatLng(lat, lon);
+        final full = item['display_name']?.toString() ?? '';
+        final type = item['type']?.toString() ?? '';
+        final cls  = item['class']?.toString() ?? '';
+        final addr = item['address'] as Map? ?? {};
+        final country = addr['country']?.toString() ?? '';
+        final state   = addr['state']?.toString() ?? addr['region']?.toString() ?? '';
+        final subtitle = [state, country].where((s) => s.isNotEmpty).join(', ');
+        return Place(
+          id: item['place_id']?.toString() ?? full,
+          name: _shortName(full),
+          location: loc,
+          category: _categoryFromOsmType(type, cls),
+          distance: proximity != null ? _distanceBetween(proximity, loc) : 0,
+          openingHours: subtitle.isEmpty ? full.split(',').skip(1).take(2).join(', ') : subtitle,
+        );
+      }).toList();
+    } catch (e) {
+      debugPrint('Nominatim search error: $e');
+      return [];
     }
-
-    final proximityPart = proximity == null ? '' : '&proximity=${proximity.longitude},${proximity.latitude}';
-    final url = Uri.parse(
-      'https://api.mapbox.com/geocoding/v5/mapbox.places/${Uri.encodeComponent(query)}.json?country=AU&limit=10$proximityPart&access_token=$key',
-    );
-
-    final response = await http.get(url);
-    if (response.statusCode != 200) {
-      return getNearbyPlaces(proximity ?? const LatLng(-25.3444, 131.0369));
-    }
-
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    final features = (data['features'] as List<dynamic>? ?? const []);
-
-    return features.map((feature) {
-      final props = feature as Map<String, dynamic>;
-      final center = (props['center'] as List<dynamic>? ?? const [131.0369, -25.3444]);
-      final context = (props['place_type'] as List<dynamic>? ?? const ['place']).first.toString();
-      return Place(
-        id: props['id']?.toString() ?? props['place_name']?.toString() ?? query,
-        name: props['place_name']?.toString() ?? query,
-        location: LatLng((center[1] as num).toDouble(), (center[0] as num).toDouble()),
-        category: _categoryFromMapboxType(context),
-        distance: proximity == null
-            ? 0
-            : _distanceBetween(proximity, LatLng((center[1] as num).toDouble(), (center[0] as num).toDouble())),
-        openingHours: 'Mapbox geocoded',
-      );
-    }).toList();
-  }
-  
-  static Future<List<Place>> getNearbyPlaces(LatLng location, {double radius = 50000}) async {
-    // Mock places data for demonstration
-    await Future.delayed(const Duration(milliseconds: 500)); // Simulate network delay
-    
-    return [
-      Place(
-        id: '1',
-        name: 'Leonora BP',
-        location: const LatLng(-25.3400, 131.0400),
-        category: PlaceCategory.fuel,
-        distance: 34000, // 34km
-        openingHours: 'Open until 6pm',
-      ),
-      Place(
-        id: '2',
-        name: 'Menzies Hotel',
-        location: const LatLng(-25.3300, 131.0500),
-        category: PlaceCategory.pub,
-        distance: 45000, // 45km
-        openingHours: 'Open 24 hours',
-      ),
-      Place(
-        id: '3',
-        name: 'Medical Clinic',
-        location: const LatLng(-25.3200, 131.0600),
-        category: PlaceCategory.medical,
-        distance: 56000, // 56km
-        openingHours: 'Open 9am-5pm',
-      ),
-      Place(
-        id: '4',
-        name: 'Water Tank',
-        location: const LatLng(-25.3100, 131.0700),
-        category: PlaceCategory.water,
-        distance: 67000, // 67km
-        openingHours: 'Always available',
-      ),
-      Place(
-        id: '5',
-        name: 'Camping Area',
-        location: const LatLng(-25.3000, 131.0800),
-        category: PlaceCategory.camp,
-        distance: 78000, // 78km
-        openingHours: 'Free camping',
-      ),
-    ];
   }
 
-  static PlaceCategory _categoryFromMapboxType(String type) {
-    switch (type) {
-      case 'poi':
-      case 'place':
-        return PlaceCategory.camp;
-      case 'address':
-        return PlaceCategory.mechanic;
-      default:
-        return PlaceCategory.camp;
+  /// Nearby POI search via OpenStreetMap Overpass — real data, any location.
+  static Future<List<Place>> getNearbyPlaces(LatLng location,
+      {double radius = 50000}) async {
+    try {
+      final lat = location.latitude;
+      final lon = location.longitude;
+      final r   = radius.toInt();
+
+      final query = '[out:json][timeout:20];('
+          'node["amenity"="fuel"](around:$r,$lat,$lon);'
+          'node["amenity"="hospital"](around:$r,$lat,$lon);'
+          'node["amenity"="clinic"](around:$r,$lat,$lon);'
+          'node["amenity"="pharmacy"](around:$r,$lat,$lon);'
+          'node["amenity"="pub"](around:$r,$lat,$lon);'
+          'node["amenity"="bar"](around:$r,$lat,$lon);'
+          'node["amenity"="restaurant"](around:$r,$lat,$lon);'
+          'node["tourism"="camp_site"](around:$r,$lat,$lon);'
+          'node["tourism"="caravan_site"](around:$r,$lat,$lon);'
+          'node["natural"="spring"](around:$r,$lat,$lon);'
+          'node["amenity"="water_point"](around:$r,$lat,$lon);'
+          'node["amenity"="drinking_water"](around:$r,$lat,$lon);'
+          'node["shop"="car_repair"](around:$r,$lat,$lon);'
+          'node["amenity"="car_repair"](around:$r,$lat,$lon);'
+          ');out body 30;';
+
+      final response = await http
+          .post(Uri.parse(_overpassProxy), body: query, headers: _headers)
+          .timeout(const Duration(seconds: 25));
+
+      if (response.statusCode != 200) return [];
+
+      final data     = jsonDecode(response.body) as Map<String, dynamic>;
+      final elements = (data['elements'] as List? ?? []);
+
+      final places = <Place>[];
+      for (final el in elements) {
+        final tags   = (el['tags'] as Map?) ?? {};
+        final name   = tags['name']?.toString() ?? '';
+        if (name.isEmpty) continue;
+
+        final elLat  = (el['lat'] as num?)?.toDouble() ?? lat;
+        final elLon  = (el['lon'] as num?)?.toDouble() ?? lon;
+        final loc    = LatLng(elLat, elLon);
+        final amenity = tags['amenity']?.toString() ?? '';
+        final tourism = tags['tourism']?.toString() ?? '';
+        final hours   = tags['opening_hours']?.toString() ?? '';
+        final phone   = tags['phone']?.toString() ?? '';
+        final subtitle = hours.isNotEmpty ? hours : (phone.isNotEmpty ? phone : '');
+
+        places.add(Place(
+          id: el['id']?.toString() ?? name,
+          name: name,
+          location: loc,
+          category: _categoryFromOsmAmenity(amenity, tourism, tags),
+          distance: _distanceBetween(location, loc),
+          openingHours: subtitle,
+        ));
+      }
+
+      places.sort((a, b) => a.distance.compareTo(b.distance));
+      return places;
+    } catch (e) {
+      debugPrint('Overpass error: $e');
+      return [];
     }
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
+  static String _shortName(String displayName) {
+    final parts = displayName.split(',');
+    return parts.first.trim();
+  }
+
+  static PlaceCategory _categoryFromOsmType(String type, String cls) {
+    if (cls == 'amenity') {
+      if (type == 'fuel' || type == 'gas_station') return PlaceCategory.fuel;
+      if (type == 'hospital' || type == 'clinic' || type == 'pharmacy') return PlaceCategory.medical;
+      if (type == 'pub' || type == 'bar' || type == 'restaurant' || type == 'fast_food') return PlaceCategory.pub;
+      if (type == 'drinking_water' || type == 'water_point') return PlaceCategory.water;
+      if (type == 'car_repair') return PlaceCategory.mechanic;
+    }
+    if (cls == 'tourism') {
+      if (type == 'camp_site' || type == 'caravan_site') return PlaceCategory.camp;
+    }
+    if (cls == 'natural' && type == 'spring') return PlaceCategory.water;
+    if (cls == 'place') return PlaceCategory.camp;
+    return PlaceCategory.camp;
+  }
+
+  static PlaceCategory _categoryFromOsmAmenity(
+      String amenity, String tourism, Map tags) {
+    if (amenity == 'fuel') return PlaceCategory.fuel;
+    if (amenity == 'hospital' || amenity == 'clinic' || amenity == 'pharmacy') {
+      return PlaceCategory.medical;
+    }
+    if (amenity == 'pub' || amenity == 'bar' || amenity == 'restaurant' ||
+        amenity == 'fast_food') return PlaceCategory.pub;
+    if (amenity == 'drinking_water' || amenity == 'water_point') {
+      return PlaceCategory.water;
+    }
+    if (amenity == 'car_repair' || tags['shop'] == 'car_repair') {
+      return PlaceCategory.mechanic;
+    }
+    if (tourism == 'camp_site' || tourism == 'caravan_site') {
+      return PlaceCategory.camp;
+    }
+    if (tags['natural'] == 'spring') { return PlaceCategory.water; }
+    return PlaceCategory.camp;
   }
 
   static double _distanceBetween(LatLng a, LatLng b) {
-    const r = 6371000.0;
-    final dLat = _toRadians(b.latitude - a.latitude);
-    final dLon = _toRadians(b.longitude - a.longitude);
-    final la1 = _toRadians(a.latitude);
-    final la2 = _toRadians(b.latitude);
-    final h = (sin(dLat / 2) * sin(dLat / 2)) + cos(la1) * cos(la2) * (sin(dLon / 2) * sin(dLon / 2));
+    const r   = 6371000.0;
+    final dLat = _toRad(b.latitude - a.latitude);
+    final dLon = _toRad(b.longitude - a.longitude);
+    final la1  = _toRad(a.latitude);
+    final la2  = _toRad(b.latitude);
+    final h = (sin(dLat / 2) * sin(dLat / 2)) +
+        cos(la1) * cos(la2) * (sin(dLon / 2) * sin(dLon / 2));
     return 2 * r * atan2(sqrt(h), sqrt(1 - h));
   }
 
-  static double _toRadians(double degrees) => degrees * (3.141592653589793 / 180);
+  static double _toRad(double deg) => deg * (3.141592653589793 / 180);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 class Place {
   final String id;
@@ -135,64 +197,33 @@ class Place {
   });
 }
 
-enum PlaceCategory {
-  fuel,
-  pub,
-  medical,
-  water,
-  camp,
-  mechanic,
-}
+enum PlaceCategory { fuel, pub, medical, water, camp, mechanic }
 
 extension PlaceCategoryExtension on PlaceCategory {
-  String get displayName {
-    switch (this) {
-      case PlaceCategory.fuel:
-        return 'Fuel';
-      case PlaceCategory.pub:
-        return 'Pub';
-      case PlaceCategory.medical:
-        return 'Medical';
-      case PlaceCategory.water:
-        return 'Water';
-      case PlaceCategory.camp:
-        return 'Camp';
-      case PlaceCategory.mechanic:
-        return 'Mechanic';
-    }
-  }
-  
-  IconData get icon {
-    switch (this) {
-      case PlaceCategory.fuel:
-        return Icons.local_gas_station;
-      case PlaceCategory.pub:
-        return Icons.local_bar;
-      case PlaceCategory.medical:
-        return Icons.local_hospital;
-      case PlaceCategory.water:
-        return Icons.water_drop;
-      case PlaceCategory.camp:
-        return Icons.outdoor_grill;
-      case PlaceCategory.mechanic:
-        return Icons.build;
-    }
-  }
-  
-  Color get color {
-    switch (this) {
-      case PlaceCategory.fuel:
-        return Colors.green;
-      case PlaceCategory.pub:
-        return Colors.purple;
-      case PlaceCategory.medical:
-        return Colors.red;
-      case PlaceCategory.water:
-        return Colors.blue;
-      case PlaceCategory.camp:
-        return Colors.brown;
-      case PlaceCategory.mechanic:
-        return Colors.orange;
-    }
-  }
+  String get displayName => switch (this) {
+        PlaceCategory.fuel     => 'Fuel',
+        PlaceCategory.pub      => 'Food & Drink',
+        PlaceCategory.medical  => 'Medical',
+        PlaceCategory.water    => 'Water',
+        PlaceCategory.camp     => 'Camp',
+        PlaceCategory.mechanic => 'Mechanic',
+      };
+
+  IconData get icon => switch (this) {
+        PlaceCategory.fuel     => Icons.local_gas_station,
+        PlaceCategory.pub      => Icons.local_bar,
+        PlaceCategory.medical  => Icons.local_hospital,
+        PlaceCategory.water    => Icons.water_drop,
+        PlaceCategory.camp     => Icons.outdoor_grill,
+        PlaceCategory.mechanic => Icons.build,
+      };
+
+  Color get color => switch (this) {
+        PlaceCategory.fuel     => Colors.green,
+        PlaceCategory.pub      => Colors.purple,
+        PlaceCategory.medical  => Colors.red,
+        PlaceCategory.water    => Colors.blue,
+        PlaceCategory.camp     => const Color(0xFF8D6E63),
+        PlaceCategory.mechanic => Colors.orange,
+      };
 }

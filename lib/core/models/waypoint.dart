@@ -27,6 +27,10 @@ class Waypoint {
   int? order; // For trail numbering
   bool? isPin; // Whether this is a pinned waypoint (not just a track point)
 
+  // Advanced fields
+  int? rating; // 1–5 star rating
+  String? weatherConditions; // e.g. "Sunny, 24°C, light wind"
+
   Waypoint({
     this.id,
     this.latitude,
@@ -44,6 +48,8 @@ class Waypoint {
     this.icon,
     this.order,
     this.isPin,
+    this.rating,
+    this.weatherConditions,
   });
 
   // Convert from database map (for backward compatibility)
@@ -69,6 +75,8 @@ class Waypoint {
       icon: map['icon'],
       order: map['order'],
       isPin: map['is_pin'] == 1,
+      rating: map['rating'] as int?,
+      weatherConditions: map['weather_conditions'] as String?,
     );
   }
 
@@ -91,8 +99,13 @@ class Waypoint {
       'icon': icon,
       'order': order,
       'is_pin': isPin == true ? 1 : 0,
+      'rating': rating,
+      'weather_conditions': weatherConditions,
     };
   }
+
+  /// Whether this is a media-rich pinage (camera pin)
+  bool get isPinage => type == WaypointType.pinage;
 
   /// Check if waypoint has photos
   bool get hasPhotos => photoPaths != null && photoPaths!.isNotEmpty;
@@ -106,6 +119,7 @@ class WaypointType {
   static const String track = 'track';
   static const String manual = 'manual';
   static const String trail = 'trail';
+  static const String pinage = 'pinage';
 }
 
 // Waypoint icons

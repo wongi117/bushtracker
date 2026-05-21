@@ -66,6 +66,28 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>processing</string>
+	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>BushTrack needs your location to show your position on the map, drop pins, and navigate.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>BushTrack uses your location in the background to keep tracking your route and send mesh location updates.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>BushTrack uses the camera to capture geotagged photos and show nearby pins in augmented reality.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>BushTrack needs microphone access when using the camera.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>BushTrack saves captured photos to your photo library.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>BushTrack uses the local network to broadcast emergency SOS signals and share your location with nearby BushTrack users via peer-to-peer mesh.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_bushtrack._tcp</string>
+		<string>_bushtrack._udp</string>
+	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

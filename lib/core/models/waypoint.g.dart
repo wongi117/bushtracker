@@ -15,7 +15,7 @@ extension GetWaypointCollection on Isar {
 
 const WaypointSchema = CollectionSchema(
   name: r'Waypoint',
-  id: 321110345,
+  id: 3211103457, // truncated for JS compat (web build only)
   properties: {
     r'accuracy': PropertySchema(
       id: 0,

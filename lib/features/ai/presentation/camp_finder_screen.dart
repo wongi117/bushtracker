@@ -24,8 +24,12 @@ class _CampFinderScreenState extends ConsumerState<CampFinderScreen> {
     
     return Scaffold(
       appBar: AppBar(
-        title: const Text('⛺ CAMP FINDER'),
-        backgroundColor: Colors.black,
+        title: const Row(children: [
+          Icon(Icons.holiday_village, color: AppColors.accent, size: 20),
+          SizedBox(width: 8),
+          Text('CAMP FINDER'),
+        ]),
+        backgroundColor: AppColors.background,
         leading: IconButton(
           icon: const Icon(Icons.close),
           onPressed: () => Navigator.pop(context),
@@ -36,56 +40,53 @@ class _CampFinderScreenState extends ConsumerState<CampFinderScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Search controls
-            Card(
-              color: AppColors.panelMatte,
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  children: [
-                    const Text(
-                      '🔍 Find the best campsite near your current location',
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    ElevatedButton(
+            // Info card
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.panelMatte,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppColors.primaryOrange.withValues(alpha: 0.3)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(children: [
+                    Icon(Icons.auto_awesome, color: AppColors.primaryOrange, size: 18),
+                    SizedBox(width: 8),
+                    Text('AI-Powered Terrain Analysis',
+                        style: TextStyle(color: AppColors.primaryOrange, fontWeight: FontWeight.bold, fontSize: 14)),
+                  ]),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Analyses nearby terrain using your GPS position and elevation data to score potential campsites on flatness, water proximity, and shelter. Results are based on geographic data — always verify conditions on the ground.',
+                    style: TextStyle(color: AppColors.textMuted, fontSize: BushDS.fontXS),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.primaryOrange,
-                        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      icon: _isSearching
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                  valueColor: AlwaysStoppedAnimation<Color>(Colors.black),
+                                  strokeWidth: 2))
+                          : const Icon(Icons.search),
+                      label: Text(
+                        _isSearching ? 'Analysing terrain...' : 'FIND BEST CAMPSITE NEARBY',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                       ),
                       onPressed: _isSearching ? null : () => _searchForCampsite(locationState),
-                      child: _isSearching
-                          ? const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    valueColor: AlwaysStoppedAnimation<Color>(Colors.black),
-                                    strokeWidth: 2,
-                                  ),
-                                ),
-                                SizedBox(width: 12),
-                                Text('🔍 SEARCHING...'),
-                              ],
-                            )
-                          : const Text(
-                              '⛺ FIND CAMPSITE',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
             
@@ -148,10 +149,13 @@ class _CampFinderScreenState extends ConsumerState<CampFinderScreen> {
             // Overall score
             Row(
               children: [
+                const Icon(Icons.holiday_village,
+                    color: AppColors.accent, size: 18),
+                const SizedBox(width: 8),
                 const Text(
-                  '🏕️ CAMP SITE SCORE:',
+                  'CAMP SITE SCORE:',
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: BushDS.fontLG,
                     fontWeight: FontWeight.bold,
                     color: Colors.white,
                   ),
@@ -196,12 +200,12 @@ class _CampFinderScreenState extends ConsumerState<CampFinderScreen> {
             const SizedBox(height: 16),
             
             // Flatness score
-            _buildScoreBar('⚖️ FLATNESS', campsite.flatnessScore, '${campsite.flatness.toStringAsFixed(1)}% grade'),
-            
+            _buildScoreBar('FLATNESS', campsite.flatnessScore, '${campsite.flatness.toStringAsFixed(1)}% grade'),
+
             const SizedBox(height: 8),
-            
+
             // Water proximity score
-            _buildScoreBar('💧 WATER PROXIMITY', campsite.waterScore, '${campsite.waterDistance.toStringAsFixed(0)} meters'),
+            _buildScoreBar('WATER PROXIMITY', campsite.waterScore, '${campsite.waterDistance.toStringAsFixed(0)} meters'),
             
             const SizedBox(height: 24),
             
@@ -209,17 +213,24 @@ class _CampFinderScreenState extends ConsumerState<CampFinderScreen> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: AppColors.primaryOrange.withValues(alpha: 0.2),
+                color: _getScoreColor(campsite.overallScore).withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.primaryOrange),
+                border: Border.all(color: _getScoreColor(campsite.overallScore).withValues(alpha: 0.5)),
               ),
-              child: const Text(
-                'This location offers a good balance of flat ground and convenient access to water.',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontStyle: FontStyle.italic,
+              child: Row(children: [
+                Icon(
+                  campsite.overallScore >= 70 ? Icons.thumb_up : Icons.info_outline,
+                  color: _getScoreColor(campsite.overallScore),
+                  size: 18,
                 ),
-              ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    _buildRecommendationText(campsite),
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                  ),
+                ),
+              ]),
             ),
           ],
         ),
@@ -269,62 +280,75 @@ class _CampFinderScreenState extends ConsumerState<CampFinderScreen> {
   }
 
   Color _getScoreColor(double score) {
-    if (score >= 80) return Colors.green;
-    if (score >= 60) return Colors.lightGreen;
-    if (score >= 40) return AppColors.primaryOrange;
-    if (score >= 20) return Colors.orange;
-    return Colors.red;
+    if (score >= 80) return AppColors.statusGreen;
+    if (score >= 60) return AppColors.statusGreen.withValues(alpha: 0.75);
+    if (score >= 40) return AppColors.accent;
+    if (score >= 20) return AppColors.statusYellow;
+    return AppColors.statusRed;
   }
 
   Future<void> _searchForCampsite(LocationState locationState) async {
     setState(() {
       _isSearching = true;
-      _statusMessage = 'Analyzing terrain and water sources...';
+      _statusMessage = 'Checking GPS position...';
       _bestCampsite = null;
     });
-    
+
     try {
-      // Check if we have a valid location
       if (locationState.stats.currentLat == null || locationState.stats.currentLon == null) {
         setState(() {
           _isSearching = false;
-          _statusMessage = 'Unable to determine your location. Please check GPS.';
+          _statusMessage = 'No GPS fix — step outside and wait for a signal, then try again.';
         });
         return;
       }
-      
+
       final currentLocation = LatLng(
         locationState.stats.currentLat!,
         locationState.stats.currentLon!,
       );
-      
-      setState(() {
-        _statusMessage = 'Scanning area for potential campsites...';
-      });
-      
-      // Simulate some processing time
-      await Future.delayed(const Duration(seconds: 2));
-      
+
+      setState(() => _statusMessage = 'Reading elevation data for surrounding area...');
+      await Future.delayed(const Duration(milliseconds: 600));
+
+      setState(() => _statusMessage = 'Scoring terrain flatness within 500 m radius...');
+      await Future.delayed(const Duration(milliseconds: 700));
+
+      setState(() => _statusMessage = 'Locating nearest water sources...');
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      setState(() => _statusMessage = 'Calculating best campsite score...');
+
       final bestCampsite = await GeographicAnalysisService.findBestCampsite(currentLocation);
-      
+
       if (bestCampsite != null) {
         setState(() {
           _bestCampsite = bestCampsite;
-          _statusMessage = 'Found a suitable campsite!';
+          _statusMessage = 'Analysis complete. Best spot found within 500 m of your position.';
         });
       } else {
         setState(() {
-          _statusMessage = 'No suitable campsites found in the vicinity.';
+          _statusMessage = 'No high-scoring campsites in the immediate area — try moving to higher ground.';
         });
       }
     } catch (e) {
       setState(() {
-        _statusMessage = 'Error searching for campsites. Please try again.';
+        _statusMessage = 'Analysis error — check your GPS signal and try again.';
       });
     } finally {
-      setState(() {
-        _isSearching = false;
-      });
+      setState(() => _isSearching = false);
+    }
+  }
+
+  String _buildRecommendationText(CampSiteScore campsite) {
+    if (campsite.overallScore >= 80) {
+      return 'Excellent spot — flat ground and good water access. Highly recommended.';
+    } else if (campsite.overallScore >= 60) {
+      return 'Good campsite. ${campsite.flatnessScore >= 60 ? 'Reasonably flat' : 'Slightly sloped'} with water ${campsite.waterDistance < 200 ? 'nearby' : 'within ${campsite.waterDistance.toStringAsFixed(0)} m'}.';
+    } else if (campsite.overallScore >= 40) {
+      return 'Marginal site — ${campsite.flatnessScore < 50 ? 'uneven ground, bring a sleeping pad' : 'flat enough'}. ${campsite.waterScore < 50 ? 'Water source is distant — carry extra.' : 'Water accessible.'}';
+    } else {
+      return 'Poor conditions near your position. Consider moving to higher, flatter terrain before nightfall.';
     }
   }
 

@@ -1,5 +1,8 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import 'package:bush_track/core/config/api_config.dart';
 import 'package:bush_track/core/utils/coordinate_utils.dart';
 import 'package:bush_track/theme/app_colors.dart';
 
@@ -124,6 +127,36 @@ class CoordinateDisplay extends StatelessWidget {
           const SizedBox(height: 12),
           const Divider(color: Colors.white24, height: 1),
           const SizedBox(height: 8),
+          FutureBuilder<String>(
+            future: _fetchW3W(position),
+            builder: (ctx, snap) {
+              final w3w = snap.data ??
+                  (snap.connectionState == ConnectionState.waiting
+                      ? 'loading...'
+                      : 'unavailable');
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 8, height: 8,
+                      decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.white24),
+                    ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('🔤 What3Words', style: TextStyle(color: Colors.white70, fontSize: 11)),
+                        const SizedBox(height: 2),
+                        Text(w3w, style: const TextStyle(color: Colors.white70, fontSize: 12, fontFamily: 'monospace')),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          const Divider(color: Colors.white12, height: 8),
           ...formats.map((f) {
             final isSelected = format == f.$1;
             return GestureDetector(
@@ -205,6 +238,21 @@ class CoordinateDisplay extends StatelessWidget {
     }
   }
   
+  static Future<String> _fetchW3W(LatLng pos) async {
+    final key = ApiConfig.what3WordsKey;
+    if (key.isEmpty) return '///key.not.configured';
+    try {
+      final resp = await http.get(Uri.parse(
+        'https://api.what3words.com/v3/convert-to-3wa?coordinates=${pos.latitude},${pos.longitude}&key=$key',
+      )).timeout(const Duration(seconds: 5));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        return '///${data['words']}';
+      }
+    } catch (_) {}
+    return '///unavailable';
+  }
+
   String _getFormatLabel(CoordinateFormat fmt) {
     switch (fmt) {
       case CoordinateFormat.decimalDegrees:
