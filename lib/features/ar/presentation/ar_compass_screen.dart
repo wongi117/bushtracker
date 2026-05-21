@@ -717,7 +717,7 @@ class _CompassStripPainter extends CustomPainter {
   final double heading;
   _CompassStripPainter({required this.heading});
 
-  static const _labels = {
+  static final _labels = <double, String>{
     0.0: 'N', 45.0: 'NE', 90.0: 'E', 135.0: 'SE',
     180.0: 'S', 225.0: 'SW', 270.0: 'W', 315.0: 'NW',
   };
