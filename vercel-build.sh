@@ -24,7 +24,13 @@ echo "==> Getting dependencies..."
 flutter pub get
 
 echo "==> Building Flutter web (release)..."
-flutter build web --release
+DART_DEFINES=""
+[ -n "$GEMINI_API_KEY" ]  && DART_DEFINES="$DART_DEFINES --dart-define=GEMINI_API_KEY=$GEMINI_API_KEY"
+[ -n "$GEMINI_KEY" ]      && DART_DEFINES="$DART_DEFINES --dart-define=GEMINI_KEY=$GEMINI_KEY"
+[ -n "$MAPBOX_TOKEN" ]    && DART_DEFINES="$DART_DEFINES --dart-define=MAPBOX_TOKEN=$MAPBOX_TOKEN"
+[ -n "$MAPTILER_KEY" ]    && DART_DEFINES="$DART_DEFINES --dart-define=MAPTILER_KEY=$MAPTILER_KEY"
+
+flutter build web --release $DART_DEFINES
 
 echo "==> Build complete. Output: build/web"
 ls -lh build/web
