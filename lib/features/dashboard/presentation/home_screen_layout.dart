@@ -27,6 +27,7 @@ import 'package:bush_track/features/places/presentation/places_search_screen.dar
 import 'package:bush_track/features/search/presentation/natural_language_search_screen.dart';
 import 'package:bush_track/features/ar/presentation/ar_compass_screen.dart';
 import 'package:bush_track/features/map/widgets/waypoint_editor.dart';
+import 'package:bush_track/core/config/secrets.dart';
 
 class HomeScreenLayout extends ConsumerStatefulWidget {
   const HomeScreenLayout({super.key});
@@ -125,9 +126,15 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
               children: [
                 TileLayer(
                   urlTemplate: _isSatellite
-                      ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
-                      : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  subdomains: const ['a', 'b', 'c'],
+                      ? (AppSecrets.maptilerKey.isNotEmpty
+                          ? 'https://api.maptiler.com/maps/satellite/{z}/{x}/{y}.jpg?key=${AppSecrets.maptilerKey}'
+                          : 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}')
+                      : (AppSecrets.maptilerKey.isNotEmpty
+                          ? 'https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=${AppSecrets.maptilerKey}'
+                          : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'),
+                  subdomains: AppSecrets.maptilerKey.isEmpty
+                      ? const ['a', 'b', 'c']
+                      : const [],
                   maxZoom: 18.0,
                   minZoom: 2.0,
                   tileSize: 256,
@@ -272,10 +279,51 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                     markers: [
                       Marker(
                         point: _targetPin!,
-                        width: 50,
-                        height: 50,
-                        child: const Icon(Icons.location_history,
-                            color: Colors.redAccent, size: 50),
+                        width: 70,
+                        height: 70,
+                        alignment: Alignment.bottomCenter,
+                        child: Builder(builder: (context) {
+                          final hasUser =
+                              locationState.stats.currentLat != null;
+                          final distLabel = hasUser
+                              ? _fmtDist(_distM(
+                                  LatLng(locationState.stats.currentLat!,
+                                      locationState.stats.currentLon!),
+                                  _targetPin!))
+                              : null;
+                          return Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (distLabel != null)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.redAccent.withValues(
+                                        alpha: 0.9),
+                                    borderRadius: BorderRadius.circular(8),
+                                    boxShadow: [
+                                      BoxShadow(
+                                          color: Colors.black
+                                              .withValues(alpha: 0.3),
+                                          blurRadius: 4),
+                                    ],
+                                  ),
+                                  child: Text(
+                                    distLabel,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              const SizedBox(height: 2),
+                              const Icon(Icons.location_history,
+                                  color: Colors.redAccent, size: 50),
+                            ],
+                          );
+                        }),
                       )
                     ],
                   ),
