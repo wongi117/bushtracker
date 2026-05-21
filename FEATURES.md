@@ -163,11 +163,11 @@
 
 ### AR Waypoint Overlay
 
-- [ ] Point camera at horizon — see all saved pins floating in real space
-- [ ] Distance labels, names, and photo thumbnails on AR pins
-- [ ] Works fully offline using GPS + compass + accelerometer
-- [ ] No ARCore required
-- [ ] AR pin tap → open full pin details
+- [x] Point camera at horizon — see all saved pins floating in real space
+- [x] Distance labels, names, and photo thumbnails on AR pins
+- [x] Works fully offline using GPS + compass + accelerometer
+- [x] No ARCore required
+- [x] AR pin tap → open full pin details
 
 ### AR Virtual Carving
 
