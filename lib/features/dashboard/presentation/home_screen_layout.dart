@@ -1,8 +1,14 @@
+import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:sensors_plus/sensors_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
 import 'package:bush_track/theme/app_colors.dart';
 import 'package:bush_track/theme/tactical_theme_constants.dart';
 import 'package:bush_track/theme/tactical_widgets.dart';
@@ -28,6 +34,8 @@ import 'package:bush_track/features/search/presentation/natural_language_search_
 import 'package:bush_track/features/ar/presentation/ar_compass_screen.dart';
 import 'package:bush_track/features/map/widgets/waypoint_editor.dart';
 import 'package:bush_track/core/config/secrets.dart';
+import 'package:bush_track/core/services/gpx_service.dart';
+import 'package:bush_track/core/models/trail.dart';
 
 class HomeScreenLayout extends ConsumerStatefulWidget {
   const HomeScreenLayout({super.key});
@@ -36,11 +44,14 @@ class HomeScreenLayout extends ConsumerStatefulWidget {
   ConsumerState<HomeScreenLayout> createState() => _HomeScreenLayoutState();
 }
 
+// Map style enum
+enum _MapStyle { streets, satellite, dark }
+
 class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
   final MapController _mapController = MapController();
-  bool _isSatellite = false;
+  _MapStyle _mapStyle = _MapStyle.streets;
   double _currentZoom = 13.0;
-  final double _currentRotation = 0.0;
+  double _currentRotation = 0.0;
   bool _mapInitialized = false;
   bool _tilesLoading = true;
   bool _hasAutocentered = false;
@@ -50,6 +61,10 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
   final GlobalKey<MeasurementToolState> _measurementKey =
       GlobalKey<MeasurementToolState>();
   bool _showMeasurementTool = false;
+
+  // Live compass heading (radians) from magnetometer
+  double _headingRad = 0.0;
+  StreamSubscription<MagnetometerEvent>? _magSub;
 
   @override
   void initState() {
@@ -62,6 +77,19 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
         });
       }
     });
+    // Subscribe to magnetometer for live bearing on user dot
+    try {
+      _magSub = magnetometerEvents.listen((event) {
+        final heading = math.atan2(event.y, event.x);
+        if (mounted) setState(() => _headingRad = heading);
+      });
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _magSub?.cancel();
+    super.dispose();
   }
 
   @override
@@ -125,14 +153,9 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
               ),
               children: [
                 TileLayer(
-                  urlTemplate: _isSatellite
-                      ? (AppSecrets.maptilerKey.isNotEmpty
-                          ? 'https://api.maptiler.com/maps/satellite/{z}/{x}/{y}.jpg?key=${AppSecrets.maptilerKey}'
-                          : 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}')
-                      : (AppSecrets.maptilerKey.isNotEmpty
-                          ? 'https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=${AppSecrets.maptilerKey}'
-                          : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'),
-                  subdomains: AppSecrets.maptilerKey.isEmpty
+                  urlTemplate: _tileUrl(),
+                  subdomains: AppSecrets.maptilerKey.isEmpty &&
+                          _mapStyle == _MapStyle.streets
                       ? const ['a', 'b', 'c']
                       : const [],
                   maxZoom: 18.0,
@@ -143,6 +166,21 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                   keepBuffer: 6,
                   tileDisplay: const TileDisplay.fadeIn(),
                 ),
+                // Breadcrumb trail — live GPS path
+                if (locationState.breadcrumbs.length > 1)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: locationState.breadcrumbs
+                            .where((b) =>
+                                b.latitude != null && b.longitude != null)
+                            .map((b) => LatLng(b.latitude!, b.longitude!))
+                            .toList(),
+                        color: const Color(0xFF00BFFF).withValues(alpha: 0.7),
+                        strokeWidth: 2.5,
+                      ),
+                    ],
+                  ),
                 ..._buildTrailLayers(trailState),
                 if (trailState.isCreating && trailState.draftPoints.length > 1)
                   PolylineLayer(
@@ -182,22 +220,39 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                         child: Stack(
                           alignment: Alignment.center,
                           children: [
+                            // Accuracy halo
                             Container(
-                              width: 20,
-                              height: 20,
+                              width: 44,
+                              height: 44,
+                              decoration: BoxDecoration(
+                                color: Colors.blue.withValues(alpha: 0.15),
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                    color: Colors.blue.withValues(alpha: 0.4),
+                                    width: 1.5),
+                              ),
+                            ),
+                            // Blue dot
+                            Container(
+                              width: 18,
+                              height: 18,
                               decoration: const BoxDecoration(
                                 color: Colors.blue,
                                 shape: BoxShape.circle,
                                 boxShadow: [
                                   BoxShadow(
                                       color: Colors.blueAccent,
-                                      blurRadius: 10,
-                                      spreadRadius: 5)
+                                      blurRadius: 8,
+                                      spreadRadius: 3)
                                 ],
                               ),
                             ),
-                            const Icon(Icons.navigation,
-                                color: Colors.white, size: 20),
+                            // Bearing arrow rotates with magnetometer
+                            Transform.rotate(
+                              angle: _headingRad,
+                              child: const Icon(Icons.navigation,
+                                  color: Colors.white, size: 18),
+                            ),
                           ],
                         ),
                       ),
@@ -246,7 +301,9 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                                 ),
                               ),
                             const SizedBox(height: 2),
-                            SizedBox(
+                            GestureDetector(
+                              onTap: () => _showPinInfo(w, distLabel),
+                              child: SizedBox(
                               width: 50,
                               height: 50,
                               child: WaypointMarker(
@@ -267,7 +324,7 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                                       );
                                 },
                               ),
-                            ),
+                            )),
                           ],
                         ),
                       );
@@ -393,8 +450,7 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
             top: 140,
             child: Column(
               children: [
-                _buildTacticalButton(Icons.layers,
-                    () => setState(() => _isSatellite = !_isSatellite)),
+                _buildTacticalButton(_mapStyleIcon(), _cycleMapStyle),
                 const SizedBox(height: 16),
                 _buildTacticalButton(
                     Icons.compass_calibration, () => _openCompass()),
@@ -619,41 +675,50 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
   }
 
   /// Distance label marker floating above a trail midpoint.
-  MarkerLayer _trailDistLabel(List<LatLng> pts, Color color) {
+  /// Pass [trail] to enable share-as-GPX on tap.
+  MarkerLayer _trailDistLabel(List<LatLng> pts, Color color, {Trail? trail}) {
     final total = _trailTotalDist(pts);
     final mid = pts[pts.length ~/ 2];
     return MarkerLayer(
       markers: [
         Marker(
           point: mid,
-          width: 96,
+          width: 110,
           height: 26,
-          alignment: Alignment.bottomCenter, // label floats above the LatLng
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.88),
-              borderRadius: BorderRadius.circular(8),
-              boxShadow: [
-                BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.35), blurRadius: 4),
-              ],
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.straighten, color: Colors.white, size: 11),
-                const SizedBox(width: 3),
-                Text(
-                  _fmtDist(total),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
+          alignment: Alignment.bottomCenter,
+          child: GestureDetector(
+            onTap: trail != null ? () => _shareTrailAsGpx(trail) : null,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.88),
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.35),
+                      blurRadius: 4),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.straighten, color: Colors.white, size: 11),
+                  const SizedBox(width: 3),
+                  Text(
+                    _fmtDist(total),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                ),
-              ],
+                  if (trail != null) ...[
+                    const SizedBox(width: 4),
+                    const Icon(Icons.share, color: Colors.white70, size: 10),
+                  ],
+                ],
+              ),
             ),
           ),
         ),
@@ -679,7 +744,10 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
           ],
         ),
       );
-      if (points.length >= 2) layers.add(_trailDistLabel(points, color));
+      if (points.length >= 2) {
+        layers.add(_trailDistLabel(points, color,
+            trail: trailState.activeTrail));
+      }
     }
 
     for (final trail
@@ -701,11 +769,150 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
         ),
       );
       if (points.length >= 2) {
-        layers.add(_trailDistLabel(points, color.withValues(alpha: 0.8)));
+        layers.add(_trailDistLabel(points, color.withValues(alpha: 0.8),
+            trail: trail));
       }
     }
 
     return layers;
+  }
+
+  // ── Quick pin info sheet ─────────────────────────────────────────────────
+
+  void _showPinInfo(Waypoint w, String? distLabel) {
+    final color = WaypointColors.fromHex(w.color);
+    final iconData = WaypointIcon.getIconData(w.icon);
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: Color(0xFF0D1035),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: EdgeInsets.fromLTRB(
+            20, 16, 20, MediaQuery.of(ctx).padding.bottom + 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2))),
+            ),
+            const SizedBox(height: 16),
+            Row(children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(12)),
+                child: Icon(iconData, color: color, size: 26),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(w.label ?? 'Waypoint',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 17,
+                              fontWeight: FontWeight.bold)),
+                      if (w.notes != null && w.notes!.isNotEmpty)
+                        Text(w.notes!,
+                            style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.55),
+                                fontSize: 12),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis),
+                      if (w.latitude != null)
+                        Text(
+                            '${w.latitude!.toStringAsFixed(5)}, ${w.longitude!.toStringAsFixed(5)}',
+                            style: const TextStyle(
+                                color: Colors.white38, fontSize: 11)),
+                    ]),
+              ),
+              if (distLabel != null)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                          color: color.withValues(alpha: 0.5), width: 1)),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.straighten, color: color, size: 14),
+                    Text(distLabel,
+                        style: TextStyle(
+                            color: color,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold)),
+                  ]),
+                ),
+            ]),
+            const SizedBox(height: 20),
+            Row(children: [
+              Expanded(
+                child: _actionChip(ctx, Icons.edit_outlined, 'Edit', Colors.blue,
+                    () => _editWaypoint(w)),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _actionChip(
+                    ctx,
+                    Icons.navigation_outlined,
+                    'Navigate',
+                    Colors.green,
+                    () => ref
+                        .read(aiAssistantProvider.notifier)
+                        .speak("Navigating to ${w.label ?? 'waypoint'}")),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _actionChip(ctx, Icons.delete_outline, 'Delete',
+                    Colors.red, () {
+                  Navigator.pop(ctx);
+                  ref.read(locationProvider.notifier).deleteWaypoint(w.id!);
+                }),
+              ),
+            ]),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _actionChip(BuildContext ctx, IconData icon, String label, Color color,
+      VoidCallback onTap) {
+    return GestureDetector(
+      onTap: () {
+        Navigator.pop(ctx);
+        onTap();
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.13),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, color: color, size: 22),
+          const SizedBox(height: 4),
+          Text(label,
+              style: TextStyle(
+                  color: color, fontSize: 11, fontWeight: FontWeight.w600)),
+        ]),
+      ),
+    );
   }
 
   void _onMapTap(LatLng point, TrailState trailState) {
@@ -733,6 +940,76 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
     showWaypointEditor(context, waypoint: waypoint);
   }
 
+  // ── Map style ────────────────────────────────────────────────────────────
+
+  String _tileUrl() {
+    final k = AppSecrets.maptilerKey;
+    switch (_mapStyle) {
+      case _MapStyle.satellite:
+        return k.isNotEmpty
+            ? 'https://api.maptiler.com/maps/satellite/{z}/{x}/{y}.jpg?key=$k'
+            : 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+      case _MapStyle.dark:
+        return k.isNotEmpty
+            ? 'https://api.maptiler.com/maps/dataviz-dark/{z}/{x}/{y}.png?key=$k'
+            : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png';
+      case _MapStyle.streets:
+        return k.isNotEmpty
+            ? 'https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=$k'
+            : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+    }
+  }
+
+  IconData _mapStyleIcon() {
+    switch (_mapStyle) {
+      case _MapStyle.streets:
+        return Icons.map;
+      case _MapStyle.satellite:
+        return Icons.satellite_alt;
+      case _MapStyle.dark:
+        return Icons.nightlight_round;
+    }
+  }
+
+  void _cycleMapStyle() {
+    setState(() {
+      switch (_mapStyle) {
+        case _MapStyle.streets:
+          _mapStyle = _MapStyle.satellite;
+          break;
+        case _MapStyle.satellite:
+          _mapStyle = _MapStyle.dark;
+          break;
+        case _MapStyle.dark:
+          _mapStyle = _MapStyle.streets;
+          break;
+      }
+    });
+  }
+
+  // ── GPX share ────────────────────────────────────────────────────────────
+
+  Future<void> _shareTrailAsGpx(trail) async {
+    try {
+      final gpx = GPXService.exportTrail(trail);
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/${trail.name}.gpx');
+      await file.writeAsString(gpx);
+      final uri = Uri.parse('mailto:?subject=Trail: ${trail.name}'
+          '&body=See attached GPX file: ${file.path}');
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri);
+      } else {
+        // Fallback: open via file manager
+        await launchUrl(Uri.file(file.path));
+      }
+    } catch (e) {
+      debugPrint('GPX share error: $e');
+    }
+  }
+
+  // ── Search & pin ─────────────────────────────────────────────────────────
+
   void _openSearch() {
     Navigator.push(
       context,
@@ -755,14 +1032,24 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
   }
 
   void _sendSOS() {
+    final locationState = ref.read(locationProvider);
+    final lat = locationState.stats.currentLat;
+    final lon = locationState.stats.currentLon;
+    final hasLocation = lat != null && lon != null;
+    final mapsLink = hasLocation
+        ? 'https://maps.google.com/?q=$lat,$lon'
+        : 'Location unknown';
+
     showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1A1A2E),
         title: const Text('Send SOS?', style: TextStyle(color: Colors.white)),
-        content: const Text(
-          'This will broadcast an emergency SOS beacon to all nearby mesh nodes.',
-          style: TextStyle(color: Colors.white70),
+        content: Text(
+          hasLocation
+              ? 'Broadcasts SOS to nearby mesh nodes AND opens SMS with your location:\n$mapsLink'
+              : 'Broadcasts SOS to nearby mesh nodes. (GPS not yet available)',
+          style: const TextStyle(color: Colors.white70),
         ),
         actions: [
           TextButton(
@@ -771,7 +1058,8 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('SEND SOS', style: TextStyle(color: Color(0xFFFF3B30))),
+            child: const Text('SEND SOS',
+                style: TextStyle(color: Color(0xFFFF3B30))),
           ),
         ],
       ),
@@ -780,6 +1068,13 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
         ref.read(meshProvider.notifier).sendSOS();
         ref.read(aiAssistantProvider.notifier).speak(
             'S.O.S. Beacon activated. Broadcasting position to all nearby mesh nodes.');
+        // Also open SMS app pre-filled with location
+        if (hasLocation) {
+          final msg = Uri.encodeComponent(
+              'EMERGENCY SOS — I need help!\nMy location: $mapsLink\n(BushTrack alert)');
+          launchUrl(Uri.parse('sms:?body=$msg'),
+              mode: LaunchMode.externalApplication);
+        }
       }
     });
   }
