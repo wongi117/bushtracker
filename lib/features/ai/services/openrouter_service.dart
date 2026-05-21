@@ -61,13 +61,32 @@ class OpenRouterService {
     // Always reset offline flag before attempting — never stay stuck offline.
     _isOfflineMode = false;
 
-    // On web: respect selectedProvider, then fallback chain
+    // On web: respect selectedProvider, then universal fallback chain.
+    // MiniMax is always the last cloud resort regardless of selected provider.
     if (kIsWeb) {
       final tryClaude = selectedProvider == 'auto' || selectedProvider == 'claude';
-      final tryGroq = selectedProvider == 'auto' || selectedProvider == 'groq';
+      final tryGroq   = selectedProvider == 'auto' || selectedProvider == 'groq';
       final tryGemini = selectedProvider == 'auto' || selectedProvider == 'gemini';
 
-      // 0. Claude via /api/claude proxy
+      // 0. MiniMax FIRST — proven reliable, fastest fallback
+      try {
+        debugPrint('🌐 WEB AI: Trying MiniMax...');
+        final response = await _tryMinimax(prompt, context,
+            systemPrompt: systemPrompt ?? _systemPrompt,
+            conversationHistory: conversationHistory);
+        if (response != null) {
+          _isOnDeviceMode = false;
+          _lastUsedTier = 'Cloud (MiniMax)';
+          _lastError = '';
+          _lastOnlineTime = DateTime.now();
+          return response;
+        }
+      } catch (e) {
+        debugPrint('⚠️ MiniMax failed: $e');
+        _lastError = e.toString();
+      }
+
+      // 1. Claude via /api/claude proxy
       if (tryClaude) {
         try {
           debugPrint('🌐 WEB AI: Trying Claude ($selectedClaudeModel)...');
@@ -87,7 +106,7 @@ class OpenRouterService {
         }
       }
 
-      // 1. Groq via /api/groq proxy
+      // 2. Groq via /api/groq proxy
       if (tryGroq) {
         try {
           debugPrint('🌐 WEB AI: Trying Groq ($selectedModel)...');
@@ -107,7 +126,7 @@ class OpenRouterService {
         }
       }
 
-      // 2. Gemini (CORS-safe, no proxy needed)
+      // 3. Gemini (CORS-safe, no proxy needed)
       if (tryGemini) {
         try {
           debugPrint('🌐 WEB AI: Trying Gemini...');
@@ -125,24 +144,6 @@ class OpenRouterService {
           }
         } catch (e) {
           debugPrint('⚠️ Gemini failed: $e');
-        }
-      }
-
-      // 3. MiniMax fallback (auto only)
-      if (selectedProvider == 'auto') {
-        try {
-          final response = await _tryMinimax(prompt, context,
-              systemPrompt: systemPrompt ?? _systemPrompt,
-              conversationHistory: conversationHistory);
-          if (response != null) {
-            _isOnDeviceMode = false;
-            _lastUsedTier = 'Cloud (MiniMax)';
-            _lastError = '';
-            _lastOnlineTime = DateTime.now();
-            return response;
-          }
-        } catch (e) {
-          _lastError = e.toString();
         }
       }
 
@@ -566,9 +567,17 @@ Future<Map<String, String>> testAllTiers() async {
     final results = <String, String>{};
 
     if (kIsWeb) {
-      // Web uses Groq via /api/groq proxy (primary), MiniMax proxy (fallback), Gemini (fallback).
-      // All are always-available server-side — report Online so the startup indicator shows green.
-      results['cloud'] = '✅ Groq Online (via proxy)';
+      // Test MiniMax proxy — it's our primary web provider
+      try {
+        final resp = await http.post(
+          Uri.parse('/api/ping'),
+        ).timeout(const Duration(seconds: 5));
+        results['cloud'] = resp.statusCode == 200
+            ? '✅ Cloud AI Online (MiniMax proxy)'
+            : '⚠️ Proxy unreachable (${resp.statusCode})';
+      } catch (e) {
+        results['cloud'] = '❌ Proxy unreachable';
+      }
       results['local'] = '❌ Not Available (Web)';
     } else {
       // Mobile: test Groq directly
