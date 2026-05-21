@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_animate/flutter_animate.dart';
-import 'package:mesh_gradient/mesh_gradient.dart';
 import 'dart:math';
 
 import 'package:bush_track/theme/app_colors.dart';
@@ -15,8 +14,7 @@ class OnboardingScreen extends ConsumerStatefulWidget {
   ConsumerState<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
-class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with SingleTickerProviderStateMixin {
-  late AnimationController _animController;
+class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   final PageController _pageController = PageController();
   int _currentPage = 0;
   bool _isDownloading = false;
@@ -25,12 +23,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Single
   @override
   void initState() {
     super.initState();
-    _animController = AnimationController(vsync: this, duration: const Duration(seconds: 15))..repeat();
   }
 
   @override
   void dispose() {
-    _animController.dispose();
     _pageController.dispose();
     super.dispose();
   }
@@ -92,33 +88,20 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Single
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // Dynamic Mesh Gradient Background
+          // Gradient background — simple LinearGradient, no shaders needed
           Positioned.fill(
-            child: AnimatedBuilder(
-              animation: _animController,
-              builder: (context, child) {
-                return MeshGradient(
-                  points: [
-                    MeshGradientPoint(
-                      position: Offset(-0.2 + sin(_animController.value * pi * 2) * 0.3, -0.2 + cos(_animController.value * pi * 2) * 0.3),
-                      color: AppColors.background,
-                    ),
-                    MeshGradientPoint(
-                      position: Offset(1.2 - cos(_animController.value * pi * 2) * 0.3, -0.2 + sin(_animController.value * pi * 2) * 0.3),
-                      color: const Color(0xFF1A1A24),
-                    ),
-                    MeshGradientPoint(
-                      position: Offset(0.5, 1.2),
-                      color: AppColors.primaryOrange.withValues(alpha: 0.15),
-                    ),
-                    MeshGradientPoint(
-                      position: Offset(0.5, 0.5),
-                      color: Colors.black.withValues(alpha: 0.9),
-                    ),
+            child: Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color(0xFF050510),
+                    Color(0xFF0D1035),
+                    Color(0xFF080818),
                   ],
-                  options: MeshGradientOptions(blend: 3.5),
-                );
-              },
+                ),
+              ),
             ),
           ),
           

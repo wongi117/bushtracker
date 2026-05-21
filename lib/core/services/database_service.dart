@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
 import 'package:sqflite_common/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart' show sqfliteFfiInit, databaseFactoryFfi;
@@ -26,10 +27,14 @@ class DatabaseService {
       return;
     }
     
-    // For mobile/desktop, use FFI (file-based SQLite)
-    sqfliteFfiInit();
-    databaseFactory = databaseFactoryFfi;
-    
+    // sqflite_common_ffi is desktop-only (Linux/Windows/macOS).
+    // On Android/iOS the sqflite plugin provides the factory automatically —
+    // calling sqfliteFfiInit() on Android loads a non-existent native lib and crashes.
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      sqfliteFfiInit();
+      databaseFactory = databaseFactoryFfi;
+    }
+
     final databasesPath = await getDatabasesPath();
     final path = join(databasesPath, 'bush_track.db');
     
@@ -44,55 +49,6 @@ class DatabaseService {
           await db.query('waypoints', limit: 1);
         } catch (e) {
           await _createTables(db);
-        }
-        // Migrate: add columns introduced after initial schema
-        final waypointCols = (await db.rawQuery('PRAGMA table_info(waypoints)'))
-            .map((c) => c['name'] as String)
-            .toSet();
-        if (!waypointCols.contains('rating')) {
-          await db.execute('ALTER TABLE waypoints ADD COLUMN rating INTEGER');
-        }
-        if (!waypointCols.contains('weather_conditions')) {
-          await db.execute(
-              'ALTER TABLE waypoints ADD COLUMN weather_conditions TEXT');
-        }
-        // Migrate: create geofences table if missing
-        try {
-          await db.query('geofences', limit: 1);
-        } catch (_) {
-          await db.execute('''
-            CREATE TABLE IF NOT EXISTS geofences(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              name TEXT,
-              latitude REAL,
-              longitude REAL,
-              radius_meters REAL,
-              is_active INTEGER DEFAULT 1,
-              created_at INTEGER
-            )
-          ''');
-        }
-        // Migrate: create artifacts table if missing
-        try {
-          await db.query('artifacts', limit: 1);
-        } catch (_) {
-          await db.execute('''
-            CREATE TABLE IF NOT EXISTS artifacts(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              label TEXT,
-              material_type TEXT,
-              dimensions TEXT,
-              condition TEXT,
-              field_notes TEXT,
-              latitude REAL,
-              longitude REAL,
-              altitude REAL,
-              photo_paths TEXT,
-              geologist TEXT,
-              signed_off INTEGER DEFAULT 0,
-              created_at INTEGER
-            )
-          ''');
         }
       },
       version: 1,
@@ -121,9 +77,7 @@ class DatabaseService {
         color TEXT,
         icon TEXT,
         order_index INTEGER,
-        is_pin INTEGER DEFAULT 0,
-        rating INTEGER,
-        weather_conditions TEXT
+        is_pin INTEGER DEFAULT 0
       )
     ''');
     
@@ -196,38 +150,6 @@ class DatabaseService {
         signal_strength INTEGER,
         is_connected INTEGER,
         public_key TEXT
-      )
-    ''');
-
-    // Geofences table
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS geofences(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        latitude REAL,
-        longitude REAL,
-        radius_meters REAL,
-        is_active INTEGER DEFAULT 1,
-        created_at INTEGER
-      )
-    ''');
-
-    // Heritage Artifact Logger table
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS artifacts(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        label TEXT,
-        material_type TEXT,
-        dimensions TEXT,
-        condition TEXT,
-        field_notes TEXT,
-        latitude REAL,
-        longitude REAL,
-        altitude REAL,
-        photo_paths TEXT,
-        geologist TEXT,
-        signed_off INTEGER DEFAULT 0,
-        created_at INTEGER
       )
     ''');
   }
@@ -375,14 +297,6 @@ class DatabaseService {
     );
   }
   
-  Future<void> clearBreadcrumbs(String sessionId) async {
-    if (_isWeb) {
-      _getTable('breadcrumbs').removeWhere((item) => item['session_id'] == sessionId);
-      return;
-    }
-    await _db!.delete('breadcrumbs', where: 'session_id = ?', whereArgs: [sessionId]);
-  }
-
   // Map region operations
   Future<int> insertMapRegion(Map<String, dynamic> region) async {
     if (_isWeb) {
@@ -425,85 +339,6 @@ class DatabaseService {
     return await _db!.query('mesh_peers', orderBy: 'last_seen DESC');
   }
   
-  // Geofence operations
-  Future<int> insertGeofence(Map<String, dynamic> geofence) async {
-    if (_isWeb) {
-      final data = Map<String, dynamic>.from(geofence);
-      data['id'] = _webIdCounter++;
-      data['created_at'] ??= DateTime.now().millisecondsSinceEpoch;
-      _getTable('geofences').add(data);
-      return data['id'];
-    }
-    return await _db!.insert('geofences', geofence);
-  }
-
-  Future<List<Map<String, dynamic>>> getGeofences() async {
-    if (_isWeb) {
-      return _getTable('geofences').map((e) => Map<String, dynamic>.from(e)).toList();
-    }
-    return await _db!.query('geofences', orderBy: 'created_at DESC');
-  }
-
-  Future<int> updateGeofence(Map<String, dynamic> geofence) async {
-    final id = geofence['id'] as int;
-    if (_isWeb) {
-      final list = _getTable('geofences');
-      final idx = list.indexWhere((e) => e['id'] == id);
-      if (idx >= 0) list[idx] = Map<String, dynamic>.from(geofence);
-      return 1;
-    }
-    return await _db!.update('geofences', geofence, where: 'id = ?', whereArgs: [id]);
-  }
-
-  Future<int> deleteGeofence(int id) async {
-    if (_isWeb) {
-      _getTable('geofences').removeWhere((e) => e['id'] == id);
-      return 1;
-    }
-    return await _db!.delete('geofences', where: 'id = ?', whereArgs: [id]);
-  }
-
-  // ─── Artifact operations ────────────────────────────────────────────────────
-
-  Future<int> insertArtifact(Map<String, dynamic> artifact) async {
-    if (_isWeb) {
-      final data = Map<String, dynamic>.from(artifact);
-      data['id'] = _webIdCounter++;
-      data['created_at'] ??= DateTime.now().millisecondsSinceEpoch;
-      _getTable('artifacts').add(data);
-      return data['id'];
-    }
-    return await _db!.insert('artifacts', artifact);
-  }
-
-  Future<List<Map<String, dynamic>>> getArtifacts() async {
-    if (_isWeb) {
-      final list = _getTable('artifacts');
-      list.sort((a, b) => (b['created_at'] ?? 0).compareTo(a['created_at'] ?? 0));
-      return list.map((e) => Map<String, dynamic>.from(e)).toList();
-    }
-    return await _db!.query('artifacts', orderBy: 'created_at DESC');
-  }
-
-  Future<int> updateArtifact(Map<String, dynamic> artifact) async {
-    final id = artifact['id'] as int;
-    if (_isWeb) {
-      final list = _getTable('artifacts');
-      final idx = list.indexWhere((e) => e['id'] == id);
-      if (idx >= 0) list[idx] = Map<String, dynamic>.from(artifact);
-      return 1;
-    }
-    return await _db!.update('artifacts', artifact, where: 'id = ?', whereArgs: [id]);
-  }
-
-  Future<int> deleteArtifact(int id) async {
-    if (_isWeb) {
-      _getTable('artifacts').removeWhere((e) => e['id'] == id);
-      return 1;
-    }
-    return await _db!.delete('artifacts', where: 'id = ?', whereArgs: [id]);
-  }
-
   Future<void> close() async {
     if (_isWeb) {
       _webStorage.clear();

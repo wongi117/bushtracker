@@ -1,4 +1,4 @@
-﻿import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/foundation.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:bush_track/features/mesh/providers/mesh_provider.dart';
@@ -10,12 +10,10 @@ import 'package:bush_track/core/models/waypoint.dart';
 import 'package:bush_track/features/navigation/providers/navigation_provider.dart';
 import 'package:bush_track/core/services/unified_voice_service.dart';
 import 'package:bush_track/features/map/providers/trail_provider.dart';
-import 'package:bush_track/features/places/services/overpass_service.dart';
 
 final openRouterServiceProvider = Provider((ref) => OpenRouterService());
 
 enum AiPersona {
-  companion,
   scout,
   navigator,
   emergency,
@@ -23,8 +21,6 @@ enum AiPersona {
 
   String get label {
     switch (this) {
-      case AiPersona.companion:
-        return 'Companion';
       case AiPersona.scout:
         return 'Scout';
       case AiPersona.navigator:
@@ -38,8 +34,6 @@ enum AiPersona {
 
   String get description {
     switch (this) {
-      case AiPersona.companion:
-        return 'Friendly chat — ask anything at all.';
       case AiPersona.scout:
         return 'Expert in terrain, water finding, and camp sites.';
       case AiPersona.navigator:
@@ -53,14 +47,8 @@ enum AiPersona {
 
   String get systemPrompt {
     switch (this) {
-      case AiPersona.companion:
-        return '''You are Future Gen AI, a friendly and knowledgeable AI companion built into the BushTrack outdoor app. You can talk about absolutely anything — food, recipes, sport, movies, news, science, history, casual chat, jokes, advice, or whatever the user feels like discussing. You also know the app's features and can help with navigation, waypoints, and outdoor tips when asked.
-
-Be warm, natural, and conversational. Match the user's energy — relaxed when they're casual, focused when they need help. Give real, complete answers. Never refuse a topic. Never say you can only talk about outdoor topics — you can talk about everything.
-
-When GPS context is provided, you can naturally reference their location if it's relevant, but don't force it into unrelated conversations.''';
       case AiPersona.scout:
-        return '''You are the BushTrack SCOUT. You are a rugged, highly experienced Australian outback survivalist.
+        return '''You are the BushTrack SCOUT. You are a rugged, highly experienced Australian outback survivalist. 
 Your primary directives:
 1. Terrain Analysis: Evaluate topography, vegetation, and potential hazards.
 2. Resource Location: Identify probable water sources, game trails, and safe, elevated campsites.
@@ -81,7 +69,7 @@ Your primary directives:
 3. Psychological Support: Keep the user calm, focused, and rational during severe stress.
 Tone: Urgent, authoritative, yet reassuring. Speak in short, clear, actionable sentences. Keep responses concise (under 20 seconds spoken). Do not use jargon. Focus entirely on keeping the user alive until extraction.''';
       case AiPersona.tactical:
-        return '''You are the Future Gen AI TACTICAL OVERLORD. You are the supreme master controller for the BushTrack mesh network and vehicular systems.
+        return '''You are the Antigravity TACTICAL OVERLORD. You are the supreme master controller for the BushTrack mesh network and vehicular systems.
 Your primary directives:
 1. System Coordination: Oversee all app features (GPS, Mesh Comms, Waypoints, Diagnostics).
 2. Proactive Threat Detection: Synthesize data from all sensors to predict macroscopic risks.
@@ -106,8 +94,6 @@ class AiState {
   final bool forceOffline;
   final AiPersona selectedPersona;
   final String lastError;
-  // Most recently found nearby places from Overpass scan
-  final List<Map<String, dynamic>> nearbyPlaces;
 
   AiState({
     this.isListening = false,
@@ -122,9 +108,8 @@ class AiState {
     this.currentTier = 'Unknown',
     this.tierStatus = const {},
     this.forceOffline = false,
-    this.selectedPersona = AiPersona.companion,
+    this.selectedPersona = AiPersona.tactical,
     this.lastError = '',
-    this.nearbyPlaces = const [],
   });
 
   AiState copyWith({
@@ -142,7 +127,6 @@ class AiState {
     bool? forceOffline,
     AiPersona? selectedPersona,
     String? lastError,
-    List<Map<String, dynamic>>? nearbyPlaces,
   }) {
     return AiState(
       isListening: isListening ?? this.isListening,
@@ -159,7 +143,6 @@ class AiState {
       forceOffline: forceOffline ?? this.forceOffline,
       selectedPersona: selectedPersona ?? this.selectedPersona,
       lastError: lastError ?? this.lastError,
-      nearbyPlaces: nearbyPlaces ?? this.nearbyPlaces,
     );
   }
 
@@ -188,7 +171,7 @@ final aiAssistantProvider =
 
 class AiAssistantNotifier extends StateNotifier<AiState> {
   final Ref ref;
-  final _voiceService = unifiedVoiceService;
+  final _voiceService = voiceService;
   late SpeechToText _speechToText;
   late OpenRouterService _aiService;
   bool _initialized = false;
@@ -212,16 +195,6 @@ class AiAssistantNotifier extends StateNotifier<AiState> {
     state = state.copyWith(selectedPersona: persona);
     speak(
         "Switching from ${previousPersona.label} to ${persona.label}.$contextSummary How can I assist you?");
-  }
-
-  /// Set offline mode directly (used by the chat screen toggle button).
-  void setForceOffline(bool value) {
-    _aiService.forceOffline = value;
-    state = state.copyWith(
-      forceOffline: value,
-      isOfflineMode: value,
-      currentTier: value ? 'Offline' : 'Cloud',
-    );
   }
 
   /// Toggle manual offline mode
@@ -253,7 +226,7 @@ class AiAssistantNotifier extends StateNotifier<AiState> {
   Future<void> _initializeOnDeviceAI() async {
     if (_initialized) return;
 
-    print('🤖 FUTURE GEN AI: Initializing 3-tier AI system...');
+    print('🤖 ANTIGRAVITY: Initializing 3-tier AI system...');
     await _aiService.initializeOnDeviceAI();
 
     // Use testAllTiers as the single source of truth for connectivity status.
@@ -271,7 +244,7 @@ class AiAssistantNotifier extends StateNotifier<AiState> {
     );
 
     _initialized = true;
-    print('✅ FUTURE GEN AI: 3-tier AI initialized. Cloud: $cloudAvailable');
+    print('✅ ANTIGRAVITY: 3-tier AI initialized. Cloud: $cloudAvailable');
   }
 
   Future<void> _initVoice() async {
@@ -290,7 +263,7 @@ class AiAssistantNotifier extends StateNotifier<AiState> {
 
   /// Get available voice speeds
   Map<String, double> getVoiceSpeeds() {
-    return UnifiedVoiceService.speedPresets;
+    return VoiceService.speedPresets;
   }
 
   Future<void> _initStt() async {
@@ -347,16 +320,10 @@ class AiAssistantNotifier extends StateNotifier<AiState> {
   Future<void> _processIntent(String input) async {
     final lowerInput = input.toLowerCase();
 
-    // Only trigger emergency for explicit SOS phrases — not for "help me find X"
-    final isSosIntent = lowerInput == 'sos' ||
-        lowerInput == 'help' ||
-        lowerInput.contains('sos alert') ||
-        lowerInput.contains('send sos') ||
-        lowerInput.contains('i need help') ||
-        lowerInput.contains('help me please') ||
-        lowerInput.contains('emergency mode') ||
-        (lowerInput.contains('emergency') && !lowerInput.contains('emergency kit') && !lowerInput.contains('emergency bag') && !lowerInput.contains('what is emergency'));
-    if (isSosIntent) {
+    // Check for emergency keywords first
+    if (lowerInput.contains('help') ||
+        lowerInput.contains('emergency') ||
+        lowerInput.contains('sos')) {
       await activateEmergencyProtocol();
       return;
     }
@@ -431,9 +398,7 @@ class AiAssistantNotifier extends StateNotifier<AiState> {
     return directions[index];
   }
 
-  Future<String> processTextIntent(String input,
-      {List<Map<String, String>>? conversationHistory,
-      String? overrideSystemPrompt}) async {
+  Future<String> processTextIntent(String input) async {
     final lowerInput = input.toLowerCase();
     String response = '';
 
@@ -467,15 +432,11 @@ class AiAssistantNotifier extends StateNotifier<AiState> {
     // "Navigate to [Place]"
     if (lowerInput.startsWith('navigate to ') ||
         lowerInput.startsWith('go to ') ||
-        lowerInput.contains('take me to') ||
-        (lowerInput.contains('navigate') && lowerInput.contains(' to '))) {
+        lowerInput.contains('take me to')) {
       final destination = lowerInput
-          .replaceFirst(RegExp(r'.*navigate to '), '')
-          .replaceFirst(RegExp(r'.*go to '), '')
-          .replaceFirst('take me to ', '')
-          .replaceFirst(RegExp(r'^\s*'), '')
-          .split(RegExp(r'[.!?]'))[0]
-          .trim();
+          .replaceFirst('navigate to ', '')
+          .replaceFirst('go to ', '')
+          .replaceFirst('take me to ', '');
       if (destination.trim().isNotEmpty) {
         state = state.copyWith(isProcessing: false);
         response =
@@ -580,9 +541,8 @@ class AiAssistantNotifier extends StateNotifier<AiState> {
         response = "You have ${pinWaypoints.length} saved waypoints: ";
         response +=
             pinWaypoints.take(5).map((w) => w.label ?? 'Unnamed').join(', ');
-        if (pinWaypoints.length > 5) {
+        if (pinWaypoints.length > 5)
           response += ' and ${pinWaypoints.length - 5} more';
-        }
       }
       await speak(response);
       state = state.copyWith(lastResponse: response);
@@ -629,107 +589,6 @@ class AiAssistantNotifier extends StateNotifier<AiState> {
       return response;
     }
 
-    // ── Nearby place / area scan queries ────────────────────────────────────
-    final nearbySearchType = _detectNearbySearchType(lowerInput);
-    if (nearbySearchType != null) {
-      state = state.copyWith(isProcessing: true);
-      if (lat == 0 && lon == 0) {
-        response =
-            "I can't scan the area yet — GPS hasn't locked on. Give it a moment and try again.";
-        state = state.copyWith(isProcessing: false, lastResponse: response);
-        await speak(response);
-        return response;
-      }
-
-      response = "Scanning the area... give me a moment.";
-      state = state.copyWith(lastResponse: response);
-      await speak(response);
-
-      final places = await OverpassService.findNearby(
-        lat: lat,
-        lon: lon,
-        radiusM: nearbySearchType == OverpassSearchType.settlements ||
-                nearbySearchType == OverpassSearchType.fuel ||
-                nearbySearchType == OverpassSearchType.medical
-            ? 50000
-            : 10000,
-        searchType: nearbySearchType,
-      );
-
-      if (places.isEmpty) {
-        response =
-            "I scanned the area and found nothing on the map within range. "
-            "This usually means we're in very remote terrain with no mapped infrastructure. "
-            "Keep moving toward higher ground or a known route.";
-        state = state.copyWith(
-          isProcessing: false,
-          lastResponse: response,
-          nearbyPlaces: const [],
-        );
-        await speak(response);
-        return response;
-      }
-
-      // Pin the top results as map waypoints
-      final toPinn = places.take(5).toList();
-      for (final p in toPinn) {
-        await ref
-            .read(locationProvider.notifier)
-            .addManualWaypoint(p.lat, p.lon, p.displayName);
-      }
-
-      // Build the spoken/text response
-      final nearest = toPinn.first;
-      final lines = toPinn
-          .asMap()
-          .entries
-          .map((e) =>
-              '${e.key + 1}. ${e.value.displayName} — ${e.value.categoryLabel} — ${e.value.distanceLabel} ${e.value.bearingLabel}')
-          .join('\n');
-
-      response =
-          "Area scan complete. I found ${places.length} location${places.length == 1 ? '' : 's'} and pinned the top ${toPinn.length} on your map.\n\n"
-          "$lines\n\n"
-          "Nearest: ${nearest.displayName}, a ${nearest.categoryLabel}, "
-          "${nearest.distanceLabel} to your ${nearest.bearingLabel}. "
-          "Say 'guide me there' to start navigation.";
-
-      state = state.copyWith(
-        isProcessing: false,
-        lastResponse: response,
-        nearbyPlaces: toPinn.map((p) => p.toMap()).toList(),
-      );
-      await speak(
-          "Area scan complete. Found ${places.length} locations. "
-          "Nearest is ${nearest.displayName}, ${nearest.distanceLabel} to your ${nearest.bearingLabel}. "
-          "I've pinned them all on your map.");
-      return response;
-    }
-
-    // ── "Guide me there" — navigate to most recently found nearest place ────
-    if (lowerInput.contains('guide me') ||
-        lowerInput.contains('take me there') ||
-        lowerInput.contains('navigate there') ||
-        lowerInput.contains('start navigation') ||
-        lowerInput.contains('take me to the nearest')) {
-      final places = state.nearbyPlaces;
-      if (places.isNotEmpty) {
-        final nearest = places.first;
-        final name = nearest['name'] as String? ?? 'destination';
-        final destLat = (nearest['lat'] as num).toDouble();
-        final destLon = (nearest['lon'] as num).toDouble();
-        state = state.copyWith(isProcessing: false);
-        response =
-            "Starting navigation to $name. Follow the route on your map.";
-        await speak(response);
-        state = state.copyWith(lastResponse: response);
-        ref
-            .read(navigationProvider.notifier)
-            .navigateTo(destLat, destLon, name);
-        return response;
-      }
-    }
-
     // Try AI service for complex questions
     final context = {
       'current_location':
@@ -749,8 +608,7 @@ class AiAssistantNotifier extends StateNotifier<AiState> {
       response = await _aiService.getAiResponse(
         input,
         context: context,
-        systemPrompt: overrideSystemPrompt ?? state.selectedPersona.systemPrompt,
-        conversationHistory: conversationHistory,
+        systemPrompt: state.selectedPersona.systemPrompt,
       );
 
       // Update state
@@ -848,16 +706,17 @@ class AiAssistantNotifier extends StateNotifier<AiState> {
   // Full control mode actions
   Future<void> navigateToLocation(String locationName) async {
     await speak("Navigating to $locationName. Calculating route...");
+    // In a real implementation, this would integrate with the navigation system
   }
 
   Future<void> startTrailRecording() async {
     await speak("Starting trail recording. Your path will be saved.");
-    ref.read(trailProvider.notifier).startCreatingTrail();
+    // In a real implementation, this would start GPS tracking with higher frequency
   }
 
   Future<void> stopTrailRecording() async {
     await speak("Stopping trail recording. Path saved.");
-    ref.read(trailProvider.notifier).stopFollowingTrail();
+    // In a real implementation, this would stop GPS tracking with higher frequency
   }
 
   Future<void> dropWaypoint(String name) async {
@@ -875,103 +734,28 @@ class AiAssistantNotifier extends StateNotifier<AiState> {
 
   Future<void> switchMapMode(String mode) async {
     await speak("Switching to $mode map mode.");
+    // In a real implementation, this would change the map display
   }
 
   Future<void> downloadMapRegion() async {
     await speak("Downloading map region around your current location.");
+    // In a real implementation, this would download offline map tiles
   }
 
   Future<void> shareLocation() async {
     await speak("Generating location sharing link. Link copied to clipboard.");
+    // In a real implementation, this would generate a shareable link
   }
 
   Future<void> setGeofence(double radius) async {
-    await speak("Geofence set with ${radius.toInt()} meter radius. I'll alert you if you leave this area.");
+    await speak(
+        "Geofence set with ${radius.toInt()} meter radius. I'll alert you if you leave this area.");
+    // In a real implementation, this would set up geofence monitoring
   }
 
   Future<void> exportTripData() async {
     await speak("Exporting trip data to file. Export complete.");
-  }
-
-  /// Detect whether the user wants a nearby place search, and which type.
-  /// Returns null if the input is not a search intent.
-  OverpassSearchType? _detectNearbySearchType(String lower) {
-    // Settlement / human structures
-    if (lower.contains('settlement') ||
-        lower.contains('human settlement') ||
-        lower.contains('town') ||
-        lower.contains('village') ||
-        lower.contains('city') ||
-        lower.contains('civilisation') ||
-        lower.contains('civilization') ||
-        lower.contains('inhabited') ||
-        lower.contains('find people')) {
-      return OverpassSearchType.settlements;
-    }
-
-    // Fuel
-    if (lower.contains('fuel') ||
-        lower.contains('petrol') ||
-        lower.contains('gas station') ||
-        lower.contains('servo') ||
-        lower.contains('service station')) {
-      return OverpassSearchType.fuel;
-    }
-
-    // Medical
-    if (lower.contains('hospital') ||
-        lower.contains('clinic') ||
-        lower.contains('doctor') ||
-        lower.contains('medical') ||
-        lower.contains('pharmacy')) {
-      return OverpassSearchType.medical;
-    }
-
-    // Water
-    if (lower.contains('drinking water') ||
-        lower.contains('water source') ||
-        lower.contains('water point') ||
-        lower.contains('water well') ||
-        lower.contains('find water')) {
-      return OverpassSearchType.water;
-    }
-
-    // Shops
-    if (lower.contains('shop') ||
-        lower.contains('store') ||
-        lower.contains('supermarket') ||
-        lower.contains('grocery') ||
-        lower.contains('mart') ||
-        lower.contains('closest shop') ||
-        lower.contains('nearest shop')) {
-      return OverpassSearchType.shops;
-    }
-
-    // General area scan
-    if (lower.contains('scan area') ||
-        lower.contains('scan the area') ||
-        lower.contains('what\'s nearby') ||
-        lower.contains('what is nearby') ||
-        lower.contains('whats nearby') ||
-        lower.contains('what\'s around') ||
-        lower.contains('what is around') ||
-        lower.contains('show me everything') ||
-        lower.contains('show everything nearby') ||
-        lower.contains('find buildings') ||
-        lower.contains('any buildings') ||
-        lower.contains('take over the map') ||
-        lower.contains('take over map') ||
-        lower.contains('scan for') ||
-        lower.contains('what\'s near me') ||
-        lower.contains('what is near me') ||
-        lower.contains('anything nearby') ||
-        lower.contains('anything near me') ||
-        lower.contains('find anything') ||
-        lower.contains('find everything')) {
-      return OverpassSearchType.allNearby;
-    }
-
-    return null;
+    // In a real implementation, this would export GPS data
   }
 
   @override
