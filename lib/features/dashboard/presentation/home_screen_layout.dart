@@ -147,6 +147,9 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                       ),
                     ],
                   ),
+                if (trailState.isCreating && trailState.draftPoints.length > 1)
+                  _trailDistLabel(
+                      trailState.draftPoints, const Color(0xFFFF5722)),
                 if (trailState.isCreating)
                   MarkerLayer(
                     markers: [
@@ -192,27 +195,73 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                         ),
                       ),
                     ...pinWaypoints.map((w) {
+                      final wPos =
+                          LatLng(w.latitude ?? 0.0, w.longitude ?? 0.0);
+                      final hasUser =
+                          locationState.stats.currentLat != null &&
+                              locationState.stats.currentLon != null;
+                      final distLabel = hasUser
+                          ? _fmtDist(_distM(
+                              LatLng(locationState.stats.currentLat!,
+                                  locationState.stats.currentLon!),
+                              wPos))
+                          : null;
                       return Marker(
-                        point: LatLng(w.latitude ?? 0.0, w.longitude ?? 0.0),
-                        width: 50,
-                        height: 50,
-                        child: WaypointMarker(
-                          waypoint: w,
-                          onEdit: () => _editWaypoint(w),
-                          onDelete: () => ref
-                              .read(locationProvider.notifier)
-                              .deleteWaypoint(w.id!),
-                          onColorChanged: (color) => ref
-                              .read(locationProvider.notifier)
-                              .updateWaypointColor(w.id!, color),
-                          onIconChanged: (icon) => ref
-                              .read(locationProvider.notifier)
-                              .updateWaypointIcon(w.id!, icon),
-                          onNavigate: () {
-                            ref.read(aiAssistantProvider.notifier).speak(
-                                  "Setting navigation target to ${w.label ?? 'waypoint'}.",
-                                );
-                          },
+                        point: wPos,
+                        width: 62,
+                        height: 66,
+                        alignment: Alignment.bottomCenter,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (distLabel != null)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 5, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF1A1A1A)
+                                      .withValues(alpha: 0.85),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color:
+                                        Colors.white.withValues(alpha: 0.25),
+                                    width: 0.5,
+                                  ),
+                                ),
+                                child: Text(
+                                  distLabel,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w700,
+                                    height: 1.1,
+                                  ),
+                                ),
+                              ),
+                            const SizedBox(height: 2),
+                            SizedBox(
+                              width: 50,
+                              height: 50,
+                              child: WaypointMarker(
+                                waypoint: w,
+                                onEdit: () => _editWaypoint(w),
+                                onDelete: () => ref
+                                    .read(locationProvider.notifier)
+                                    .deleteWaypoint(w.id!),
+                                onColorChanged: (color) => ref
+                                    .read(locationProvider.notifier)
+                                    .updateWaypointColor(w.id!, color),
+                                onIconChanged: (icon) => ref
+                                    .read(locationProvider.notifier)
+                                    .updateWaypointIcon(w.id!, icon),
+                                onNavigate: () {
+                                  ref.read(aiAssistantProvider.notifier).speak(
+                                        "Setting navigation target to ${w.label ?? 'waypoint'}.",
+                                      );
+                                },
+                              ),
+                            ),
+                          ],
                         ),
                       );
                     }),
@@ -506,6 +555,64 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
     );
   }
 
+  // ─── distance helpers ───────────────────────────────────────────────────
+  String _fmtDist(double m) =>
+      m >= 1000 ? '${(m / 1000).toStringAsFixed(2)} km' : '${m.toInt()} m';
+
+  double _distM(LatLng a, LatLng b) => const Distance()(a, b);
+
+  double _trailTotalDist(List<LatLng> pts) {
+    if (pts.length < 2) return 0;
+    double d = 0;
+    for (int i = 0; i < pts.length - 1; i++) {
+      d += _distM(pts[i], pts[i + 1]);
+    }
+    return d;
+  }
+
+  /// Distance label marker floating above a trail midpoint.
+  MarkerLayer _trailDistLabel(List<LatLng> pts, Color color) {
+    final total = _trailTotalDist(pts);
+    final mid = pts[pts.length ~/ 2];
+    return MarkerLayer(
+      markers: [
+        Marker(
+          point: mid,
+          width: 96,
+          height: 26,
+          alignment: Alignment.bottomCenter, // label floats above the LatLng
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.88),
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.35), blurRadius: 4),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.straighten, color: Colors.white, size: 11),
+                const SizedBox(width: 3),
+                Text(
+                  _fmtDist(total),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   List<Widget> _buildTrailLayers(TrailState trailState) {
     final layers = <Widget>[];
 
@@ -524,6 +631,7 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
           ],
         ),
       );
+      if (points.length >= 2) layers.add(_trailDistLabel(points, color));
     }
 
     for (final trail
@@ -544,6 +652,9 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
           ],
         ),
       );
+      if (points.length >= 2) {
+        layers.add(_trailDistLabel(points, color.withValues(alpha: 0.8)));
+      }
     }
 
     return layers;

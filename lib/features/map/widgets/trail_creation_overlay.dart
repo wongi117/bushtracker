@@ -3,6 +3,9 @@ import 'package:latlong2/latlong.dart';
 import 'color_picker.dart';
 import '../../../core/models/trail.dart';
 
+String _fmtDist(double m) =>
+    m >= 1000 ? '${(m / 1000).toStringAsFixed(2)} km' : '${m.toInt()} m';
+
 /// Trail creation overlay widget
 class TrailCreationOverlay extends StatefulWidget {
   final List<LatLng> draftPoints;
@@ -33,6 +36,17 @@ class _TrailCreationOverlayState extends State<TrailCreationOverlay> {
   void dispose() {
     _nameController.dispose();
     super.dispose();
+  }
+
+  double _draftDistance() {
+    final pts = widget.draftPoints;
+    if (pts.length < 2) return 0;
+    const d = Distance();
+    double total = 0;
+    for (int i = 0; i < pts.length - 1; i++) {
+      total += d(pts[i], pts[i + 1]);
+    }
+    return total;
   }
 
   @override
@@ -92,13 +106,48 @@ class _TrailCreationOverlayState extends State<TrailCreationOverlay> {
             ),
             const SizedBox(height: 16),
 
-            // Point count
-            Text(
-              'Points: ${widget.draftPoints.length}',
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.7),
-                fontSize: 14,
-              ),
+            // Point count + running distance
+            Row(
+              children: [
+                Text(
+                  'Points: ${widget.draftPoints.length}',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.7),
+                    fontSize: 14,
+                  ),
+                ),
+                if (widget.draftPoints.length >= 2) ...[
+                  const SizedBox(width: 12),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF5722).withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: const Color(0xFFFF5722).withValues(alpha: 0.5),
+                        width: 1,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.straighten,
+                            color: Color(0xFFFF5722), size: 12),
+                        const SizedBox(width: 4),
+                        Text(
+                          _fmtDist(_draftDistance()),
+                          style: const TextStyle(
+                            color: Color(0xFFFF5722),
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
             ),
             const SizedBox(height: 12),
 
