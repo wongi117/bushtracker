@@ -29,6 +29,8 @@ import 'package:bush_track/core/services/connectivity_service.dart';
 import 'package:bush_track/features/map/widgets/coordinate_display.dart';
 import 'package:bush_track/core/utils/coordinate_utils.dart';
 import 'package:bush_track/features/map/services/photo_geotagging_service.dart';
+import 'package:bush_track/features/map/presentation/photo_pin_screen.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:bush_track/features/map/services/offline_map_manager.dart';
 import 'package:bush_track/features/map/widgets/compass_rose.dart';
 import 'package:bush_track/features/map/widgets/scale_bar.dart';
@@ -615,6 +617,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                     description:
                         'Add a waypoint marker at the center of the screen'),
                 const SizedBox(height: 12),
+                // Camera Pin — take photo, drop GPS pin instantly
+                _buildFloatingButton(
+                  Icons.camera_alt,
+                  () => _takePhotoAndDropPin(locationState),
+                  tooltip: 'Photo Pin',
+                  description:
+                      'Take a photo — drops a GPS pin with the image attached',
+                ),
+                const SizedBox(height: 12),
                 // Clear all waypoints
                 _buildFloatingButton(Icons.delete_sweep, () {
                   _showClearWaypointsDialog(context);
@@ -878,6 +889,120 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   void dispose() {
     _meshController.dispose();
     super.dispose();
+  }
+
+  /// Opens a bottom sheet so the user can choose camera or selfie,
+  /// then navigates to PhotoPinScreen to label and drop the pin.
+  Future<void> _takePhotoAndDropPin(LocationState locationState) async {
+    final lat = locationState.stats.currentLat;
+    final lon = locationState.stats.currentLon;
+
+    if (lat == null || lon == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Waiting for GPS fix — try again in a moment.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // Let user pick camera or selfie
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: const Color(0xFF0D1A0D),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'PHOTO PIN',
+                style: GoogleFonts.outfit(
+                  color: const Color(0xFFE8A020),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 2,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Take a photo — a GPS pin drops automatically.',
+                style: GoogleFonts.outfit(
+                    color: Colors.white54, fontSize: 13),
+              ),
+              const SizedBox(height: 20),
+              _CameraOption(
+                icon: Icons.camera_alt,
+                label: 'Camera',
+                subtitle: 'Rear-facing camera',
+                onTap: () => Navigator.pop(ctx, ImageSource.camera),
+              ),
+              const SizedBox(height: 12),
+              _CameraOption(
+                icon: Icons.camera_front,
+                label: 'Selfie',
+                subtitle: 'Front-facing camera',
+                onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (source == null || !mounted) return;
+
+    final location = LatLng(lat, lon);
+
+    // Show loading while camera opens
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Opening camera...'),
+          duration: Duration(seconds: 1),
+          backgroundColor: Color(0xFF1B5E20),
+        ),
+      );
+    }
+
+    GeotaggedPhoto? photo;
+    if (source == ImageSource.camera) {
+      photo = await _photoService.takePhoto(
+        location: location,
+        altitude: locationState.stats.currentAltitude,
+      );
+    } else {
+      // Selfie — use camera source, front camera handled by OS
+      photo = await _photoService.takePhoto(
+        location: location,
+        altitude: locationState.stats.currentAltitude,
+      );
+    }
+
+    if (photo == null || !mounted) return;
+
+    // Navigate to confirm/label screen
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PhotoPinScreen(
+          photo: photo!,
+          location: location,
+        ),
+      ),
+    );
+
+    if (saved == true && mounted) {
+      // Centre map on the new pin
+      _mapController.move(location, 16.0);
+    }
   }
 
   void _showSOSConfirmation() {
@@ -1581,6 +1706,74 @@ class _SidebarButtonState extends State<_SidebarButton> {
               child: Icon(widget.icon, color: iconColor, size: 22),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Camera option row for the bottom sheet ────────────────────
+
+class _CameraOption extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  const _CameraOption({
+    required this.icon,
+    required this.label,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF111F11),
+          border: Border.all(color: const Color(0xFF2E4A2E)),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: const Color(0xFFE8A020).withOpacity(0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: const Color(0xFFE8A020), size: 22),
+            ),
+            const SizedBox(width: 14),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.4),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+            const Spacer(),
+            Icon(Icons.chevron_right,
+                color: Colors.white.withOpacity(0.3), size: 20),
+          ],
         ),
       ),
     );

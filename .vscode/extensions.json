@@ -1,0 +1,27 @@
+{
+  "recommendations": [
+    // Required
+    "Dart-Code.flutter",
+    "Dart-Code.dart-code",
+
+    // Git
+    "eamodio.gitlens",
+
+    // Code quality
+    "usernamehw.errorlens",
+    "streetsidesoftware.code-spell-checker",
+
+    // Productivity
+    "pflannery.vscode-versionlens",
+    "hirantha.json-to-dart",
+    "robert-brunhage.flutter-riverpod-snippets",
+    "alexisvt.flutter-snippets",
+
+    // Testing / Preview
+    "flutter-preview.flutter-preview",
+
+    // UI
+    "pkief.material-icon-theme",
+    "GitHub.github-vscode-theme"
+  ]
+}

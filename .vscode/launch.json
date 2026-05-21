@@ -1,0 +1,33 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "BushTrack — Android (debug)",
+      "request": "launch",
+      "type": "dart",
+      "args": ["--dart-define-from-file=.env"]
+    },
+    {
+      "name": "BushTrack — Android (release)",
+      "request": "launch",
+      "type": "dart",
+      "flutterMode": "release",
+      "args": ["--dart-define-from-file=.env"]
+    },
+    {
+      "name": "BushTrack — iOS (debug)",
+      "request": "launch",
+      "type": "dart",
+      "deviceId": "ios",
+      "args": ["--dart-define-from-file=.env"]
+    },
+    {
+      "name": "BushTrack — iOS (release)",
+      "request": "launch",
+      "type": "dart",
+      "deviceId": "ios",
+      "flutterMode": "release",
+      "args": ["--dart-define-from-file=.env"]
+    }
+  ]
+}

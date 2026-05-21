@@ -392,6 +392,36 @@ class LocationNotifier extends StateNotifier<LocationState> {
     _loadWaypoints();
   }
 
+  /// Drop a pin at the given location with an attached photo.
+  Future<Waypoint> addPhotoWaypoint({
+    required double lat,
+    required double lon,
+    required String photoPath,
+    required String thumbnailPath,
+    String? label,
+    String? notes,
+    double? altitude,
+  }) async {
+    final waypoint = Waypoint(
+      latitude: lat,
+      longitude: lon,
+      altitude: altitude,
+      timestamp: DateTime.now(),
+      label: label ?? 'Photo Pin',
+      notes: notes,
+      type: WaypointType.manual,
+      color: WaypointColors.neonCyan,
+      icon: WaypointIcon.pin,
+      isPin: true,
+      photoPaths: [photoPath],
+      thumbnailPath: thumbnailPath,
+    );
+
+    await databaseService.insertWaypoint(waypoint.toMap());
+    _loadWaypoints();
+    return waypoint;
+  }
+
   Future<void> updateWaypoint(Waypoint waypoint) async {
     await databaseService.updateWaypoint(waypoint.toMap());
     _loadWaypoints();

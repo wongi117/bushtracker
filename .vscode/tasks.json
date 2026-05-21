@@ -1,0 +1,110 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Flutter: Get Packages",
+      "type": "shell",
+      "command": "flutter pub get",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Flutter: Clean",
+      "type": "shell",
+      "command": "flutter clean && flutter pub get",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Flutter: Build Android APK (debug)",
+      "type": "shell",
+      "command": "flutter build apk --debug --dart-define-from-file=.env",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Flutter: Build Android APK (release)",
+      "type": "shell",
+      "command": "flutter build apk --release --dart-define-from-file=.env",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Flutter: Build Android AAB (Play Store)",
+      "type": "shell",
+      "command": "flutter build appbundle --release --dart-define-from-file=.env",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Flutter: Build iOS (release)",
+      "type": "shell",
+      "command": "flutter build ios --release --dart-define-from-file=.env",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Flutter: Run Tests",
+      "type": "shell",
+      "command": "flutter test --dart-define-from-file=.env",
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Flutter: Analyze",
+      "type": "shell",
+      "command": "flutter analyze",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": ["$dart-analyze"]
+    },
+    {
+      "label": "Flutter: Generate (build_runner)",
+      "type": "shell",
+      "command": "flutter pub run build_runner build --delete-conflicting-outputs",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Flutter: Watch (build_runner)",
+      "type": "shell",
+      "command": "flutter pub run build_runner watch --delete-conflicting-outputs",
+      "group": "build",
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
+    },
+    {
+      "label": "🚀 Deploy to Vercel",
+      "type": "shell",
+      "command": "bash deploy.sh",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Install APK to device",
+      "type": "shell",
+      "command": "adb install -r build/app/outputs/flutter-apk/app-release.apk",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": [],
+      "dependsOn": "Flutter: Build Android APK (release)"
+    }
+  ]
+}

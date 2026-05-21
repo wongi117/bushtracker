@@ -1,0 +1,77 @@
+name: iOS — Build & Deploy to App Store
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build iOS IPA
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 'stable'
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Import signing certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.IOS_DISTRIBUTION_CERT_BASE64 }}
+          p12-password: ${{ secrets.IOS_DISTRIBUTION_CERT_PASSWORD }}
+
+      - name: Install provisioning profile
+        run: |
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}" | base64 --decode \
+            > ~/Library/MobileDevice/Provisioning\ Profiles/bushtrack.mobileprovision
+
+      - name: Build iOS (no codesign — Xcode handles it)
+        run: |
+          flutter build ios --release --no-codesign \
+            --dart-define=MAPBOX_TOKEN=${{ secrets.MAPBOX_TOKEN }} \
+            --dart-define=MAPTILER_KEY=${{ secrets.MAPTILER_KEY }} \
+            --dart-define=OPENROUTER_KEY=${{ secrets.OPENROUTER_KEY }} \
+            --dart-define=GEMINI_KEY=${{ secrets.GEMINI_KEY }} \
+            --dart-define=HERE_API_KEY=${{ secrets.HERE_API_KEY }} \
+            --dart-define=OPENCAGE_KEY=${{ secrets.OPENCAGE_KEY }} \
+            --dart-define=W3W_KEY=${{ secrets.W3W_KEY }} \
+            --dart-define=BRAVE_KEY=${{ secrets.BRAVE_KEY }}
+
+      - name: Archive & export IPA
+        run: |
+          xcodebuild -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -archivePath build/Runner.xcarchive \
+            archive
+
+          xcodebuild -exportArchive \
+            -archivePath build/Runner.xcarchive \
+            -exportOptionsPlist ios/ExportOptions.plist \
+            -exportPath build/ios/ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bushtrack-release.ipa
+          path: build/ios/ipa/*.ipa
+
+      - name: Deploy to App Store (TestFlight)
+        uses: apple-actions/upload-testflight-build@v1
+        with:
+          app-path: build/ios/ipa/BushTrack.ipa
+          issuer-id: ${{ secrets.APPSTORE_ISSUER_ID }}
+          api-key-id: ${{ secrets.APPSTORE_API_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}

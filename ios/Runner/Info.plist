@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Bush Track</string>
+	<string>BushTrack</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>bush_track</string>
+	<string>BushTrack</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -47,6 +47,13 @@
 			</array>
 		</dict>
 	</dict>
+	<!-- Camera & photo permissions -->
+	<key>NSCameraUsageDescription</key>
+	<string>BushTrack uses the camera to take photos and drop GPS pins at your location.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>BushTrack saves geotagged photos to your device for offline access.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>BushTrack saves photos with GPS coordinates to your photo library.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
