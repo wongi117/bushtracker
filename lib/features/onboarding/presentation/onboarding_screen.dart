@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'dart:math';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:bush_track/theme/app_colors.dart';
 import 'package:bush_track/features/dashboard/presentation/home_screen_layout.dart';
@@ -45,32 +46,18 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   void _startMapDownload() {
     setState(() {
       _isDownloading = true;
+      _downloadProgress = 1.0;
     });
-    
-    // Simulate tactical download
-    Future.delayed(const Duration(milliseconds: 500), () {
-      _simulateDownload();
+    // Minimal delay so the 100% indicator is visible before navigating
+    Future.delayed(const Duration(milliseconds: 600), () {
+      if (mounted) _finishOnboarding();
     });
-  }
-  
-  void _simulateDownload() {
-    if (!mounted) return;
-    
-    setState(() {
-      _downloadProgress += 0.05;
-    });
-    
-    if (_downloadProgress < 1.0) {
-      Future.delayed(const Duration(milliseconds: 100), _simulateDownload);
-    } else {
-      // Done downloading
-      Future.delayed(const Duration(milliseconds: 500), () {
-        if (mounted) _finishOnboarding();
-      });
-    }
   }
 
-  void _finishOnboarding() {
+  void _finishOnboarding() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('onboarding_complete', true);
+    if (!mounted) return;
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         transitionDuration: const Duration(milliseconds: 800),
@@ -382,7 +369,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                         style: const TextStyle(color: AppColors.primaryOrange, fontSize: 40, fontWeight: FontWeight.w900),
                       ),
                       const Text(
-                        'DOWNLOADING\nWA GOLDFIELDS',
+                        'CACHING\nYOUR REGION',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: Colors.white70, fontSize: 10, letterSpacing: 2.0),
                       ),
@@ -395,7 +382,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           const Spacer(),
           
           if (!_isDownloading) ...[
-            _buildPrimaryButton('INITIATE DOWNLOAD (~45MB)', _startMapDownload).animate().fadeIn(delay: 600.ms),
+            _buildPrimaryButton('CACHE REGION DATA', _startMapDownload).animate().fadeIn(delay: 600.ms),
             const SizedBox(height: 16),
             Center(
               child: TextButton(
