@@ -280,8 +280,8 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                           : null;
                       return Marker(
                         point: wPos,
-                        width: 62,
-                        height: 66,
+                        width: 72,
+                        height: 72,
                         alignment: Alignment.bottomCenter,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
