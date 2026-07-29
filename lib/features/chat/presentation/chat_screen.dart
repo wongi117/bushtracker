@@ -36,7 +36,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               children: [
                 Icon(Icons.chat_bubble, color: AppColors.primaryOrange),
                 SizedBox(width: 8),
-                Text('💬 Comms & A.I. Chat', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                Text('COMMS & A.I. CHAT', style: TextStyle(color: Colors.white, fontSize: BushDS.fontXL, fontWeight: FontWeight.bold)),
               ],
             ),
           ),
@@ -90,7 +90,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     controller: _controller,
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
-                      hintText: '💬 Message A.I. or crew...',
+                      hintText: 'Message A.I. or crew...',
                       hintStyle: const TextStyle(color: AppColors.textSecondary),
                       filled: true,
                       fillColor: AppColors.panelMatte,
@@ -102,23 +102,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                IconButton(
-                  icon: const Icon(Icons.send, color: AppColors.primaryOrange),
-                  onPressed: () {
-                    final text = _controller.text.trim();
-                    if (text.isNotEmpty) {
-                      setState(() {
-                        _messages.add({'sender': 'Me', 'text': text});
-                      });
-                      _controller.clear();
-                      
-                      // Process text for AI
-                      ref.read(aiAssistantProvider.notifier).processTextIntent(text);
-                      
-                      // Also broadcast to mesh
-                      ref.read(meshProvider.notifier).sendMessage(text);
-                    }
-                  },
+                SizedBox(
+                  width: BushDS.tapMin,
+                  height: BushDS.tapMin,
+                  child: IconButton(
+                    padding: EdgeInsets.zero,
+                    icon: const Icon(Icons.send, color: AppColors.primaryOrange),
+                    onPressed: () {
+                      final text = _controller.text.trim();
+                      if (text.isNotEmpty) {
+                        setState(() {
+                          _messages.add({'sender': 'Me', 'text': text});
+                        });
+                        _controller.clear();
+                        ref.read(aiAssistantProvider.notifier).processTextIntent(text);
+                        ref.read(meshProvider.notifier).sendMessage(text);
+                      }
+                    },
+                  ),
                 ),
               ],
             ),

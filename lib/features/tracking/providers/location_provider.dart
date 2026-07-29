@@ -395,31 +395,6 @@ class LocationNotifier extends StateNotifier<LocationState> {
     _loadWaypoints();
   }
 
-  Future<void> addPhotoWaypoint({
-    required double lat,
-    required double lon,
-    required String photoPath,
-    String? thumbnailPath,
-    required String label,
-    String? notes,
-  }) async {
-    final waypoint = Waypoint(
-      latitude: lat,
-      longitude: lon,
-      timestamp: DateTime.now(),
-      label: label,
-      notes: notes,
-      type: WaypointType.manual,
-      color: WaypointColors.emberOrange,
-      icon: WaypointIcon.custom,
-      photoPaths: [photoPath],
-      thumbnailPath: thumbnailPath,
-      isPin: true,
-    );
-    await databaseService.insertWaypoint(waypoint.toMap());
-    _loadWaypoints();
-  }
-
   Future<void> updateWaypoint(Waypoint waypoint) async {
     await databaseService.updateWaypoint(waypoint.toMap());
     _loadWaypoints();

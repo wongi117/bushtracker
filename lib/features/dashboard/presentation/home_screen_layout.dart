@@ -8,7 +8,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
 import 'package:bush_track/theme/app_colors.dart';
 import 'package:bush_track/theme/tactical_theme_constants.dart';
@@ -59,11 +58,10 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
   _MapStyle _mapStyle = _MapStyle.streets;
   double _currentZoom = 13.0;
   double _currentRotation = 0.0;
-  bool _mapInitialized = true;
-  bool _tilesLoading = false;
+  bool _mapInitialized = false;
+  bool _tilesLoading = true;
   bool _hasAutocentered = false;
   LatLng? _targetPin;
-  LatLng? _savedCenter;
   CoordinateFormat _coordinateFormat = CoordinateFormat.decimalDegrees;
   bool _showCoordinatePanel = false;
   final GlobalKey<MeasurementToolState> _measurementKey =
@@ -77,32 +75,21 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
   @override
   void initState() {
     super.initState();
-    _loadSavedCenter();
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) {
+        setState(() {
+          _mapInitialized = true;
+          _tilesLoading = false;
+        });
+      }
+    });
+    // Subscribe to magnetometer for live bearing on user dot
     try {
       _magSub = magnetometerEvents.listen((event) {
         final heading = math.atan2(event.y, event.x);
         if (mounted) setState(() => _headingRad = heading);
       });
     } catch (_) {}
-  }
-
-  Future<void> _loadSavedCenter() async {
-    final prefs = await SharedPreferences.getInstance();
-    final lat = prefs.getDouble('map_last_lat');
-    final lon = prefs.getDouble('map_last_lon');
-    if (lat != null && lon != null && mounted) {
-      setState(() => _savedCenter = LatLng(lat, lon));
-      // Move the map after the first frame so the controller is attached
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _mapController.move(LatLng(lat, lon), 14.0);
-      });
-    }
-  }
-
-  Future<void> _saveCenter(double lat, double lon) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble('map_last_lat', lat);
-    await prefs.setDouble('map_last_lon', lon);
   }
 
   @override
@@ -118,20 +105,16 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
     final trailState = ref.watch(trailProvider);
     ref.watch(aiAssistantProvider);
 
-    // Auto-center + save position on GPS fix
+    // Auto-center map on first real GPS fix
     ref.listen<LocationState>(locationProvider, (_, next) {
-      if (next.stats.currentLat != null && next.stats.currentLon != null) {
-        _saveCenter(next.stats.currentLat!, next.stats.currentLon!);
-        if (!_hasAutocentered) {
-          _hasAutocentered = true;
-          // Only jump if we don't already have a saved position nearby
-          if (_savedCenter == null) {
-            _mapController.move(
-              LatLng(next.stats.currentLat!, next.stats.currentLon!),
-              15.0,
-            );
-          }
-        }
+      if (!_hasAutocentered &&
+          next.stats.currentLat != null &&
+          next.stats.currentLon != null) {
+        _hasAutocentered = true;
+        _mapController.move(
+          LatLng(next.stats.currentLat!, next.stats.currentLon!),
+          15.0,
+        );
       }
     });
 
@@ -145,12 +128,8 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
         .where((w) => w.isPin == true || w.type == WaypointType.manual)
         .toList();
 
-    final userLat = locationState.stats.currentLat
-        ?? _savedCenter?.latitude
-        ?? -25.2744;  // geographic centre of Australia
-    final userLon = locationState.stats.currentLon
-        ?? _savedCenter?.longitude
-        ?? 133.7751;
+    final userLat = locationState.stats.currentLat ?? -25.3444;
+    final userLon = locationState.stats.currentLon ?? 131.0369;
 
     return Scaffold(
       backgroundColor: kDarkBg,
@@ -162,8 +141,8 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
             child: FlutterMap(
               mapController: _mapController,
               options: MapOptions(
-                initialCenter: _savedCenter ?? const LatLng(-25.2744, 133.7751),
-                initialZoom: _savedCenter != null ? 14.0 : 5.0,
+                initialCenter: LatLng(userLat, userLon),
+                initialZoom: _currentZoom,
                 minZoom: 2.0,
                 maxZoom: 18.0,
                 interactionOptions: const InteractionOptions(
@@ -301,8 +280,8 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                           : null;
                       return Marker(
                         point: wPos,
-                        width: 72,
-                        height: 72,
+                        width: 62,
+                        height: 66,
                         alignment: Alignment.bottomCenter,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,

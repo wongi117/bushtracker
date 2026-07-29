@@ -1,12 +1,13 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
-class VoiceService {
-  static final VoiceService _instance = VoiceService._internal();
-  factory VoiceService() => _instance;
-  VoiceService._internal();
+/// Unified Voice Service — flutter_tts on all platforms (web + mobile)
+class UnifiedVoiceService {
+  static final UnifiedVoiceService _instance = UnifiedVoiceService._internal();
+  factory UnifiedVoiceService() => _instance;
+  UnifiedVoiceService._internal();
 
-  FlutterTts? _flutterTts;
+  FlutterTts? _tts;
   bool _isInitialized = false;
   double _speechRate = 1.1;
   double _pitch = 1.0;
@@ -21,57 +22,73 @@ class VoiceService {
 
   Future<void> initialize() async {
     if (_isInitialized) return;
-    _flutterTts = FlutterTts();
-    await _flutterTts!.setLanguage(_language);
-    await _flutterTts!.setSpeechRate(_speechRate);
-    await _flutterTts!.setPitch(_pitch);
-    await _flutterTts!.setVolume(1.0);
+    _tts = FlutterTts();
+    try {
+      await _tts!.setLanguage(_language);
+      await _tts!.setSpeechRate(_speechRate);
+      await _tts!.setPitch(_pitch);
+      await _tts!.setVolume(1.0);
+    } catch (e) {
+      debugPrint('⚠️ TTS init warning: $e');
+    }
     _isInitialized = true;
-    debugPrint('Voice: FlutterTTS initialized');
+    debugPrint('🎤 Voice: FlutterTTS ready (${kIsWeb ? "web" : "native"})');
   }
 
   Future<void> speak(String text) async {
     if (!_isInitialized) await initialize();
     if (text.isEmpty) return;
-    await _flutterTts?.stop();
-    await _flutterTts?.speak(text);
+    try {
+      await _tts?.speak(text);
+    } catch (e) {
+      debugPrint('❌ TTS speak error: $e');
+    }
   }
 
   Future<void> stop() async {
-    await _flutterTts?.stop();
+    try {
+      await _tts?.stop();
+    } catch (e) {
+      debugPrint('❌ TTS stop error: $e');
+    }
   }
 
-  Future<void> cancel() => stop();
-
   Future<void> setSpeechRate(String speed) async {
-    final rate = speedPresets[speed] ?? 1.1;
-    _speechRate = rate;
-    await _flutterTts?.setSpeechRate(rate);
+    _speechRate = speedPresets[speed] ?? 1.1;
+    try {
+      await _tts?.setSpeechRate(_speechRate);
+    } catch (_) {}
   }
 
   Future<void> setCustomSpeechRate(double rate) async {
     _speechRate = rate.clamp(0.5, 2.0);
-    await _flutterTts?.setSpeechRate(_speechRate);
+    try {
+      await _tts?.setSpeechRate(_speechRate);
+    } catch (_) {}
   }
 
   Future<void> setPitch(double pitch) async {
     _pitch = pitch;
-    await _flutterTts?.setPitch(pitch);
+    try {
+      await _tts?.setPitch(pitch);
+    } catch (_) {}
   }
 
   Future<void> setLanguage(String language) async {
     _language = language;
-    await _flutterTts?.setLanguage(_language);
+    try {
+      await _tts?.setLanguage(language);
+    } catch (_) {}
   }
 
-  Map<String, dynamic> getSettings() {
-    return {
-      'isWeb': kIsWeb,
-      'speechRate': _speechRate,
-      'pitch': _pitch,
-      'language': _language,
-    };
-  }
+  bool get isSpeaking => false; // flutter_tts doesn't expose sync getter
+
+  Map<String, dynamic> getSettings() => {
+        'isWeb': kIsWeb,
+        'speechRate': _speechRate,
+        'pitch': _pitch,
+        'language': _language,
+      };
 }
 
-final voiceService = VoiceService();
+final unifiedVoiceService = UnifiedVoiceService();

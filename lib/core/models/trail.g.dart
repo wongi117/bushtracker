@@ -15,7 +15,7 @@ extension GetTrailCollection on Isar {
 
 const TrailSchema = CollectionSchema(
   name: r'Trail',
-  id: -1316059864289700883,
+  id: -1316059864, // truncated for JS compat (web build only)
   properties: {
     r'color': PropertySchema(
       id: 0,

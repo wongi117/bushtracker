@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:math' show atan2, sin, cos;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
@@ -208,7 +208,7 @@ class AIControlNotifier extends StateNotifier<AIControlState> {
     }
     
     if (duplicatesFound > 0 || redundantLabelsFound > 0) {
-      String message = "Antigravity alert: ";
+      String message = "Future Gen AI alert: ";
       if (duplicatesFound > 0) {
         message += "I've detected $duplicatesFound duplicate waypoint${duplicatesFound > 1 ? 's' : ''} in close proximity. ";
       }

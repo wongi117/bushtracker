@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
@@ -84,10 +85,34 @@ class ConnectivityNotifier extends StateNotifier<ConnectivityState> {
       lastOnline: state.lastOnline,
     );
 
+    if (kIsWeb) {
+      // On web, ping same-origin /api/ping to avoid CORS blocks
+      try {
+        final response = await http.get(
+          Uri.parse('/api/ping'),
+        ).timeout(const Duration(seconds: 5));
+        final connected = response.statusCode == 200;
+        state = ConnectivityState(
+          isConnected: connected,
+          connectionType: connected ? 'wifi' : 'none',
+          lastChecked: DateTime.now(),
+          lastOnline: connected ? DateTime.now() : state.lastOnline,
+        );
+      } catch (_) {
+        state = ConnectivityState(
+          isConnected: false,
+          connectionType: 'none',
+          lastChecked: DateTime.now(),
+          lastOnline: state.lastOnline,
+        );
+      }
+      return;
+    }
+
     try {
-      // Ping OpenRouter — any response (even 401) means internet is up
+      // Native: Google — reliable connectivity check
       final response = await http.get(
-        Uri.parse('https://openrouter.ai/api/v1/models'),
+        Uri.parse('https://www.google.com'),
       ).timeout(const Duration(seconds: 5));
 
       final connected = response.statusCode < 500;
@@ -98,10 +123,10 @@ class ConnectivityNotifier extends StateNotifier<ConnectivityState> {
         lastOnline: connected ? DateTime.now() : state.lastOnline,
       );
     } catch (_) {
-      // Fallback: try Google
+      // Fallback: try Cloudflare DNS
       try {
         await http.get(
-          Uri.parse('https://www.google.com'),
+          Uri.parse('https://1.1.1.1'),
         ).timeout(const Duration(seconds: 4));
         state = ConnectivityState(
           isConnected: true,

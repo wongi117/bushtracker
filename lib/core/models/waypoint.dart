@@ -95,9 +95,6 @@ class Waypoint {
 
   /// Get number of photos
   int get photoCount => photoPaths?.length ?? 0;
-
-  /// Check if this is a pinage waypoint
-  bool get isPinage => icon == 'pinage' || type == WaypointType.pinage;
 }
 
 // Waypoint types
@@ -105,7 +102,6 @@ class WaypointType {
   static const String track = 'track';
   static const String manual = 'manual';
   static const String trail = 'trail';
-  static const String pinage = 'pinage';
 }
 
 // Waypoint icons

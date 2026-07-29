@@ -151,9 +151,4 @@ class GPXService {
         .replaceAll('&quot;', '"')
         .replaceAll('&apos;', "'");
   }
-
-  static List<Waypoint> parseKML(String kmlContent) => parseGPX(kmlContent);
-  static List<LatLng> parseKMLTrack(String kmlContent) => parseTrack(kmlContent);
-  static String exportWaypointsKML(List<Waypoint> waypoints) => exportWaypoints(waypoints);
-  static String exportTrailKML(Trail trail) => exportTrail(trail);
 }

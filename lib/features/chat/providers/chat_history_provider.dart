@@ -1,8 +1,4 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:bush_track/theme/app_colors.dart';
-import 'package:bush_track/features/ai/providers/ai_assistant_provider.dart';
-import 'package:bush_track/core/models/waypoint.dart';
 
 // ─── Chat Message Model ───────────────────────────────────────────────────────
 class ChatMessage {
