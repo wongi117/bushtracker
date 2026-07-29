@@ -27,31 +27,41 @@ const _presets = [
 ];
 
 // ─── MapType helpers ──────────────────────────────────────────────────────────
+// MapType is an alias for MapStyle — the manager uses MapStyle.
+typedef MapType = MapStyle;
 
-String _mapTypeLabel(MapType t) {
+String _mapTypeLabel(MapStyle t) {
   switch (t) {
-    case MapType.standard:  return 'Streets';
-    case MapType.satellite: return 'Satellite';
-    case MapType.dark:      return 'Dark';
+    case MapStyle.streets:  return 'Streets';
+    case MapStyle.satellite: return 'Satellite';
+    case MapStyle.topo:     return 'Topographic';
+    case MapStyle.outdoor:  return 'Outdoor';
+    case MapStyle.dark:     return 'Dark';
   }
 }
 
-String _mapTypeUrl(MapType t) {
+String _mapTypeUrl(MapStyle t) {
   switch (t) {
-    case MapType.standard:
+    case MapStyle.streets:
       return 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-    case MapType.satellite:
+    case MapStyle.satellite:
       return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
-    case MapType.dark:
+    case MapStyle.topo:
+      return 'https://tile.opentopomap.org/{z}/{x}/{y}.png';
+    case MapStyle.outdoor:
+      return 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+    case MapStyle.dark:
       return 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png';
   }
 }
 
-IconData _mapTypeIcon(MapType t) {
+IconData _mapTypeIcon(MapStyle t) {
   switch (t) {
-    case MapType.standard:  return Icons.map;
-    case MapType.satellite: return Icons.satellite_alt;
-    case MapType.dark:      return Icons.dark_mode;
+    case MapStyle.streets:  return Icons.map;
+    case MapStyle.satellite: return Icons.satellite_alt;
+    case MapStyle.topo:     return Icons.terrain;
+    case MapStyle.outdoor:  return Icons.nature;
+    case MapStyle.dark:     return Icons.dark_mode;
   }
 }
 
@@ -71,7 +81,7 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
   final _mapController = MapController();
 
   int _presetIndex = 1;
-  MapType _style = MapType.standard;
+  MapStyle _style = MapStyle.streets;
   String _regionName = '';
   bool _downloading = false;
   LatLngBounds? _selectedBounds;
@@ -106,8 +116,8 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
   }
 
   Future<void> _refreshStorage() async {
-    final info = await _manager.getStorageUsage();
-    if (mounted) setState(() => _totalStorageBytes = info.totalBytes);
+    final bytes = await _manager.totalStorageBytes();
+    if (mounted) setState(() => _totalStorageBytes = bytes);
   }
 
   void _onMapReady() {
@@ -124,11 +134,11 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
     } catch (_) {}
   }
 
-  Future<void> _recalcEstimate() async {
+  void _recalcEstimate() {
     if (_selectedBounds == null) return;
     final p = _presets[_presetIndex];
-    final est = await _manager.estimateDownloadSize(
-        _selectedBounds!, p.minZoom, p.maxZoom);
+    final est = _manager.estimate(
+        _selectedBounds!, p.minZoom, p.maxZoom, _style);
     if (mounted) setState(() => _estimate = est);
   }
 
@@ -136,16 +146,16 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
     if (_selectedBounds == null) return;
     final name = _regionName.trim().isNotEmpty
         ? _regionName.trim()
-        : 'Region ${_manager.downloadedRegions.length + 1}';
+        : 'Region ${_manager.regions.length + 1}';
     final p = _presets[_presetIndex];
 
     setState(() => _downloading = true);
-    await _manager.downloadRegion(
+    await _manager.startDownload(
       name: name,
       bounds: _selectedBounds!,
       minZoom: p.minZoom,
       maxZoom: p.maxZoom,
-      mapType: _style,
+      style: _style,
     );
     if (mounted) {
       setState(() => _downloading = false);
@@ -290,7 +300,7 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
             children: [
               TileLayer(
                 urlTemplate: _mapTypeUrl(_style),
-                subdomains: _style != MapType.satellite
+                subdomains: _style != MapStyle.satellite
                     ? const ['a', 'b', 'c']
                     : const [],
                 maxZoom: 20,
@@ -510,7 +520,7 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
   // ─── My Maps Tab ──────────────────────────────────────────────────────────────
 
   Widget _buildMyMapsTab() {
-    final regions = _manager.downloadedRegions;
+    final regions = _manager.regions;
     final storageMB = _totalStorageBytes / (1024 * 1024);
 
     return Column(
@@ -619,7 +629,7 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
           Wrap(
             spacing: 12,
             children: [
-              _chip(Icons.layers, _mapTypeLabel(region.mapType)),
+              _chip(Icons.layers, _mapTypeLabel(region.style)),
               _chip(Icons.zoom_in, 'z${region.minZoom}–${region.maxZoom}'),
               _chip(Icons.grid_4x4, '$total tiles'),
             ],

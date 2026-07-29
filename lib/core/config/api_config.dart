@@ -23,6 +23,9 @@ class ApiConfig {
   static const String openCageKey = String.fromEnvironment('OPENCAGE_KEY');
   static const String what3WordsKey = String.fromEnvironment('W3W_KEY');
 
+  static const String groqKey = String.fromEnvironment('GROQ_KEY');
+  static const String groqUrl = 'https://api.groq.com/openai/v1/chat/completions';
+
   // OpenRouter (Primary Cloud AI)
   static const String openRouterUrl =
       'https://openrouter.ai/api/v1/chat/completions';

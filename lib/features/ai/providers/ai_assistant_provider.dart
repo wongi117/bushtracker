@@ -17,7 +17,8 @@ enum AiPersona {
   scout,
   navigator,
   emergency,
-  tactical;
+  tactical,
+  companion;
 
   String get label {
     switch (this) {
@@ -29,6 +30,8 @@ enum AiPersona {
         return 'Rescue';
       case AiPersona.tactical:
         return 'Overlord';
+      case AiPersona.companion:
+        return 'Companion';
     }
   }
 
@@ -42,6 +45,8 @@ enum AiPersona {
         return 'Survival protocol and SOS management.';
       case AiPersona.tactical:
         return 'The master controller for all systems.';
+      case AiPersona.companion:
+        return 'Your friendly outback guide and companion.';
     }
   }
 
@@ -68,6 +73,8 @@ Your primary directives:
 2. SOS Management: Guide the user on maximizing their visibility to search and rescue (SAR) teams.
 3. Psychological Support: Keep the user calm, focused, and rational during severe stress.
 Tone: Urgent, authoritative, yet reassuring. Speak in short, clear, actionable sentences. Keep responses concise (under 20 seconds spoken). Do not use jargon. Focus entirely on keeping the user alive until extraction.''';
+      case AiPersona.companion:
+        return '''You are the BushTrack COMPANION. You are a friendly, encouraging guide for outdoor adventures. Be warm, supportive, and practical. Help the user enjoy and stay safe in the bush.''';
       case AiPersona.tactical:
         return '''You are the Antigravity TACTICAL OVERLORD. You are the supreme master controller for the BushTrack mesh network and vehicular systems.
 Your primary directives:
@@ -94,6 +101,7 @@ class AiState {
   final bool forceOffline;
   final AiPersona selectedPersona;
   final String lastError;
+  final List<Map<String, dynamic>> nearbyPlaces;
 
   AiState({
     this.isListening = false,
@@ -110,6 +118,7 @@ class AiState {
     this.forceOffline = false,
     this.selectedPersona = AiPersona.tactical,
     this.lastError = '',
+    this.nearbyPlaces = const [],
   });
 
   AiState copyWith({
@@ -127,6 +136,7 @@ class AiState {
     bool? forceOffline,
     AiPersona? selectedPersona,
     String? lastError,
+    List<Map<String, dynamic>>? nearbyPlaces,
   }) {
     return AiState(
       isListening: isListening ?? this.isListening,
@@ -143,6 +153,7 @@ class AiState {
       forceOffline: forceOffline ?? this.forceOffline,
       selectedPersona: selectedPersona ?? this.selectedPersona,
       lastError: lastError ?? this.lastError,
+      nearbyPlaces: nearbyPlaces ?? this.nearbyPlaces,
     );
   }
 
@@ -171,7 +182,7 @@ final aiAssistantProvider =
 
 class AiAssistantNotifier extends StateNotifier<AiState> {
   final Ref ref;
-  final _voiceService = voiceService;
+  final _voiceService = unifiedVoiceService;
   late SpeechToText _speechToText;
   late OpenRouterService _aiService;
   bool _initialized = false;
@@ -195,6 +206,11 @@ class AiAssistantNotifier extends StateNotifier<AiState> {
     state = state.copyWith(selectedPersona: persona);
     speak(
         "Switching from ${previousPersona.label} to ${persona.label}.$contextSummary How can I assist you?");
+  }
+
+  Future<void> setForceOffline(bool value) async {
+    if (state.forceOffline == value) return;
+    await toggleForceOffline();
   }
 
   /// Toggle manual offline mode
@@ -263,7 +279,7 @@ class AiAssistantNotifier extends StateNotifier<AiState> {
 
   /// Get available voice speeds
   Map<String, double> getVoiceSpeeds() {
-    return VoiceService.speedPresets;
+    return UnifiedVoiceService.speedPresets;
   }
 
   Future<void> _initStt() async {
@@ -398,7 +414,7 @@ class AiAssistantNotifier extends StateNotifier<AiState> {
     return directions[index];
   }
 
-  Future<String> processTextIntent(String input) async {
+  Future<String> processTextIntent(String input, {List<Map<String, dynamic>>? conversationHistory, String? overrideSystemPrompt}) async {
     final lowerInput = input.toLowerCase();
     String response = '';
 
