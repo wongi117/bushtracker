@@ -1,75 +1,56 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:bush_track/core/config/api_config.dart';
 import 'package:flutter/foundation.dart';
 
-/// Google Gemini via REST — avoids SDK CORS issues on Flutter web
+/// Service for Google's Cloud AI (Gemini/Gemma)
 class GoogleAIService {
-  static String selectedModel = 'gemini-2.5-flash-preview-04-17';
+  late final GenerativeModel _model;
+  bool _isInitialized = false;
 
-  String get currentModel => selectedModel;
-  bool get isReady => ApiConfig.geminiKey.isNotEmpty;
+  GoogleAIService() {
+    _initialize();
+  }
 
-  Future<String?> getResponse(String prompt,
-      {Map<String, dynamic>? context, String? systemPrompt}) async {
-    if (ApiConfig.geminiKey.isEmpty) {
-      debugPrint('⚠️ GoogleAIService: GEMINI_KEY not configured');
-      return null;
+  void _initialize() {
+    try {
+      if (ApiConfig.geminiKey.isEmpty) {
+        debugPrint('⚠️ GoogleAIService: API Key is missing');
+        return;
+      }
+
+      // Initialize the model with the provided name
+      _model = GenerativeModel(
+        model: ApiConfig.googleModelName,
+        apiKey: ApiConfig.geminiKey,
+      );
+      _isInitialized = true;
+      debugPrint('✅ GoogleAIService: Initialized with model ${ApiConfig.googleModelName}');
+    } catch (e) {
+      debugPrint('❌ GoogleAIService: Initialization failed: $e');
+    }
+  }
+
+  Future<String?> getResponse(String prompt, {Map<String, dynamic>? context}) async {
+    if (!_isInitialized) {
+      _initialize();
+      if (!_isInitialized) return null;
     }
 
     try {
       String contextString = '';
       if (context != null && context.isNotEmpty) {
-        contextString =
-            '\n\nContext: ${context.entries.map((e) => '${e.key}: ${e.value}').join(', ')}';
+        contextString = '\n\nContext: ${context.toString()}';
       }
 
-      final url =
-          'https://generativelanguage.googleapis.com/v1beta/models/$selectedModel:generateContent?key=${ApiConfig.geminiKey}';
-
-      final body = <String, dynamic>{
-        'contents': [
-          {
-            'parts': [
-              {'text': prompt + contextString}
-            ]
-          }
-        ],
-        'generationConfig': {
-          'maxOutputTokens': 1024,
-          'temperature': 0.7,
-        },
-      };
-
-      if (systemPrompt != null && systemPrompt.isNotEmpty) {
-        body['systemInstruction'] = {
-          'parts': [
-            {'text': systemPrompt}
-          ]
-        };
-      }
-
-      final response = await http
-          .post(
-            Uri.parse(url),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode(body),
-          )
-          .timeout(const Duration(seconds: 20));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final text =
-            data['candidates']?[0]?['content']?['parts']?[0]?['text'];
-        if (text != null && text.toString().isNotEmpty) {
-          return text.toString();
-        }
-      } else {
-        debugPrint('⚠️ Gemini error: ${response.statusCode} ${response.body}');
-      }
+      final content = [Content.text(prompt + contextString)];
+      final response = await _model.generateContent(content);
+      
+      return response.text;
     } catch (e) {
-      debugPrint('❌ GoogleAIService: $e');
+      debugPrint('❌ GoogleAIService: Error generating content: $e');
+      return null;
     }
-    return null;
   }
+
+  bool get isReady => _isInitialized;
 }

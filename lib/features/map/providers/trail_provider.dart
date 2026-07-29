@@ -17,9 +17,6 @@ class TrailState {
   final String? navigationMessage;
   final double? distanceToNextPoint;
   final double? bearingToNextPoint;
-  // Voice guide: set to a non-null message when a voice announcement is ready.
-  // AiMonitorService polls this and clears it after speaking.
-  final String? pendingVoiceAnnouncement;
 
   const TrailState({
     this.trails = const [],
@@ -31,7 +28,6 @@ class TrailState {
     this.navigationMessage,
     this.distanceToNextPoint,
     this.bearingToNextPoint,
-    this.pendingVoiceAnnouncement,
   });
 
   TrailState copyWith({
@@ -46,8 +42,6 @@ class TrailState {
     double? bearingToNextPoint,
     bool clearActiveTrail = false,
     bool clearNavigation = false,
-    String? pendingVoiceAnnouncement,
-    bool clearVoiceAnnouncement = false,
   }) {
     return TrailState(
       trails: trails ?? this.trails,
@@ -59,9 +53,6 @@ class TrailState {
       navigationMessage: clearNavigation ? null : navigationMessage ?? this.navigationMessage,
       distanceToNextPoint: clearNavigation ? null : distanceToNextPoint ?? this.distanceToNextPoint,
       bearingToNextPoint: clearNavigation ? null : bearingToNextPoint ?? this.bearingToNextPoint,
-      pendingVoiceAnnouncement: clearVoiceAnnouncement
-          ? null
-          : pendingVoiceAnnouncement ?? this.pendingVoiceAnnouncement,
     );
   }
 
@@ -83,7 +74,6 @@ class TrailState {
 class TrailNotifier extends StateNotifier<TrailState> {
   final DatabaseService databaseService;
   StreamSubscription<Position>? _positionSub;
-  double? _lastVoiceDistanceM;
 
   TrailNotifier(this.databaseService) : super(const TrailState()) {
     _loadTrails();
@@ -281,14 +271,6 @@ class TrailNotifier extends StateNotifier<TrailState> {
     });
   }
 
-  void _queueVoice(String message) {
-    state = state.copyWith(pendingVoiceAnnouncement: message);
-  }
-
-  void clearVoiceAnnouncement() {
-    state = state.copyWith(clearVoiceAnnouncement: true);
-  }
-
   /// Update navigation information based on current position
   void _updateNavigation(Position position) {
     final target = state.currentTargetPoint;
@@ -311,15 +293,15 @@ class TrailNotifier extends StateNotifier<TrailState> {
     // Check if reached point (within 20 meters)
     if (distance < 20) {
       if (state.isAtLastPoint) {
-        const msg = 'Trail complete! You have reached your destination.';
+        // Reached end of trail
         state = state.copyWith(
-          navigationMessage: msg,
+          navigationMessage: 'Trail complete! You have reached your destination.',
           distanceToNextPoint: distance,
           bearingToNextPoint: bearing,
-          pendingVoiceAnnouncement: msg,
         );
         stopFollowingTrail();
       } else {
+        // Advance to next point
         advanceToNextPoint();
         final nextTarget = state.currentTargetPoint;
         if (nextTarget != null) {
@@ -335,39 +317,22 @@ class TrailNotifier extends StateNotifier<TrailState> {
             nextTarget.latitude,
             nextTarget.longitude,
           );
+          
           final nextIndex = (state.currentPointIndex ?? 0) + 1;
-          final msg = 'Great! Proceed to point $nextIndex. '
-              '${(newDistance / 1000).toStringAsFixed(1)} kilometres ahead.';
           state = state.copyWith(
             navigationMessage: 'Great! Proceed to point $nextIndex.',
             distanceToNextPoint: newDistance,
             bearingToNextPoint: newBearing,
-            pendingVoiceAnnouncement: msg,
           );
-          _lastVoiceDistanceM = newDistance;
         }
       }
     } else {
       final nextIndex = (state.currentPointIndex ?? 0) + 1;
-      final msg =
-          'Head to point $nextIndex, bearing ${bearing.toInt()} degrees, '
-          '${(distance / 1000).toStringAsFixed(1)} kilometres ahead';
       state = state.copyWith(
-        navigationMessage:
-            'Head to point $nextIndex, bearing ${bearing.toInt()}°, ${(distance / 1000).toStringAsFixed(1)}km ahead',
+        navigationMessage: 'Head to point $nextIndex, bearing ${bearing.toInt()}°, ${(distance / 1000).toStringAsFixed(1)}km ahead',
         distanceToNextPoint: distance,
         bearingToNextPoint: bearing,
       );
-
-      // Voice update: announce when crossing every 500m threshold
-      final lastD = _lastVoiceDistanceM;
-      if (lastD == null ||
-          (lastD - distance).abs() >= 500 ||
-          (lastD > 200 && distance <= 200) ||
-          (lastD > 50 && distance <= 50)) {
-        _lastVoiceDistanceM = distance;
-        _queueVoice(msg);
-      }
     }
   }
 

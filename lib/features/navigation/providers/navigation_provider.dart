@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
+import 'package:bush_track/core/config/api_config.dart';
 import 'package:bush_track/features/navigation/services/navigation_service.dart';
+import 'package:bush_track/features/places/services/places_service.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
@@ -96,9 +97,6 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
   final Ref ref;
   NavigationNotifier(this.ref) : super(NavigationState());
   Timer? _offRouteTimer;
-  // Tracks whether an off-route alert is currently pending so the AI monitor
-  // can pick it up without re-triggering every 5 seconds.
-  bool offRouteFlagged = false;
 
   void startNavigation(List<NavigationStep> steps, {RouteOption? route}) {
     // Decode polyline if available
@@ -106,7 +104,7 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
     if (route?.polyline != null && route!.polyline!.isNotEmpty) {
       polyline = NavigationService.decodePolyline(route.polyline!);
     }
-
+    
     state = state.copyWith(
       steps: steps,
       isActive: true,
@@ -116,7 +114,7 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
       isOffRoute: false,
       offRouteDistanceM: 0.0,
     );
-
+    
     // Start off-route monitoring
     _startOffRouteMonitoring();
   }
@@ -154,130 +152,85 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
     state = state.copyWith(selectedRoute: route);
   }
 
-  /// Geocode destination with Nominatim then route with OSRM.
+  /// Calculate a route to a destination with Mapbox.
   Future<void> calculateRoute(String destination) async {
     final locationState = ref.read(locationProvider);
     final originLat = locationState.stats.currentLat;
     final originLon = locationState.stats.currentLon;
     if (originLat == null || originLon == null) return;
 
-    try {
-      // Geocode destination via Nominatim
-      final geoUri = Uri.parse(
-          'https://nominatim.openstreetmap.org/search?q=${Uri.encodeQueryComponent(destination)}&format=json&limit=1');
-      final geoResp = await http.get(geoUri, headers: {'User-Agent': 'BushTrack/1.0'})
-          .timeout(const Duration(seconds: 10));
-      if (geoResp.statusCode != 200) return;
-      final geoData = jsonDecode(geoResp.body) as List<dynamic>;
-      if (geoData.isEmpty) return;
+    final key = ApiConfig.mapboxToken;
+    if (key.isEmpty) return;
 
-      final place = geoData.first as Map<String, dynamic>;
-      final destLat = double.tryParse(place['lat']?.toString() ?? '') ?? 0;
-      final destLon = double.tryParse(place['lon']?.toString() ?? '') ?? 0;
-      final placeName = place['display_name']?.toString().split(',').first ?? destination;
+    final matches = await PlacesService.searchPlaces(
+      destination,
+      proximity: LatLng(originLat, originLon),
+    );
+    if (matches.isEmpty) return;
 
-      await navigateTo(destLat, destLon, placeName);
-    } catch (e) {
-      debugPrint('calculateRoute error: $e');
-    }
-  }
-
-  /// Navigate directly to coordinates using OSRM (free, no API key).
-  Future<void> navigateTo(double destLat, double destLon, String name) async {
-    final locationState = ref.read(locationProvider);
-    final originLat = locationState.stats.currentLat;
-    final originLon = locationState.stats.currentLon;
-    if (originLat == null || originLon == null) return;
-
-    // OSRM public routing API — lon,lat order (GeoJSON)
+    final target = matches.first.location;
     final url = Uri.parse(
-      'https://router.project-osrm.org/route/v1/driving/'
-      '$originLon,$originLat;$destLon,$destLat'
-      '?overview=full&geometries=geojson&steps=true',
+      'https://api.mapbox.com/directions/v5/mapbox/driving/${originLon},${originLat};${target.longitude},${target.latitude}?geometries=geojson&steps=true&voice_instructions=true&banner_instructions=true&access_token=$key',
     );
 
-    try {
-      final response = await http.get(url, headers: {'User-Agent': 'BushTrack/1.0'})
-          .timeout(const Duration(seconds: 15));
-      if (response.statusCode != 200) {
-        _fallbackNavigation(destLat, destLon, name);
-        return;
-      }
+    final response = await http.get(url);
+    if (response.statusCode != 200) return;
 
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final routes = (data['routes'] as List<dynamic>? ?? const []);
-      if (routes.isEmpty) {
-        _fallbackNavigation(destLat, destLon, name);
-        return;
-      }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final routes = (data['routes'] as List<dynamic>? ?? const []);
+    if (routes.isEmpty) return;
 
-      final routeData = routes.first as Map<String, dynamic>;
-      final geometry = routeData['geometry'] as Map<String, dynamic>?;
-      final coords = (geometry?['coordinates'] as List<dynamic>? ?? const []);
-      final polyline = coords.map((pt) {
-        final pair = pt as List<dynamic>;
-        return LatLng((pair[1] as num).toDouble(), (pair[0] as num).toDouble());
-      }).toList();
+    final routeData = routes.first as Map<String, dynamic>;
+    final legs = (routeData['legs'] as List<dynamic>? ?? const []);
+    final geometry = routeData['geometry'] as Map<String, dynamic>?;
+    final coords = (geometry?['coordinates'] as List<dynamic>? ?? const []);
+    final polyline = coords.map((point) {
+      final pair = point as List<dynamic>;
+      return LatLng((pair[1] as num).toDouble(), (pair[0] as num).toDouble());
+    }).toList();
 
-      final steps = <NavigationStep>[];
-      for (final leg in (routeData['legs'] as List<dynamic>? ?? const [])) {
-        for (final step in (leg['steps'] as List<dynamic>? ?? const [])) {
-          final s = step as Map<String, dynamic>;
-          final m = (s['maneuver'] as Map<String, dynamic>? ?? const {});
-          final loc = m['location'] as List<dynamic>? ?? const [];
-          steps.add(NavigationStep(
-            instruction: m['instruction']?.toString() ??
-                s['name']?.toString() ??
-                'Continue',
-            distanceM: (s['distance'] as num? ?? 0).toDouble(),
-            bearing: (m['bearing_after'] as num? ?? 0).toDouble(),
-            location: loc.length >= 2
-                ? LatLng((loc[1] as num).toDouble(), (loc[0] as num).toDouble())
-                : LatLng(destLat, destLon),
-            manoeuvreType: m['type']?.toString() ?? 'straight',
-          ));
-        }
-      }
+    final steps = <NavigationStep>[];
+    for (final leg in legs) {
+      final legMap = leg as Map<String, dynamic>;
+      final legSteps = (legMap['steps'] as List<dynamic>? ?? const []);
+      for (final step in legSteps) {
+        final stepMap = step as Map<String, dynamic>;
+        final maneuver = (stepMap['maneuver'] as Map<String, dynamic>? ?? const {});
+        final banner = (stepMap['banner_instructions'] as List<dynamic>? ?? const []);
+        final voice = (stepMap['voice_instructions'] as List<dynamic>? ?? const []);
+        final loc = maneuver['location'] as List<dynamic>? ?? const [];
 
-      startNavigation(steps,
-          route: RouteOption(
-            name: 'To $name',
-            distanceKm: (routeData['distance'] as num? ?? 0) / 1000.0,
-            estimatedTimeMin:
-                ((routeData['duration'] as num? ?? 0) / 60).round(),
-            tradeoffs: const [],
-            terrainDifficulty: 'OSRM',
-            polyline: NavigationService.encodePolyline(polyline),
-          ));
-    } catch (e) {
-      debugPrint('navigateTo error: $e');
-      _fallbackNavigation(destLat, destLon, name);
-    }
-  }
-
-  void _fallbackNavigation(double destLat, double destLon, String name) {
-    startNavigation([
-      NavigationStep(
-        instruction: 'Head toward $name',
-        distanceM: 0,
-        bearing: 0,
-        location: LatLng(destLat, destLon),
-        manoeuvreType: 'straight',
-      )
-    ],
-        route: RouteOption(
-          name: 'To $name',
-          distanceKm: 0,
-          estimatedTimeMin: 0,
-          tradeoffs: const [],
-          terrainDifficulty: 'straight-line',
+        steps.add(NavigationStep(
+          instruction: maneuver['instruction']?.toString() ?? stepMap['name']?.toString() ?? 'Continue',
+          bannerInstruction: banner.isNotEmpty ? banner.first.toString() : null,
+          voiceInstruction: voice.isNotEmpty ? voice.first.toString() : null,
+          distanceM: (stepMap['distance'] as num? ?? 0).toDouble(),
+          bearing: (maneuver['bearing_after'] as num? ?? 0).toDouble(),
+          location: loc.length >= 2
+              ? LatLng((loc[1] as num).toDouble(), (loc[0] as num).toDouble())
+              : target,
+          manoeuvreType: maneuver['type']?.toString() ?? 'straight',
         ));
+      }
+    }
+
+    final route = RouteOption(
+      name: 'Route to ${matches.first.name}',
+      distanceKm: ((routeData['distance'] as num? ?? 0) / 1000.0),
+      estimatedTimeMin: ((routeData['duration'] as num? ?? 0) / 60).round(),
+      tradeoffs: const ['Mapbox road data', 'Voice + banner instructions'],
+      terrainDifficulty: 'Mapbox',
+      polyline: NavigationService.encodePolyline(polyline),
+    );
+
+    startNavigation(steps, route: route);
   }
+
 
   /// Start monitoring for off-route conditions
   void _startOffRouteMonitoring() {
     _stopOffRouteMonitoring(); // Stop any existing timer
-
+    
     _offRouteTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
       // In a real implementation, this would check the user's current position
       // against the route polyline and trigger alerts if they're off-route
@@ -292,43 +245,48 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
     _offRouteTimer = null;
   }
 
-  /// Check if the user is off-route using live GPS position.
+  /// Check if the user is off-route
   void _checkOffRouteCondition() {
-    if (!state.isActive || state.routePolyline.isEmpty) return;
-    final locationState = ref.read(locationProvider);
-    final lat = locationState.stats.currentLat;
-    final lon = locationState.stats.currentLon;
-    if (lat == null || lon == null) return;
-    updateOffRouteStatus(LatLng(lat, lon));
+    // This would be implemented with real location data
+    // For now, we'll keep it simple
   }
 
-  /// Update off-route status based on user's current position.
+  /// Update off-route status based on user's current position
   void updateOffRouteStatus(LatLng userPosition) {
+    // If no route polyline, can't determine off-route status
     if (state.routePolyline.isEmpty) return;
-
+    
+    // Find the closest point on the route polyline to the user's position
     double minDistance = double.infinity;
+    
+    // Check distance to each segment of the polyline
     for (int i = 0; i < state.routePolyline.length - 1; i++) {
-      final d = NavigationService.distanceToSegment(
-          userPosition, state.routePolyline[i], state.routePolyline[i + 1]);
-      if (d < minDistance) minDistance = d;
+      final start = state.routePolyline[i];
+      final end = state.routePolyline[i + 1];
+      
+      final distance = NavigationService.distanceToSegment(userPosition, start, end);
+      if (distance < minDistance) {
+        minDistance = distance;
+      }
     }
-
+    
+    // Convert distance to meters
     final distanceM = minDistance;
-    final isOffRoute = distanceM > 100.0;
-
-    if (state.isOffRoute != isOffRoute ||
-        (distanceM - state.offRouteDistanceM).abs() > 10) {
+    final isOffRoute = distanceM > 100.0; // Off-route threshold is 100m
+    
+    // Update state if changed
+    if (state.isOffRoute != isOffRoute || state.offRouteDistanceM != distanceM) {
       state = state.copyWith(
         isOffRoute: isOffRoute,
         offRouteDistanceM: distanceM,
       );
-    }
-
-    // Flag new off-route transitions so ai_monitor_service can speak the alert.
-    if (isOffRoute && !offRouteFlagged) {
-      offRouteFlagged = true;
-    } else if (!isOffRoute) {
-      offRouteFlagged = false;
+      
+      // Trigger voice alert if off-route and distance > 100m
+      if (isOffRoute) {
+        // In a real implementation, this would trigger a voice alert
+        // through the AI assistant or TTS system
+        // For example: "You are off route. You are {distance} meters away from the route."
+      }
     }
   }
 
@@ -339,7 +297,6 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
   }
 }
 
-final navigationProvider =
-    StateNotifierProvider<NavigationNotifier, NavigationState>((ref) {
+final navigationProvider = StateNotifierProvider<NavigationNotifier, NavigationState>((ref) {
   return NavigationNotifier(ref);
 });

@@ -18,7 +18,7 @@ class DatabaseService {
   final HashMap<String, List<Map<String, dynamic>>> _webStorage = HashMap();
   int _webIdCounter = 1;
 
-  static const _tables = ['waypoints', 'trails', 'breadcrumbs', 'map_regions', 'mesh_peers'];
+  static const _tables = ['waypoints', 'trails', 'breadcrumbs', 'map_regions', 'mesh_peers', 'artifacts', 'geofences'];
   static const _keyPrefix = 'pinage_db_';
 
   Future<void> initialize() async {
@@ -370,6 +370,97 @@ class DatabaseService {
       return list.map((e) => Map<String, dynamic>.from(e)).toList();
     }
     return await _db!.query('mesh_peers', orderBy: 'last_seen DESC');
+  }
+
+  // Artifact operations
+  Future<List<Map<String, dynamic>>> getArtifacts() async {
+    if (_isWeb) {
+      final list = _getTable('artifacts');
+      list.sort((a, b) => (b['timestamp'] ?? 0).compareTo(a['timestamp'] ?? 0));
+      return list.map((e) => Map<String, dynamic>.from(e)).toList();
+    }
+    return await _db!.query('artifacts', orderBy: 'timestamp DESC');
+  }
+
+  Future<int> insertArtifact(Map<String, dynamic> artifact) async {
+    if (_isWeb) {
+      final data = Map<String, dynamic>.from(artifact);
+      data['id'] = _webIdCounter++;
+      data['timestamp'] ??= DateTime.now().millisecondsSinceEpoch;
+      _getTable('artifacts').add(data);
+      await _persistWeb('artifacts');
+      return data['id'];
+    }
+    return await _db!.insert('artifacts', artifact);
+  }
+
+  Future<int> updateArtifact(Map<String, dynamic> artifact) async {
+    final id = artifact['id'];
+    if (id == null) return 0;
+    if (_isWeb) {
+      final table = _getTable('artifacts');
+      final index = table.indexWhere((item) => item['id'] == id);
+      if (index >= 0) {
+        table[index] = Map<String, dynamic>.from(artifact);
+        await _persistWeb('artifacts');
+        return 1;
+      }
+      return 0;
+    }
+    return await _db!.update('artifacts', artifact, where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<int> deleteArtifact(int id) async {
+    if (_isWeb) {
+      _getTable('artifacts').removeWhere((item) => item['id'] == id);
+      await _persistWeb('artifacts');
+      return 1;
+    }
+    return await _db!.delete('artifacts', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // Geofence operations
+  Future<List<Map<String, dynamic>>> getGeofences() async {
+    if (_isWeb) {
+      return _getTable('geofences').map((e) => Map<String, dynamic>.from(e)).toList();
+    }
+    return await _db!.query('geofences');
+  }
+
+  Future<int> insertGeofence(Map<String, dynamic> geofence) async {
+    if (_isWeb) {
+      final data = Map<String, dynamic>.from(geofence);
+      data['id'] = _webIdCounter++;
+      _getTable('geofences').add(data);
+      await _persistWeb('geofences');
+      return data['id'];
+    }
+    return await _db!.insert('geofences', geofence);
+  }
+
+  Future<int> updateGeofence(Map<String, dynamic> geofence) async {
+    final id = geofence['id'];
+    if (id == null) return 0;
+    if (_isWeb) {
+      final table = _getTable('geofences');
+      final index = table.indexWhere((item) => item['id'] == id);
+      if (index >= 0) {
+        table[index] = Map<String, dynamic>.from(geofence);
+        await _persistWeb('geofences');
+        return 1;
+      }
+      return 0;
+    }
+    return await _db!.update('geofences', geofence, where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<int> deleteGeofence(int id) async {
+    if (_isWeb) {
+      _getTable('geofences').removeWhere((item) => item['id'] == id);
+      await _persistWeb('geofences');
+      return 1;
+    }
+    return await _db!.delete('geofences', where: 'id = ?', whereArgs: [id]);
   }
 
   Future<void> close() async {
