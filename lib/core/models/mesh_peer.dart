@@ -1,10 +1,5 @@
-import 'package:isar/isar.dart';
-
-part 'mesh_peer.g.dart';
-
-@Collection()
 class MeshPeer {
-  Id? id;
+  int? id;
 
   String? peerId;
   String? displayName;

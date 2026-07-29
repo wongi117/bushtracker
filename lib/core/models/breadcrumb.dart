@@ -1,10 +1,5 @@
-import 'package:isar/isar.dart';
-
-part 'breadcrumb.g.dart';
-
-@Collection()
 class Breadcrumb {
-  Id? id;
+  int? id;
 
   double? latitude;
   double? longitude;

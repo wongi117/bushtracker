@@ -996,6 +996,9 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
 
   void _onMapLongPress(LatLng point) {
     setState(() => _targetPin = point);
+    showWaypointEditor(context, position: point).then((_) {
+      if (mounted) setState(() => _targetPin = null);
+    });
     ref
         .read(aiAssistantProvider.notifier)
         .speak("Pin dropped at this location.");

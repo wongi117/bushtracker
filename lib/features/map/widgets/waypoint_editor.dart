@@ -162,8 +162,6 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
             const SizedBox(height: 8),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
-              clipBehavior: Clip.none,
-              padding: const EdgeInsets.only(right: 16),
               child: Row(
                 children: _categories.map((cat) {
                   final isSelected = _selectedCategory == cat['id'];
@@ -675,8 +673,8 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
 }
 
 // Helper function to show the waypoint editor
-void showWaypointEditor(BuildContext context, {Waypoint? waypoint, LatLng? position}) {
-  showModalBottomSheet(
+Future<void> showWaypointEditor(BuildContext context, {Waypoint? waypoint, LatLng? position}) {
+  return showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
