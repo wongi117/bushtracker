@@ -33,6 +33,7 @@ import 'package:bush_track/features/places/presentation/places_search_screen.dar
 import 'package:bush_track/features/search/presentation/natural_language_search_screen.dart';
 import 'package:bush_track/features/ar/presentation/ar_compass_screen.dart';
 import 'package:bush_track/features/map/widgets/waypoint_editor.dart';
+import 'package:bush_track/features/settings/presentation/settings_screen.dart';
 import 'package:bush_track/core/config/secrets.dart';
 import 'package:bush_track/core/services/gpx_service.dart';
 import 'package:bush_track/core/models/trail.dart';
@@ -48,6 +49,7 @@ class HomeScreenLayout extends ConsumerStatefulWidget {
 enum _MapStyle { streets, satellite, dark }
 
 class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
   final MapController _mapController = MapController();
   _MapStyle _mapStyle = _MapStyle.streets;
   double _currentZoom = 13.0;
@@ -69,18 +71,15 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
   @override
   void initState() {
     super.initState();
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) {
-        setState(() {
-          _mapInitialized = true;
-          _tilesLoading = false;
-        });
-      }
+    // Show map immediately — no artificial delay
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() { _mapInitialized = true; _tilesLoading = false; });
     });
-    // Subscribe to magnetometer for live bearing on user dot
+    // Subscribe to magnetometer for compass + user-dot heading
     try {
       _magSub = magnetometerEvents.listen((event) {
-        final heading = math.atan2(event.y, event.x);
+        // Heading in radians clockwise from north
+        final heading = math.atan2(event.x, event.y);
         if (mounted) setState(() => _headingRad = heading);
       });
     } catch (_) {}
@@ -126,7 +125,9 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
     final userLon = locationState.stats.currentLon ?? 131.0369;
 
     return Scaffold(
+      key: _scaffoldKey,
       backgroundColor: kDarkBg,
+      drawer: _buildDrawer(),
       body: Stack(
         children: [
           GestureDetector(
@@ -416,44 +417,44 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
           ),
           if (!_mapInitialized || _tilesLoading)
             const Center(child: MapSkeletonLoader()),
+          // ── Top header bar ──────────────────────────────────────────────
           Positioned(
-            top: 50,
-            left: 20,
-            right: 20,
-            child: TacticalGlassContainer(
-              borderRadius: 50.0,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-              child: Row(
-                children: [
-                  const Icon(Icons.search, color: Colors.white70, size: 24),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () => _openSearch(),
-                      child: Text("Search location or ask AI...",
-                          style:
-                              kBodyTextStyle.copyWith(color: Colors.white70)),
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                child: Row(
+                  children: [
+                    _headerButton(
+                      Icons.menu,
+                      () => _scaffoldKey.currentState?.openDrawer(),
                     ),
-                  ),
-                  GestureDetector(
-                    onTap: () => _openChat(),
-                    child: const Icon(Icons.chat_bubble_outline,
-                        color: Colors.white70, size: 30),
-                  ),
-                ],
+                    const Spacer(),
+                    _headerButton(
+                      Icons.camera_alt_outlined,
+                      () => _openAR(),
+                    ),
+                    const SizedBox(width: 8),
+                    _headerButton(
+                      Icons.search,
+                      () => _openSearch(),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
+          // ── Right-side map controls ──────────────────────────────────────
           Positioned(
-            right: 20,
-            top: 140,
+            right: 12,
+            top: 120,
             child: Column(
               children: [
                 _buildTacticalButton(_mapStyleIcon(), _cycleMapStyle),
-                const SizedBox(height: 16),
-                _buildTacticalButton(
-                    Icons.compass_calibration, () => _openCompass()),
+                const SizedBox(height: 12),
+                _buildTacticalButton(Icons.my_location, _centerOnUser),
               ],
             ),
           ),
@@ -505,13 +506,11 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
             ),
           ),
           Positioned(
-            top: 60,
-            right: 80,
+            top: 120,
+            left: 12,
             child: CompassRose(
-              rotation: _currentRotation,
-              onTap: () {
-                _mapController.rotate(0);
-              },
+              rotation: _headingRad,
+              onTap: () => _mapController.rotate(0),
             ),
           ),
           if (trailState.isCreating)
@@ -555,6 +554,112 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
         ],
       ),
     );
+  }
+
+  // ── Header icon button ───────────────────────────────────────────────────
+  Widget _headerButton(IconData icon, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.4),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Icon(icon, color: Colors.white, size: 22),
+      ),
+    );
+  }
+
+  // ── Drawer ───────────────────────────────────────────────────────────────
+  Widget _buildDrawer() {
+    return Drawer(
+      backgroundColor: const Color(0xFF0A0A18),
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Row(children: [
+                const Icon(Icons.explore, color: Color(0xFFFF6D00), size: 28),
+                const SizedBox(width: 10),
+                const Text('PINAGE MAPS',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 3,
+                    )),
+              ]),
+            ),
+            const Divider(color: Colors.white12, height: 1),
+            const SizedBox(height: 8),
+            _drawerItem(Icons.sos_rounded, 'SOS Emergency', const Color(0xFFFF3B30),
+                () { Navigator.pop(context); _sendSOS(); }),
+            const Divider(color: Colors.white12, height: 24, indent: 16, endIndent: 16),
+            _drawerItem(Icons.location_on_outlined, 'Saved Pins', Colors.white70,
+                () { Navigator.pop(context); }),
+            _drawerItem(Icons.route, 'My Trails', Colors.white70,
+                () { Navigator.pop(context); }),
+            _drawerItem(Icons.near_me_outlined, 'Nearby Places', Colors.white70,
+                () { Navigator.pop(context); _openSearch(); }),
+            _drawerItem(Icons.chat_bubble_outline, 'AI Assistant', Colors.white70,
+                () { Navigator.pop(context); _openChat(); }),
+            _drawerItem(Icons.explore_outlined, 'AR Compass', Colors.white70,
+                () { Navigator.pop(context); _openCompass(); }),
+            const Divider(color: Colors.white12, height: 24, indent: 16, endIndent: 16),
+            _drawerItem(Icons.settings_outlined, 'Settings', Colors.white70,
+                () { Navigator.pop(context);
+                     Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen())); }),
+            const Spacer(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+              child: Text('Future Gen AI Pty Ltd',
+                  style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.25),
+                      fontSize: 11)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _drawerItem(IconData icon, String label, Color color, VoidCallback onTap) {
+    return ListTile(
+      leading: Icon(icon, color: color, size: 22),
+      title: Text(label,
+          style: TextStyle(
+              color: color, fontSize: 14, fontWeight: FontWeight.w500)),
+      onTap: onTap,
+      dense: true,
+      horizontalTitleGap: 8,
+    );
+  }
+
+  void _centerOnUser() {
+    final loc = ref.read(locationProvider);
+    if (loc.stats.currentLat != null) {
+      _mapController.move(
+        LatLng(loc.stats.currentLat!, loc.stats.currentLon!),
+        15.0,
+      );
+    }
+  }
+
+  void _openAR() {
+    Navigator.push(context,
+        MaterialPageRoute(builder: (_) => const ARCompassScreen()));
   }
 
   Widget _buildTacticalButton(IconData icon, VoidCallback onPressed,
@@ -882,10 +987,78 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
   }
 
   void _onMapLongPress(LatLng point) {
-    setState(() => _targetPin = point);
-    ref
-        .read(aiAssistantProvider.notifier)
-        .speak("Pin dropped at this location.");
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+        decoration: const BoxDecoration(
+          color: Color(0xFF0D1035),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text('Drop a pin here?',
+                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            Text(
+              '${point.latitude.toStringAsFixed(5)}, ${point.longitude.toStringAsFixed(5)}',
+              style: const TextStyle(color: Colors.white38, fontSize: 12),
+            ),
+            const SizedBox(height: 20),
+            Row(children: [
+              Expanded(
+                child: _pinOption(ctx, Icons.location_on_outlined, 'Drop Pin',
+                    const Color(0xFF2196F3), () {
+                  Navigator.pop(ctx);
+                  showWaypointEditor(context, position: point);
+                }),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _pinOption(ctx, Icons.camera_alt_outlined, 'Photo Pin',
+                    const Color(0xFFFF9800), () {
+                  Navigator.pop(ctx);
+                  // Camera pin — Phase G
+                  showWaypointEditor(context, position: point);
+                }),
+              ),
+            ]),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _pinOption(BuildContext ctx, IconData icon, String label, Color color,
+      VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withValues(alpha: 0.35)),
+        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, color: color, size: 32),
+          const SizedBox(height: 8),
+          Text(label,
+              style: TextStyle(
+                  color: color, fontSize: 13, fontWeight: FontWeight.w600)),
+        ]),
+      ),
+    );
   }
 
   void _editWaypoint(Waypoint waypoint) {
