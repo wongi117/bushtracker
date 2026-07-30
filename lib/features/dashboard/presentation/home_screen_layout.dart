@@ -35,6 +35,7 @@ import 'package:bush_track/features/chat/presentation/ai_chat_screen.dart';
 import 'package:bush_track/features/ai/providers/ai_control_provider.dart';
 import 'package:bush_track/features/ai/presentation/camp_finder_screen.dart';
 import 'package:bush_track/features/geofence/presentation/geofence_screen.dart';
+import 'package:bush_track/features/heritage/presentation/artifact_logger_screen.dart';
 import 'package:bush_track/features/ar/presentation/ar_compass_screen.dart';
 import 'package:bush_track/features/ar/presentation/ar_camera_screen.dart';
 import 'package:bush_track/features/map/widgets/waypoint_editor.dart';
@@ -641,6 +642,9 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
             _drawerItem(Icons.location_searching_outlined, 'Geofences', Colors.white70,
                 () { Navigator.pop(context);
                      Navigator.push(context, MaterialPageRoute(builder: (_) => const GeofenceScreen())); }),
+            _drawerItem(Icons.history_edu_outlined, 'Heritage Logger', Colors.white70,
+                () { Navigator.pop(context);
+                     Navigator.push(context, MaterialPageRoute(builder: (_) => const ArtifactLoggerScreen())); }),
             const Divider(color: Colors.white12, height: 24, indent: 16, endIndent: 16),
             _drawerItem(Icons.settings_outlined, 'Settings', Colors.white70,
                 () { Navigator.pop(context);
