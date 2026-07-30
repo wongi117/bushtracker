@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'package:bush_track/theme/app_colors.dart';
@@ -32,6 +33,8 @@ import 'package:bush_track/features/places/presentation/places_search_screen.dar
 import 'package:bush_track/features/search/presentation/natural_language_search_screen.dart';
 import 'package:bush_track/features/chat/presentation/ai_chat_screen.dart';
 import 'package:bush_track/features/ai/providers/ai_control_provider.dart';
+import 'package:bush_track/features/ai/presentation/camp_finder_screen.dart';
+import 'package:bush_track/features/geofence/presentation/geofence_screen.dart';
 import 'package:bush_track/features/ar/presentation/ar_compass_screen.dart';
 import 'package:bush_track/features/map/widgets/waypoint_editor.dart';
 import 'package:bush_track/features/map/presentation/photo_pin_screen.dart';
@@ -621,6 +624,8 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
             _drawerItem(Icons.directions_outlined, 'Directions', Colors.white70,
                 () { Navigator.pop(context);
                      Navigator.push(context, MaterialPageRoute(builder: (_) => const RouteOptionsScreen())); }),
+            _drawerItem(Icons.reply_outlined, 'Return to Start', Colors.white70,
+                () { Navigator.pop(context); _showReturnToStart(); }),
             _drawerItem(Icons.upload_file_outlined, 'Import GPX / KML', Colors.white70,
                 () { Navigator.pop(context); _importGpxKml(); }),
             _drawerItem(Icons.near_me_outlined, 'Nearby Places', Colors.white70,
@@ -629,6 +634,12 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                 () { Navigator.pop(context); _openChat(); }),
             _drawerItem(Icons.explore_outlined, 'AR Compass', Colors.white70,
                 () { Navigator.pop(context); _openCompass(); }),
+            _drawerItem(Icons.terrain_outlined, 'Camp Finder', Colors.white70,
+                () { Navigator.pop(context);
+                     Navigator.push(context, MaterialPageRoute(builder: (_) => const CampFinderScreen())); }),
+            _drawerItem(Icons.location_searching_outlined, 'Geofences', Colors.white70,
+                () { Navigator.pop(context);
+                     Navigator.push(context, MaterialPageRoute(builder: (_) => const GeofenceScreen())); }),
             const Divider(color: Colors.white12, height: 24, indent: 16, endIndent: 16),
             _drawerItem(Icons.settings_outlined, 'Settings', Colors.white70,
                 () { Navigator.pop(context);
@@ -672,6 +683,28 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
   void _openAR() {
     Navigator.push(context,
         MaterialPageRoute(builder: (_) => const ARCompassScreen()));
+  }
+
+  void _showReturnToStart() {
+    final locState = ref.read(locationProvider);
+    final crumbs = locState.breadcrumbs
+        .where((b) => b.latitude != null && b.longitude != null)
+        .toList();
+    if (crumbs.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No breadcrumb trail recorded yet'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    final start = LatLng(crumbs.first.latitude!, crumbs.first.longitude!);
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _ReturnToStartSheet(start: start),
+    );
   }
 
   void _startNavigationTo(Waypoint w) {
@@ -1282,5 +1315,103 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
         }
       }
     });
+  }
+}
+
+// ── Return-to-Start live bearing sheet ───────────────────────────────────────
+
+class _ReturnToStartSheet extends ConsumerStatefulWidget {
+  final LatLng start;
+  const _ReturnToStartSheet({required this.start});
+
+  @override
+  ConsumerState<_ReturnToStartSheet> createState() =>
+      _ReturnToStartSheetState();
+}
+
+class _ReturnToStartSheetState extends ConsumerState<_ReturnToStartSheet> {
+  double _bearingDeg = 0;
+  double _distM = 0;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _update();
+  }
+
+  void _update() {
+    final loc = ref.read(locationProvider);
+    final lat = loc.stats.currentLat;
+    final lon = loc.stats.currentLon;
+    if (lat == null || lon == null) return;
+    final b = Geolocator.bearingBetween(lat, lon,
+        widget.start.latitude, widget.start.longitude);
+    final d = const Distance()(LatLng(lat, lon), widget.start);
+    if (mounted) setState(() { _bearingDeg = b; _distM = d; });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen<LocationState>(locationProvider, (_, __) => _update());
+    final dist = _distM >= 1000
+        ? '${(_distM / 1000).toStringAsFixed(2)} km'
+        : '${_distM.toInt()} m';
+    final cardinal = _cardinal(_bearingDeg);
+
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+          24, 20, 24, MediaQuery.of(context).padding.bottom + 24),
+      decoration: const BoxDecoration(
+        color: Color(0xFF0D1035),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Center(
+          child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2))),
+        ),
+        const SizedBox(height: 16),
+        const Text('RETURN TO START',
+            style: TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 3)),
+        const SizedBox(height: 24),
+        Transform.rotate(
+          angle: _bearingDeg * math.pi / 180,
+          child: const Icon(Icons.navigation,
+              color: Color(0xFFFF6D00), size: 72),
+        ),
+        const SizedBox(height: 16),
+        Text('$cardinal  •  ${_bearingDeg.toStringAsFixed(0)}°',
+            style: const TextStyle(
+                color: Colors.white70, fontSize: 16, letterSpacing: 2)),
+        const SizedBox(height: 8),
+        Text(dist,
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 28,
+                fontWeight: FontWeight.bold)),
+        const SizedBox(height: 24),
+        SizedBox(
+          width: double.infinity,
+          child: TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CLOSE',
+                style: TextStyle(color: Colors.white38, fontSize: 13)),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  String _cardinal(double deg) {
+    const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    return dirs[((deg % 360) / 45).round() % 8];
   }
 }
