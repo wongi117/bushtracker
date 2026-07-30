@@ -15,7 +15,7 @@ extension GetBreadcrumbCollection on Isar {
 
 const BreadcrumbSchema = CollectionSchema(
   name: r'Breadcrumb',
-  id: 6302625233, // truncated for JS compat (web build only)
+  id: 6302625233878920693,
   properties: {
     r'accuracy': PropertySchema(
       id: 0,

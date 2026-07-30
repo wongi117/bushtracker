@@ -9,13 +9,13 @@ import 'package:image/image.dart' as img;
 import 'package:exif/exif.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:bush_track/core/models/waypoint.dart';
+import 'package:bush_track/features/tracking/providers/location_provider.dart';
 
 /// Photo Geotagging Service
 /// Adds photos to waypoints with GPS metadata
 /// Matches Avenza Maps photo waypoint feature
 class PhotoGeotaggingService {
-  static final PhotoGeotaggingService _instance =
-      PhotoGeotaggingService._internal();
+  static final PhotoGeotaggingService _instance = PhotoGeotaggingService._internal();
   factory PhotoGeotaggingService() => _instance;
   PhotoGeotaggingService._internal();
 
@@ -106,27 +106,6 @@ class PhotoGeotaggingService {
     }
   }
 
-  /// Process a photo file that was already captured (e.g. via CameraController).
-  Future<GeotaggedPhoto?> processFile(
-    String filePath, {
-    required LatLng location,
-    double? altitude,
-    String? notes,
-  }) async {
-    if (!_isInitialized) await initialize();
-    try {
-      return await _processPhoto(
-        File(filePath),
-        location: location,
-        altitude: altitude,
-        notes: notes,
-      );
-    } catch (e) {
-      print('❌ Error processing file: $e');
-      return null;
-    }
-  }
-
   /// Process and save a geotagged photo
   Future<GeotaggedPhoto> _processPhoto(
     File sourceFile, {
@@ -149,8 +128,7 @@ class PhotoGeotaggingService {
 
     // Create thumbnail (200x200)
     final thumbnail = img.copyResize(original, width: 200);
-    await File(thumbnailPath)
-        .writeAsBytes(img.encodeJpg(thumbnail, quality: 70));
+    await File(thumbnailPath).writeAsBytes(img.encodeJpg(thumbnail, quality: 70));
 
     // Add GPS metadata to EXIF
     final exifBytes = await _addGpsExif(bytes, location, altitude);
@@ -198,10 +176,8 @@ class PhotoGeotaggingService {
       final gpsLongitudeRef = exifData['GPS GPSLongitudeRef'];
 
       if (gpsLatitude != null && gpsLongitude != null) {
-        final lat =
-            _convertExifCoord(gpsLatitude.values, gpsLatitudeRef.toString());
-        final lon =
-            _convertExifCoord(gpsLongitude.values, gpsLongitudeRef.toString());
+        final lat = _convertExifCoord(gpsLatitude.values, gpsLatitudeRef.toString());
+        final lon = _convertExifCoord(gpsLongitude.values, gpsLongitudeRef.toString());
 
         if (lat != null && lon != null) {
           return LatLng(lat, lon);
@@ -219,8 +195,7 @@ class PhotoGeotaggingService {
   double? _convertExifCoord(IfdValues coord, String ref) {
     try {
       // Parse EXIF rational format: "[deg/1, min/1, sec/100]"
-      final parts =
-          coord.toString().replaceAll('[', '').replaceAll(']', '').split(', ');
+      final parts = coord.toString().replaceAll('[', '').replaceAll(']', '').split(', ');
       if (parts.length != 3) return null;
 
       double parseRational(String rational) {
@@ -258,7 +233,9 @@ class PhotoGeotaggingService {
       waypoint.photoPaths = photos;
 
       // Set thumbnail if first photo
-      waypoint.thumbnailPath ??= photo.thumbnailPath;
+      if (waypoint.thumbnailPath == null) {
+        waypoint.thumbnailPath = photo.thumbnailPath;
+      }
 
       return true;
     } catch (e) {
@@ -277,10 +254,7 @@ class PhotoGeotaggingService {
 
       // Delete thumbnail
       final thumbPath = waypoint.photoPaths?.firstWhere(
-        (p) =>
-            p ==
-            photoPath.replaceFirst(
-                '/waypoint_photos/', '/waypoint_thumbnails/thumb_'),
+        (p) => p == photoPath.replaceFirst('/waypoint_photos/', '/waypoint_thumbnails/thumb_'),
         orElse: () => '',
       );
       if (thumbPath != null && thumbPath.isNotEmpty) {
@@ -320,8 +294,7 @@ class PhotoGeotaggingService {
   }
 
   /// Show photo gallery for waypoint
-  void showPhotoGallery(
-      BuildContext context, Waypoint waypoint, int initialIndex) {
+  void showPhotoGallery(BuildContext context, Waypoint waypoint, int initialIndex) {
     if (waypoint.photoPaths == null || waypoint.photoPaths!.isEmpty) return;
 
     showDialog(
@@ -476,10 +449,7 @@ class _PhotoGalleryDialogState extends State<PhotoGalleryDialog> {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withValues(alpha: 0.8),
-                    Colors.transparent
-                  ],
+                  colors: [Colors.black.withValues(alpha: 0.8), Colors.transparent],
                 ),
               ),
               child: Row(
@@ -502,8 +472,7 @@ class _PhotoGalleryDialogState extends State<PhotoGalleryDialog> {
                             widget.onDelete!(widget.photoPaths[currentIndex]);
                             if (widget.photoPaths.length > 1) {
                               setState(() {
-                                if (currentIndex >=
-                                    widget.photoPaths.length - 1) {
+                                if (currentIndex >= widget.photoPaths.length - 1) {
                                   currentIndex = widget.photoPaths.length - 2;
                                 }
                               });
@@ -529,8 +498,7 @@ class _PhotoGalleryDialogState extends State<PhotoGalleryDialog> {
               left: 16,
               top: MediaQuery.of(context).size.height / 2 - 24,
               child: IconButton(
-                icon: const Icon(Icons.arrow_back_ios,
-                    color: Colors.white, size: 32),
+                icon: const Icon(Icons.arrow_back_ios, color: Colors.white, size: 32),
                 onPressed: currentIndex > 0
                     ? () => setState(() => currentIndex--)
                     : null,
@@ -540,8 +508,7 @@ class _PhotoGalleryDialogState extends State<PhotoGalleryDialog> {
               right: 16,
               top: MediaQuery.of(context).size.height / 2 - 24,
               child: IconButton(
-                icon: const Icon(Icons.arrow_forward_ios,
-                    color: Colors.white, size: 32),
+                icon: const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 32),
                 onPressed: currentIndex < widget.photoPaths.length - 1
                     ? () => setState(() => currentIndex++)
                     : null,

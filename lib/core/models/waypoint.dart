@@ -93,10 +93,11 @@ class Waypoint {
   /// Check if waypoint has photos
   bool get hasPhotos => photoPaths != null && photoPaths!.isNotEmpty;
 
-  bool get isPinage => icon == 'pinage' || type == WaypointType.pinage;
-
   /// Get number of photos
   int get photoCount => photoPaths?.length ?? 0;
+
+  /// Check if this is a pinage waypoint
+  bool get isPinage => icon == 'pinage' || type == WaypointType.pinage;
 }
 
 // Waypoint types

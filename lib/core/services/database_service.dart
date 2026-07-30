@@ -373,23 +373,25 @@ class DatabaseService {
   }
 
   // Artifact operations
+  Future<List<Map<String, dynamic>>> getArtifacts() async {
+    if (_isWeb) {
+      final list = _getTable('artifacts');
+      list.sort((a, b) => (b['timestamp'] ?? 0).compareTo(a['timestamp'] ?? 0));
+      return list.map((e) => Map<String, dynamic>.from(e)).toList();
+    }
+    return await _db!.query('artifacts', orderBy: 'timestamp DESC');
+  }
+
   Future<int> insertArtifact(Map<String, dynamic> artifact) async {
     if (_isWeb) {
       final data = Map<String, dynamic>.from(artifact);
       data['id'] = _webIdCounter++;
-      data['created_at'] ??= DateTime.now().millisecondsSinceEpoch;
+      data['timestamp'] ??= DateTime.now().millisecondsSinceEpoch;
       _getTable('artifacts').add(data);
       await _persistWeb('artifacts');
       return data['id'];
     }
     return await _db!.insert('artifacts', artifact);
-  }
-
-  Future<List<Map<String, dynamic>>> getArtifacts() async {
-    if (_isWeb) {
-      return _getTable('artifacts').map((e) => Map<String, dynamic>.from(e)).toList();
-    }
-    return await _db!.query('artifacts', orderBy: 'created_at DESC');
   }
 
   Future<int> updateArtifact(Map<String, dynamic> artifact) async {
@@ -398,7 +400,11 @@ class DatabaseService {
     if (_isWeb) {
       final table = _getTable('artifacts');
       final index = table.indexWhere((item) => item['id'] == id);
-      if (index >= 0) { table[index] = Map<String, dynamic>.from(artifact); await _persistWeb('artifacts'); return 1; }
+      if (index >= 0) {
+        table[index] = Map<String, dynamic>.from(artifact);
+        await _persistWeb('artifacts');
+        return 1;
+      }
       return 0;
     }
     return await _db!.update('artifacts', artifact, where: 'id = ?', whereArgs: [id]);
@@ -414,23 +420,22 @@ class DatabaseService {
   }
 
   // Geofence operations
+  Future<List<Map<String, dynamic>>> getGeofences() async {
+    if (_isWeb) {
+      return _getTable('geofences').map((e) => Map<String, dynamic>.from(e)).toList();
+    }
+    return await _db!.query('geofences');
+  }
+
   Future<int> insertGeofence(Map<String, dynamic> geofence) async {
     if (_isWeb) {
       final data = Map<String, dynamic>.from(geofence);
       data['id'] = _webIdCounter++;
-      data['created_at'] ??= DateTime.now().millisecondsSinceEpoch;
       _getTable('geofences').add(data);
       await _persistWeb('geofences');
       return data['id'];
     }
     return await _db!.insert('geofences', geofence);
-  }
-
-  Future<List<Map<String, dynamic>>> getGeofences() async {
-    if (_isWeb) {
-      return _getTable('geofences').map((e) => Map<String, dynamic>.from(e)).toList();
-    }
-    return await _db!.query('geofences', orderBy: 'created_at DESC');
   }
 
   Future<int> updateGeofence(Map<String, dynamic> geofence) async {
@@ -439,7 +444,11 @@ class DatabaseService {
     if (_isWeb) {
       final table = _getTable('geofences');
       final index = table.indexWhere((item) => item['id'] == id);
-      if (index >= 0) { table[index] = Map<String, dynamic>.from(geofence); await _persistWeb('geofences'); return 1; }
+      if (index >= 0) {
+        table[index] = Map<String, dynamic>.from(geofence);
+        await _persistWeb('geofences');
+        return 1;
+      }
       return 0;
     }
     return await _db!.update('geofences', geofence, where: 'id = ?', whereArgs: [id]);
