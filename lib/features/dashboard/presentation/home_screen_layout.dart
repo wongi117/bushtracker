@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,7 +11,6 @@ import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'package:bush_track/theme/app_colors.dart';
 import 'package:bush_track/theme/tactical_theme_constants.dart';
-import 'package:bush_track/theme/tactical_widgets.dart';
 import '../../tracking/providers/location_provider.dart';
 import '../../mesh/providers/mesh_provider.dart';
 import '../../ai/providers/ai_assistant_provider.dart';
@@ -36,6 +34,10 @@ import 'package:bush_track/features/ar/presentation/ar_compass_screen.dart';
 import 'package:bush_track/features/map/widgets/waypoint_editor.dart';
 import 'package:bush_track/features/map/presentation/photo_pin_screen.dart';
 import 'package:bush_track/features/map/services/photo_geotagging_service.dart';
+import 'package:bush_track/features/navigation/presentation/navigation_screen.dart';
+import 'package:bush_track/features/navigation/presentation/route_options_screen.dart';
+import 'package:bush_track/features/navigation/providers/navigation_provider.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:bush_track/features/settings/presentation/settings_screen.dart';
 import 'package:bush_track/core/config/secrets.dart';
 import 'package:bush_track/core/services/gpx_service.dart';
@@ -56,7 +58,6 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
   final MapController _mapController = MapController();
   _MapStyle _mapStyle = _MapStyle.streets;
   double _currentZoom = 13.0;
-  double _currentRotation = 0.0;
   bool _mapInitialized = false;
   bool _tilesLoading = true;
   bool _hasAutocentered = false;
@@ -614,6 +615,11 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                 () { Navigator.pop(context); }),
             _drawerItem(Icons.route, 'My Trails', Colors.white70,
                 () { Navigator.pop(context); }),
+            _drawerItem(Icons.directions_outlined, 'Directions', Colors.white70,
+                () { Navigator.pop(context);
+                     Navigator.push(context, MaterialPageRoute(builder: (_) => const RouteOptionsScreen())); }),
+            _drawerItem(Icons.upload_file_outlined, 'Import GPX / KML', Colors.white70,
+                () { Navigator.pop(context); _importGpxKml(); }),
             _drawerItem(Icons.near_me_outlined, 'Nearby Places', Colors.white70,
                 () { Navigator.pop(context); _openSearch(); }),
             _drawerItem(Icons.chat_bubble_outline, 'AI Assistant', Colors.white70,
@@ -663,6 +669,50 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
   void _openAR() {
     Navigator.push(context,
         MaterialPageRoute(builder: (_) => const ARCompassScreen()));
+  }
+
+  void _startNavigationTo(Waypoint w) {
+    if (w.latitude == null || w.longitude == null) return;
+    ref.read(aiAssistantProvider.notifier)
+        .speak("Starting navigation to ${w.label ?? 'waypoint'}.");
+    // Push screen first so spinner shows while OSRM responds
+    Navigator.push(context,
+        MaterialPageRoute(builder: (_) => const NavigationScreen()));
+    ref.read(navigationProvider.notifier)
+        .navigateTo(w.latitude!, w.longitude!, w.label ?? 'Waypoint');
+  }
+
+  Future<void> _importGpxKml() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['gpx', 'kml'],
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    final file = result.files.first;
+    if (file.bytes == null) return;
+    final content = String.fromCharCodes(file.bytes!);
+    if (content.isEmpty) return;
+    final ext = (file.extension ?? '').toLowerCase();
+    List<Waypoint> waypoints;
+    if (ext == 'kml') {
+      waypoints = GPXService.parseKML(content);
+    } else {
+      waypoints = GPXService.parseGPX(content);
+    }
+    for (final wp in waypoints) {
+      await ref.read(locationProvider.notifier).addManualWaypoint(
+            wp.latitude ?? 0,
+            wp.longitude ?? 0,
+            wp.label ?? 'Imported',
+            notes: wp.notes,
+          );
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('Imported ${waypoints.length} pin(s) from ${file.name}'),
+      duration: const Duration(seconds: 3),
+    ));
   }
 
   Future<void> _openCameraPin(LatLng point) async {
@@ -958,9 +1008,7 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                     Icons.navigation_outlined,
                     'Navigate',
                     Colors.green,
-                    () => ref
-                        .read(aiAssistantProvider.notifier)
-                        .speak("Navigating to ${w.label ?? 'waypoint'}")),
+                    () => _startNavigationTo(w)),
               ),
               const SizedBox(width: 10),
               Expanded(

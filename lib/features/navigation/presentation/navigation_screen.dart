@@ -18,57 +18,6 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   @override
   void initState() {
     super.initState();
-    // Initialize with sample navigation steps for demonstration
-    Future.microtask(() => _initializeSampleNavigation());
-  }
-
-  void _initializeSampleNavigation() {
-    // In a real implementation, this would be calculated using OSRM
-    final steps = [
-      NavigationStep(
-        instruction: "Head north on Outback Track",
-        distanceM: 500,
-        bearing: 0,
-        location: const LatLng(-25.3444, 131.0369),
-        manoeuvreType: "straight",
-      ),
-      NavigationStep(
-        instruction: "Turn right onto Laverton Road",
-        distanceM: 200,
-        bearing: 90,
-        location: const LatLng(-25.3400, 131.0369),
-        manoeuvreType: "right",
-      ),
-      NavigationStep(
-        instruction: "Continue straight for 12 kilometres",
-        distanceM: 12000,
-        bearing: 90,
-        location: const LatLng(-25.3400, 131.0400),
-        manoeuvreType: "straight",
-      ),
-      NavigationStep(
-        instruction: "You have arrived at your destination",
-        distanceM: 0,
-        bearing: 0,
-        location: const LatLng(-25.3300, 131.0500),
-        manoeuvreType: "arrive",
-      ),
-    ];
-
-    // Sample encoded polyline for demonstration
-    // This represents a simple route from Uluru to a point northeast
-    const samplePolyline = "_lh~Dmjyu@r@o@|@}@~@}@|@}@~@}@|@}@~@}@|@}@~@}@|@}@~@}@";
-    
-    final route = RouteOption(
-      name: "Sample Route",
-      distanceKm: 15.2,
-      estimatedTimeMin: 30,
-      tradeoffs: ["Unsealed road", "Scenic views"],
-      terrainDifficulty: "Medium",
-      polyline: samplePolyline,
-    );
-
-    ref.read(navigationProvider.notifier).startNavigation(steps, route: route);
   }
 
   @override
@@ -85,9 +34,26 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     });
     
     if (!navigationState.isActive) {
-      return const Scaffold(
-        body: Center(
-          child: Text('No active navigation'),
+      return Scaffold(
+        backgroundColor: Colors.black,
+        appBar: AppBar(
+          backgroundColor: Colors.black,
+          leading: IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.pop(context),
+          ),
+          title: const Text('Navigation'),
+        ),
+        body: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(color: Color(0xFFFF6D00)),
+              SizedBox(height: 24),
+              Text('Calculating route…',
+                  style: TextStyle(color: Colors.white70, fontSize: 16)),
+            ],
+          ),
         ),
       );
     }
