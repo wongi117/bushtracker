@@ -36,6 +36,7 @@ import 'package:bush_track/features/ai/providers/ai_control_provider.dart';
 import 'package:bush_track/features/ai/presentation/camp_finder_screen.dart';
 import 'package:bush_track/features/geofence/presentation/geofence_screen.dart';
 import 'package:bush_track/features/heritage/presentation/artifact_logger_screen.dart';
+import 'package:bush_track/features/map/presentation/offline_maps_screen.dart';
 import 'package:bush_track/features/ar/presentation/ar_compass_screen.dart';
 import 'package:bush_track/features/ar/presentation/ar_camera_screen.dart';
 import 'package:bush_track/features/map/widgets/waypoint_editor.dart';
@@ -649,9 +650,9 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                 () { Navigator.pop(context); _sendSOS(); }),
             const Divider(color: Colors.white12, height: 24, indent: 16, endIndent: 16),
             _drawerItem(Icons.location_on_outlined, 'Saved Pins', Colors.white70,
-                () { Navigator.pop(context); }),
+                () { Navigator.pop(context); _showSavedPins(); }),
             _drawerItem(Icons.route, 'My Trails', Colors.white70,
-                () { Navigator.pop(context); }),
+                () { Navigator.pop(context); _showMyTrails(); }),
             _drawerItem(Icons.directions_outlined, 'Directions', Colors.white70,
                 () { Navigator.pop(context);
                      Navigator.push(context, MaterialPageRoute(builder: (_) => const RouteOptionsScreen())); }),
@@ -674,6 +675,9 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
             _drawerItem(Icons.history_edu_outlined, 'Heritage Logger', Colors.white70,
                 () { Navigator.pop(context);
                      Navigator.push(context, MaterialPageRoute(builder: (_) => const ArtifactLoggerScreen())); }),
+            _drawerItem(Icons.download_for_offline_outlined, 'Offline Maps', Colors.white70,
+                () { Navigator.pop(context);
+                     Navigator.push(context, MaterialPageRoute(builder: (_) => const OfflineMapsScreen())); }),
             const Divider(color: Colors.white12, height: 24, indent: 16, endIndent: 16),
             _drawerItem(Icons.settings_outlined, 'Settings', Colors.white70,
                 () { Navigator.pop(context);
@@ -717,6 +721,169 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
   void _openAR() {
     Navigator.push(context,
         MaterialPageRoute(builder: (_) => const ARCameraScreen()));
+  }
+
+  void _showSavedPins() {
+    final pins = ref.read(locationProvider).waypoints
+        .where((w) => w.isPin == true || w.type == WaypointType.manual)
+        .toList();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.55,
+        maxChildSize: 0.9,
+        minChildSize: 0.3,
+        builder: (_, ctrl) => Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF0D1035),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Row(children: [
+                Container(width: 40, height: 4,
+                    decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+              ]),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(children: [
+                const Icon(Icons.location_on, color: Color(0xFFFF6D00), size: 20),
+                const SizedBox(width: 8),
+                Text('SAVED PINS  (${pins.length})',
+                    style: const TextStyle(color: Colors.white, fontSize: 13,
+                        fontWeight: FontWeight.w900, letterSpacing: 2)),
+              ]),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: pins.isEmpty
+                  ? const Center(child: Text('No pins yet — long-press the map to drop one',
+                      style: TextStyle(color: Colors.white38, fontSize: 14), textAlign: TextAlign.center))
+                  : ListView.separated(
+                      controller: ctrl,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      itemCount: pins.length,
+                      separatorBuilder: (_, __) => const Divider(color: Colors.white12, height: 1),
+                      itemBuilder: (_, i) {
+                        final w = pins[i];
+                        final icon = WaypointIcon.getIconData(w.icon);
+                        final color = WaypointColors.fromHex(w.color);
+                        return ListTile(
+                          leading: Icon(icon, color: color, size: 22),
+                          title: Text(w.label ?? 'Pin',
+                              style: const TextStyle(color: Colors.white, fontSize: 14)),
+                          subtitle: (w.latitude != null)
+                              ? Text('${w.latitude!.toStringAsFixed(4)}, ${w.longitude!.toStringAsFixed(4)}',
+                                  style: const TextStyle(color: Colors.white38, fontSize: 11))
+                              : null,
+                          trailing: IconButton(
+                            icon: const Icon(Icons.my_location, color: Colors.white38, size: 18),
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              _mapController.move(
+                                LatLng(w.latitude!, w.longitude!), 15);
+                            },
+                          ),
+                          dense: true,
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            if (w.latitude != null) {
+                              _mapController.move(LatLng(w.latitude!, w.longitude!), 15);
+                            }
+                          },
+                        );
+                      },
+                    ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  void _showMyTrails() {
+    final trails = ref.read(trailProvider).trails;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.5,
+        maxChildSize: 0.85,
+        minChildSize: 0.3,
+        builder: (_, ctrl) => Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF0D1035),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Row(children: [
+                Container(width: 40, height: 4,
+                    decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+              ]),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(children: [
+                const Icon(Icons.route, color: Color(0xFFFF6D00), size: 20),
+                const SizedBox(width: 8),
+                Text('MY TRAILS  (${trails.length})',
+                    style: const TextStyle(color: Colors.white, fontSize: 13,
+                        fontWeight: FontWeight.w900, letterSpacing: 2)),
+              ]),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: trails.isEmpty
+                  ? const Center(child: Text('No trails yet — use Trail Creation on the map',
+                      style: TextStyle(color: Colors.white38, fontSize: 14), textAlign: TextAlign.center))
+                  : ListView.separated(
+                      controller: ctrl,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      itemCount: trails.length,
+                      separatorBuilder: (_, __) => const Divider(color: Colors.white12, height: 1),
+                      itemBuilder: (_, i) {
+                        final t = trails[i];
+                        final color = WaypointColors.fromHex(t.color);
+                        final pts = t.getWaypoints();
+                        return ListTile(
+                          leading: Container(
+                            width: 22, height: 22,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(color: color, width: 3),
+                            ),
+                          ),
+                          title: Text(t.name ?? 'Trail',
+                              style: const TextStyle(color: Colors.white, fontSize: 14)),
+                          subtitle: Text('${pts.length} points',
+                              style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.fit_screen, color: Colors.white38, size: 18),
+                            onPressed: pts.isNotEmpty ? () {
+                              Navigator.pop(ctx);
+                              _mapController.move(pts.first, 14);
+                            } : null,
+                          ),
+                          dense: true,
+                          onTap: pts.isNotEmpty ? () {
+                            Navigator.pop(ctx);
+                            _mapController.move(pts.first, 14);
+                          } : null,
+                        );
+                      },
+                    ),
+            ),
+          ]),
+        ),
+      ),
+    );
   }
 
   void _createARCarving(LatLng point) {
