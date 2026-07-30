@@ -36,6 +36,7 @@ import 'package:bush_track/features/ai/providers/ai_control_provider.dart';
 import 'package:bush_track/features/ai/presentation/camp_finder_screen.dart';
 import 'package:bush_track/features/geofence/presentation/geofence_screen.dart';
 import 'package:bush_track/features/ar/presentation/ar_compass_screen.dart';
+import 'package:bush_track/features/ar/presentation/ar_camera_screen.dart';
 import 'package:bush_track/features/map/widgets/waypoint_editor.dart';
 import 'package:bush_track/features/map/presentation/photo_pin_screen.dart';
 import 'package:bush_track/features/map/services/photo_geotagging_service.dart';
@@ -682,7 +683,103 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
 
   void _openAR() {
     Navigator.push(context,
-        MaterialPageRoute(builder: (_) => const ARCompassScreen()));
+        MaterialPageRoute(builder: (_) => const ARCameraScreen()));
+  }
+
+  void _createARCarving(LatLng point) {
+    final textCtrl = TextEditingController();
+    bool isPublic = false;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSS) => Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Container(
+            padding: EdgeInsets.fromLTRB(20, 16, 20, MediaQuery.of(ctx).padding.bottom + 24),
+            decoration: const BoxDecoration(
+              color: Color(0xFF100820),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Container(width: 40, height: 4,
+                  decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+              const SizedBox(height: 16),
+              Row(children: [
+                const Icon(Icons.gesture, color: Color(0xFF9C27B0), size: 20),
+                const SizedBox(width: 8),
+                const Text('AR CARVING',
+                    style: TextStyle(color: Colors.white, fontSize: 13,
+                        fontWeight: FontWeight.w900, letterSpacing: 3)),
+              ]),
+              const SizedBox(height: 16),
+              TextField(
+                controller: textCtrl,
+                autofocus: true,
+                maxLines: 3,
+                style: const TextStyle(color: Colors.white, fontSize: 15),
+                decoration: InputDecoration(
+                  hintText: 'What do you want to carve here?',
+                  hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.35)),
+                  filled: true,
+                  fillColor: const Color(0xFF1A0A2E),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: Color(0xFF4A1A6E)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: Color(0xFF4A1A6E)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: Color(0xFF9C27B0), width: 1.5),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(children: [
+                const Text('Visible to others:', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                const Spacer(),
+                Switch(
+                  value: isPublic,
+                  onChanged: (v) => setSS(() => isPublic = v),
+                  activeColor: const Color(0xFF9C27B0),
+                ),
+              ]),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF9C27B0),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: () async {
+                    final text = textCtrl.text.trim();
+                    if (text.isEmpty) return;
+                    Navigator.pop(ctx);
+                    await ref.read(locationProvider.notifier).addManualWaypoint(
+                          point.latitude,
+                          point.longitude,
+                          text,
+                          notes: isPublic ? 'PUBLIC_CARVING' : 'PRIVATE_CARVING',
+                          icon: 'carving',
+                          color: '#9C27B0',
+                        );
+                  },
+                  child: const Text('CARVE IT',
+                      style: TextStyle(color: Colors.white, fontSize: 14,
+                          fontWeight: FontWeight.w800, letterSpacing: 2)),
+                ),
+              ),
+            ]),
+          ),
+        ),
+      ),
+    );
   }
 
   void _showReturnToStart() {
@@ -1137,12 +1234,20 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                   showWaypointEditor(context, position: point);
                 }),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               Expanded(
                 child: _pinOption(ctx, Icons.camera_alt_outlined, 'Photo Pin',
                     const Color(0xFFFF9800), () {
                   Navigator.pop(ctx);
                   _openCameraPin(point);
+                }),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _pinOption(ctx, Icons.gesture, 'AR Carve',
+                    const Color(0xFF9C27B0), () {
+                  Navigator.pop(ctx);
+                  _createARCarving(point);
                 }),
               ),
             ]),

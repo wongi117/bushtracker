@@ -131,7 +131,8 @@ class WaypointIcon {
   static const String road = 'road';
   static const String custom = 'custom';
   static const String pin = 'pin';
-  
+  static const String carving = 'carving';
+
   static IconData getIconData(String? iconType) {
     switch (iconType) {
       case camp:
@@ -144,6 +145,8 @@ class WaypointIcon {
         return Icons.local_gas_station;
       case road:
         return Icons.add_road;
+      case carving:
+        return Icons.gesture;
       case pin:
       default:
         return Icons.location_on;
