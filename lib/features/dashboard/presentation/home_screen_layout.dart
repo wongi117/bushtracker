@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -33,6 +34,8 @@ import 'package:bush_track/features/places/presentation/places_search_screen.dar
 import 'package:bush_track/features/search/presentation/natural_language_search_screen.dart';
 import 'package:bush_track/features/ar/presentation/ar_compass_screen.dart';
 import 'package:bush_track/features/map/widgets/waypoint_editor.dart';
+import 'package:bush_track/features/map/presentation/photo_pin_screen.dart';
+import 'package:bush_track/features/map/services/photo_geotagging_service.dart';
 import 'package:bush_track/features/settings/presentation/settings_screen.dart';
 import 'package:bush_track/core/config/secrets.dart';
 import 'package:bush_track/core/services/gpx_service.dart';
@@ -662,6 +665,33 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
         MaterialPageRoute(builder: (_) => const ARCompassScreen()));
   }
 
+  Future<void> _openCameraPin(LatLng point) async {
+    if (kIsWeb) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Camera pins require the mobile app'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    final loc = ref.read(locationProvider);
+    final pinLocation = (loc.stats.currentLat != null)
+        ? LatLng(loc.stats.currentLat!, loc.stats.currentLon!)
+        : point;
+    final svc = PhotoGeotaggingService();
+    final photo = await svc.takePhoto(location: pinLocation);
+    if (photo == null) return; // user cancelled
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) =>
+            PhotoPinScreen(photo: photo, location: pinLocation),
+      ),
+    );
+  }
+
   Widget _buildTacticalButton(IconData icon, VoidCallback onPressed,
       {double size = 60.0}) {
     return GestureDetector(
@@ -1028,8 +1058,7 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                 child: _pinOption(ctx, Icons.camera_alt_outlined, 'Photo Pin',
                     const Color(0xFFFF9800), () {
                   Navigator.pop(ctx);
-                  // Camera pin — Phase G
-                  showWaypointEditor(context, position: point);
+                  _openCameraPin(point);
                 }),
               ),
             ]),
