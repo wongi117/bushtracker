@@ -457,54 +457,6 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
               ],
             ),
           ),
-          // SOS button — distinct red, always visible, pulses to draw attention
-          Positioned(
-            right: 16,
-            bottom: 290,
-            child: Column(
-              children: [
-                GestureDetector(
-                  onTap: _sendSOS,
-                  child: Container(
-                    width: 66,
-                    height: 66,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: const RadialGradient(
-                        colors: [Color(0xFFFF3B30), Color(0xFFB80000)],
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFFFF3B30).withValues(alpha: 0.55),
-                          blurRadius: 18,
-                          spreadRadius: 3,
-                        ),
-                      ],
-                    ),
-                    child: const Icon(Icons.sos_rounded, color: Colors.white, size: 32),
-                  ),
-                )
-                    .animate(onPlay: (c) => c.repeat(reverse: true))
-                    .scale(
-                      begin: const Offset(1.0, 1.0),
-                      end: const Offset(1.08, 1.08),
-                      duration: 900.ms,
-                      curve: Curves.easeInOut,
-                    ),
-                const SizedBox(height: 5),
-                const Text(
-                  'SOS',
-                  style: TextStyle(
-                    color: Color(0xFFFF3B30),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 2.0,
-                    shadows: [Shadow(color: Colors.black54, blurRadius: 4)],
-                  ),
-                ),
-              ],
-            ),
-          ),
           Positioned(
             bottom: 220,
             left: 20,
