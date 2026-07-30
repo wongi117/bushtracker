@@ -573,17 +573,23 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 44,
-        height: 44,
+        width: 46,
+        height: 46,
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.55),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
+          gradient: AppColors.steelGradient,
+          borderRadius: BorderRadius.circular(13),
+          border: Border.all(
+              color: AppColors.accent.withValues(alpha: 0.25), width: 1),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.4),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
+              color: Colors.black.withValues(alpha: 0.55),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+            BoxShadow(
+              color: AppColors.accent.withValues(alpha: 0.08),
+              blurRadius: 6,
+              spreadRadius: 1,
             ),
           ],
         ),
@@ -600,18 +606,41 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    const Color(0xFF1A0A00),
+                    kDarkBg,
+                    const Color(0xFF0A0A18),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                border: Border(
+                    bottom: BorderSide(
+                        color: AppColors.accent.withValues(alpha: 0.3))),
+              ),
               child: Row(children: [
-                const Icon(Icons.explore, color: Color(0xFFFF6D00), size: 28),
-                const SizedBox(width: 10),
-                const Text('PINAGE MAPS',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 3,
-                    )),
+                ShaderMask(
+                  shaderCallback: (b) =>
+                      AppColors.accentGradient.createShader(b),
+                  child: const Icon(Icons.explore, color: Colors.white, size: 30),
+                ),
+                const SizedBox(width: 12),
+                ShaderMask(
+                  shaderCallback: (b) =>
+                      AppColors.accentGradient.createShader(b),
+                  child: const Text('PINAGE MAPS',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 4,
+                      )),
+                ),
               ]),
             ),
             const Divider(color: Colors.white12, height: 1),
@@ -880,7 +909,7 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
   }
 
   Widget _buildTacticalButton(IconData icon, VoidCallback onPressed,
-      {double size = 60.0}) {
+      {double size = 50.0}) {
     return GestureDetector(
       onTap: onPressed,
       child: Container(
@@ -888,16 +917,23 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
         height: size,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: AppColors.panelMatte,
+          gradient: AppColors.steelGradient,
+          border: Border.all(
+              color: AppColors.accent.withValues(alpha: 0.3), width: 1),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.5),
-              blurRadius: 10,
+              color: Colors.black.withValues(alpha: 0.6),
+              blurRadius: 12,
               offset: const Offset(0, 4),
-            )
+            ),
+            BoxShadow(
+              color: AppColors.accent.withValues(alpha: 0.1),
+              blurRadius: 8,
+              spreadRadius: 1,
+            ),
           ],
         ),
-        child: Icon(icon, color: Colors.white, size: size * 0.5),
+        child: Icon(icon, color: Colors.white, size: size * 0.48),
       ),
     );
   }
