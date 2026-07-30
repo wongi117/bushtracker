@@ -30,6 +30,8 @@ import 'package:bush_track/features/map/widgets/map_loading_indicator.dart';
 import 'package:bush_track/core/models/waypoint.dart';
 import 'package:bush_track/features/places/presentation/places_search_screen.dart';
 import 'package:bush_track/features/search/presentation/natural_language_search_screen.dart';
+import 'package:bush_track/features/chat/presentation/ai_chat_screen.dart';
+import 'package:bush_track/features/ai/providers/ai_control_provider.dart';
 import 'package:bush_track/features/ar/presentation/ar_compass_screen.dart';
 import 'package:bush_track/features/map/widgets/waypoint_editor.dart';
 import 'package:bush_track/features/map/presentation/photo_pin_screen.dart';
@@ -101,6 +103,7 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
     final meshState = ref.watch(meshProvider);
     final trailState = ref.watch(trailProvider);
     ref.watch(aiAssistantProvider);
+    ref.watch(aiControlProvider); // activates deadman switch monitoring
 
     // Auto-center map on first real GPS fix
     ref.listen<LocationState>(locationProvider, (_, next) {
@@ -1222,7 +1225,7 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
   void _openChat() {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const NaturalLanguageSearchScreen()),
+      MaterialPageRoute(builder: (_) => const AIChatScreen()),
     );
   }
 
