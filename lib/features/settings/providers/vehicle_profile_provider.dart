@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 enum VehicleType {
@@ -19,7 +18,7 @@ class VehicleProfile {
   final bool prefersUnsealedRoads;
   final bool showDepthWarnings;
   final List<String> routePreferences;
-  
+
   const VehicleProfile({
     required this.type,
     required this.name,
@@ -29,7 +28,7 @@ class VehicleProfile {
     this.showDepthWarnings = false,
     this.routePreferences = const [],
   });
-  
+
   static const List<VehicleProfile> profiles = [
     VehicleProfile(
       type: VehicleType.car,
@@ -84,7 +83,7 @@ class VehicleProfile {
       routePreferences: ['trail', 'unsealed', 'bridle'],
     ),
   ];
-  
+
   static VehicleProfile getProfile(VehicleType type) {
     return profiles.firstWhere((p) => p.type == type);
   }
@@ -93,14 +92,15 @@ class VehicleProfile {
 class VehicleProfileState {
   final VehicleType selectedType;
   final VehicleProfile? customProfile;
-  
+
   const VehicleProfileState({
     this.selectedType = VehicleType.fourWD,
     this.customProfile,
   });
-  
-  VehicleProfile get currentProfile => customProfile ?? VehicleProfile.getProfile(selectedType);
-  
+
+  VehicleProfile get currentProfile =>
+      customProfile ?? VehicleProfile.getProfile(selectedType);
+
   VehicleProfileState copyWith({
     VehicleType? selectedType,
     VehicleProfile? customProfile,
@@ -114,25 +114,25 @@ class VehicleProfileState {
 
 class VehicleProfileNotifier extends StateNotifier<VehicleProfileState> {
   VehicleProfileNotifier() : super(const VehicleProfileState());
-  
+
   void setVehicleType(VehicleType type) {
     state = state.copyWith(selectedType: type, customProfile: null);
   }
-  
+
   void setCustomProfile(VehicleProfile profile) {
     state = state.copyWith(customProfile: profile);
   }
-  
+
   double get maxSpeedWarning => state.currentProfile.maxSpeed * 1.1;
-  
+
   bool shouldWarnSpeed(double currentSpeed) {
     return currentSpeed > state.currentProfile.maxSpeed;
   }
-  
+
   bool shouldShowDepthWarning(double depth) {
     return state.currentProfile.showDepthWarnings && depth < 2.0;
   }
-  
+
   String getRouteAdvice() {
     final profile = state.currentProfile;
     if (profile.type == VehicleType.fourWD) {
@@ -149,6 +149,7 @@ class VehicleProfileNotifier extends StateNotifier<VehicleProfileState> {
   }
 }
 
-final vehicleProfileProvider = StateNotifierProvider<VehicleProfileNotifier, VehicleProfileState>((ref) {
+final vehicleProfileProvider =
+    StateNotifierProvider<VehicleProfileNotifier, VehicleProfileState>((ref) {
   return VehicleProfileNotifier();
 });

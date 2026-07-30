@@ -1,5 +1,10 @@
+import 'package:isar/isar.dart';
+
+part 'map_region.g.dart';
+
+@Collection()
 class MapRegion {
-  int? id;
+  Id? id;
 
   String? regionId;
   String? name;

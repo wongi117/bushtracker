@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_gemma/flutter_gemma.dart';
 import 'package:bush_track/features/ai/services/offline_ai_service.dart';
@@ -50,13 +50,13 @@ class OnDeviceAIService {
     
     _isSupported = _checkPlatformSupport();
     if (!_isSupported) {
-      print('📱 ANTIGRAVITY: On-device AI not supported - $_status');
+      print('📱 FUTURE GEN AI: On-device AI not supported - $_status');
       return;
     }
 
     try {
       _status = 'Initializing Gemma...';
-      print('🤖 ANTIGRAVITY: Initializing on-device Gemma AI...');
+      print('🤖 FUTURE GEN AI: Initializing on-device Gemma AI...');
       
       // Initialize Gemma with default settings
       // Note: First run downloads ~2.5GB model
@@ -64,15 +64,15 @@ class OnDeviceAIService {
       
       _isInitialized = true;
       _status = 'Gemma AI Ready';
-      print('✅ ANTIGRAVITY: Gemma on-device AI initialized!');
+      print('✅ FUTURE GEN AI: Gemma on-device AI initialized!');
       
     } catch (e) {
       _isInitialized = false;
       _isSupported = false;
       _lastError = e.toString();
       _status = 'Failed: ${e.toString().substring(0, e.toString().length > 50 ? 50 : e.toString().length)}...';
-      print('❌ ANTIGRAVITY: Gemma initialization failed: $e');
-      print('📱 ANTIGRAVITY: Falling back to rule-based offline AI');
+      print('❌ FUTURE GEN AI: Gemma initialization failed: $e');
+      print('📱 FUTURE GEN AI: Falling back to rule-based offline AI');
     }
   }
 
@@ -86,19 +86,19 @@ class OnDeviceAIService {
       try {
         final fullPrompt = _buildPrompt(prompt, context);
         
-        print('🧠 ANTIGRAVITY: Running on-device inference...');
+        print('🧠 FUTURE GEN AI: Running on-device inference...');
         
         final response = await Gemma.instance.getResponse(prompt: fullPrompt);
         
         if (response != null && response.isNotEmpty) {
           final cleanResponse = _cleanResponse(response);
-          print('✅ ANTIGRAVITY: On-device response generated');
+          print('✅ FUTURE GEN AI: On-device response generated');
           return cleanResponse;
         } else {
-          print('⚠️ ANTIGRAVITY: Gemma returned empty response');
+          print('⚠️ FUTURE GEN AI: Gemma returned empty response');
         }
       } catch (e) {
-        print('❌ ANTIGRAVITY: On-device inference failed: $e');
+        print('❌ FUTURE GEN AI: On-device inference failed: $e');
         // Fall through to rule-based fallback
       }
     }
@@ -109,7 +109,7 @@ class OnDeviceAIService {
 
   /// Build the full prompt with context
   String _buildPrompt(String userPrompt, Map<String, dynamic>? context) {
-    String systemContext = '''You are Antigravity, a survival AI for remote outdoor activities.
+    String systemContext = '''You are Future Gen AI, a survival AI for remote outdoor activities.
 Safety first, be concise (under 20 seconds when spoken), calm tone, actionable advice.
 
 Current situation:''';
@@ -124,14 +124,14 @@ Current situation:''';
       if (meshNodes != null) systemContext += '\n- Nearby devices: $meshNodes';
     }
     
-    return '$systemContext\n\nUser: $userPrompt\nAntigravity:';
+    return '$systemContext\n\nUser: $userPrompt\nFuture Gen AI:';
   }
 
   /// Clean up Gemma response for voice output
   String _cleanResponse(String response) {
     // Remove common prefixes
     String cleaned = response
-        .replaceAll(RegExp(r'^(User:|Antigravity:|Assistant:)\s*', caseSensitive: false), '')
+        .replaceAll(RegExp(r'^(User:|Future Gen AI:|Assistant:)\s*', caseSensitive: false), '')
         .replaceAll(RegExp(r'\n\n+'), '\n')
         .trim();
     

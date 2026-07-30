@@ -1,8 +1,12 @@
+import 'package:isar/isar.dart';
 import 'package:latlong2/latlong.dart';
 import 'dart:convert';
 
+part 'trail.g.dart';
+
+@Collection()
 class Trail {
-  int? id;
+  Id? id;
 
   String? name;
   String? description;

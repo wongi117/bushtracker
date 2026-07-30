@@ -1,3 +1,11 @@
+# Local secrets — never commit
+.env
+*.env
+android/key.properties
+*.jks
+*.keystore
+deploy.sh
+
 # Miscellaneous
 *.class
 *.log

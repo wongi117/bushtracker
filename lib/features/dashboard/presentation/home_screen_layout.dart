@@ -8,7 +8,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
 import 'package:bush_track/theme/app_colors.dart';
 import 'package:bush_track/theme/tactical_theme_constants.dart';
@@ -37,12 +36,6 @@ import 'package:bush_track/features/map/widgets/waypoint_editor.dart';
 import 'package:bush_track/core/config/secrets.dart';
 import 'package:bush_track/core/services/gpx_service.dart';
 import 'package:bush_track/core/models/trail.dart';
-import 'package:bush_track/features/settings/presentation/settings_screen.dart';
-import 'package:bush_track/features/trip/presentation/trip_statistics_screen.dart';
-import 'package:bush_track/features/map/presentation/offline_maps_screen.dart';
-import 'package:bush_track/features/navigation/presentation/navigation_screen.dart';
-import 'package:bush_track/features/ai/presentation/agent_manager_screen.dart';
-import 'package:bush_track/features/elevation/presentation/elevation_profile_screen.dart';
 
 class HomeScreenLayout extends ConsumerStatefulWidget {
   const HomeScreenLayout({super.key});
@@ -59,11 +52,10 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
   _MapStyle _mapStyle = _MapStyle.streets;
   double _currentZoom = 13.0;
   double _currentRotation = 0.0;
-  bool _mapInitialized = true;
-  bool _tilesLoading = false;
+  bool _mapInitialized = false;
+  bool _tilesLoading = true;
   bool _hasAutocentered = false;
   LatLng? _targetPin;
-  LatLng? _savedCenter;
   CoordinateFormat _coordinateFormat = CoordinateFormat.decimalDegrees;
   bool _showCoordinatePanel = false;
   final GlobalKey<MeasurementToolState> _measurementKey =
@@ -77,32 +69,21 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
   @override
   void initState() {
     super.initState();
-    _loadSavedCenter();
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) {
+        setState(() {
+          _mapInitialized = true;
+          _tilesLoading = false;
+        });
+      }
+    });
+    // Subscribe to magnetometer for live bearing on user dot
     try {
       _magSub = magnetometerEvents.listen((event) {
         final heading = math.atan2(event.y, event.x);
         if (mounted) setState(() => _headingRad = heading);
       });
     } catch (_) {}
-  }
-
-  Future<void> _loadSavedCenter() async {
-    final prefs = await SharedPreferences.getInstance();
-    final lat = prefs.getDouble('map_last_lat');
-    final lon = prefs.getDouble('map_last_lon');
-    if (lat != null && lon != null && mounted) {
-      setState(() => _savedCenter = LatLng(lat, lon));
-      // Move the map after the first frame so the controller is attached
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _mapController.move(LatLng(lat, lon), 14.0);
-      });
-    }
-  }
-
-  Future<void> _saveCenter(double lat, double lon) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble('map_last_lat', lat);
-    await prefs.setDouble('map_last_lon', lon);
   }
 
   @override
@@ -118,20 +99,16 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
     final trailState = ref.watch(trailProvider);
     ref.watch(aiAssistantProvider);
 
-    // Auto-center + save position on GPS fix
+    // Auto-center map on first real GPS fix
     ref.listen<LocationState>(locationProvider, (_, next) {
-      if (next.stats.currentLat != null && next.stats.currentLon != null) {
-        _saveCenter(next.stats.currentLat!, next.stats.currentLon!);
-        if (!_hasAutocentered) {
-          _hasAutocentered = true;
-          // Only jump if we don't already have a saved position nearby
-          if (_savedCenter == null) {
-            _mapController.move(
-              LatLng(next.stats.currentLat!, next.stats.currentLon!),
-              15.0,
-            );
-          }
-        }
+      if (!_hasAutocentered &&
+          next.stats.currentLat != null &&
+          next.stats.currentLon != null) {
+        _hasAutocentered = true;
+        _mapController.move(
+          LatLng(next.stats.currentLat!, next.stats.currentLon!),
+          15.0,
+        );
       }
     });
 
@@ -145,12 +122,8 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
         .where((w) => w.isPin == true || w.type == WaypointType.manual)
         .toList();
 
-    final userLat = locationState.stats.currentLat
-        ?? _savedCenter?.latitude
-        ?? -25.2744;  // geographic centre of Australia
-    final userLon = locationState.stats.currentLon
-        ?? _savedCenter?.longitude
-        ?? 133.7751;
+    final userLat = locationState.stats.currentLat ?? -25.3444;
+    final userLon = locationState.stats.currentLon ?? 131.0369;
 
     return Scaffold(
       backgroundColor: kDarkBg,
@@ -162,8 +135,8 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
             child: FlutterMap(
               mapController: _mapController,
               options: MapOptions(
-                initialCenter: _savedCenter ?? const LatLng(-25.2744, 133.7751),
-                initialZoom: _savedCenter != null ? 14.0 : 5.0,
+                initialCenter: LatLng(userLat, userLon),
+                initialZoom: _currentZoom,
                 minZoom: 2.0,
                 maxZoom: 18.0,
                 interactionOptions: const InteractionOptions(
@@ -175,10 +148,6 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                 onPositionChanged: (position, hasGesture) {
                   setState(() {
                     _currentZoom = position.zoom ?? 13.0;
-                    // rotation lives on the camera, not MapPosition
-                    try {
-                      _currentRotation = _mapController.camera.rotation * (math.pi / 180.0);
-                    } catch (_) {}
                   });
                 },
               ),
@@ -301,8 +270,8 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                           : null;
                       return Marker(
                         point: wPos,
-                        width: 72,
-                        height: 72,
+                        width: 62,
+                        height: 66,
                         alignment: Alignment.bottomCenter,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -477,63 +446,15 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
             ),
           ),
           Positioned(
-            right: 12,
+            right: 20,
             top: 140,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(context).size.height - 430,
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  children: [
-                    _buildTacticalButton(Icons.add, _zoomIn, size: 48),
-                    const SizedBox(height: 8),
-                    _buildTacticalButton(Icons.remove, _zoomOut, size: 48),
-                    const SizedBox(height: 8),
-                    _buildTacticalButton(Icons.my_location, _centerOnMe, size: 48),
-                    const SizedBox(height: 8),
-                    _buildTacticalButton(_mapStyleIcon(), _cycleMapStyle, size: 48),
-                    const SizedBox(height: 8),
-                    _buildTacticalButton(Icons.compass_calibration, _openCompass, size: 48),
-                    const SizedBox(height: 8),
-                    _buildTacticalButton(
-                      trailState.isCreating ? Icons.stop_circle_outlined : Icons.route,
-                      () {
-                        if (trailState.isCreating) {
-                          ref.read(trailProvider.notifier).cancelCreatingTrail();
-                          ref.read(aiAssistantProvider.notifier).speak("Trail creation cancelled.");
-                        } else {
-                          ref.read(trailProvider.notifier).startCreatingTrail();
-                          ref.read(aiAssistantProvider.notifier).speak("Trail creation mode activated. Tap the map to drop points.");
-                        }
-                      },
-                      size: 48,
-                      active: trailState.isCreating,
-                    ),
-                    const SizedBox(height: 8),
-                    _buildTacticalButton(Icons.add_location_alt, _addWaypointHere, size: 48),
-                    const SizedBox(height: 8),
-                    _buildTacticalButton(
-                      Icons.straighten,
-                      () => setState(() => _showMeasurementTool = !_showMeasurementTool),
-                      size: 48,
-                      active: _showMeasurementTool,
-                    ),
-                    const SizedBox(height: 8),
-                    _buildTacticalButton(Icons.terrain, _openElevation, size: 48),
-                    const SizedBox(height: 8),
-                    _buildTacticalButton(Icons.navigation_outlined, _openNavigation, size: 48),
-                    const SizedBox(height: 8),
-                    _buildTacticalButton(Icons.download_outlined, _openOfflineMaps, size: 48),
-                    const SizedBox(height: 8),
-                    _buildTacticalButton(Icons.bar_chart, _openTripStats, size: 48),
-                    const SizedBox(height: 8),
-                    _buildTacticalButton(Icons.smart_toy_outlined, _openAgentManager, size: 48),
-                    const SizedBox(height: 8),
-                    _buildTacticalButton(Icons.settings_outlined, _openSettings, size: 48),
-                  ],
-                ),
-              ),
+            child: Column(
+              children: [
+                _buildTacticalButton(_mapStyleIcon(), _cycleMapStyle),
+                const SizedBox(height: 16),
+                _buildTacticalButton(
+                    Icons.compass_calibration, () => _openCompass()),
+              ],
             ),
           ),
           // SOS button — distinct red, always visible, pulses to draw attention
@@ -685,7 +606,7 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
   }
 
   Widget _buildTacticalButton(IconData icon, VoidCallback onPressed,
-      {double size = 60.0, bool active = false}) {
+      {double size = 60.0}) {
     return GestureDetector(
       onTap: onPressed,
       child: Container(
@@ -693,12 +614,7 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
         height: size,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: active
-              ? AppColors.primaryOrange.withValues(alpha: 0.25)
-              : AppColors.panelMatte,
-          border: active
-              ? Border.all(color: AppColors.primaryOrange, width: 1.5)
-              : null,
+          color: AppColors.panelMatte,
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.5),
@@ -707,9 +623,7 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
             )
           ],
         ),
-        child: Icon(icon,
-            color: active ? AppColors.primaryOrange : Colors.white,
-            size: size * 0.5),
+        child: Icon(icon, color: Colors.white, size: size * 0.5),
       ),
     );
   }
@@ -1017,9 +931,6 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
 
   void _onMapLongPress(LatLng point) {
     setState(() => _targetPin = point);
-    showWaypointEditor(context, position: point).then((_) {
-      if (mounted) setState(() => _targetPin = null);
-    });
     ref
         .read(aiAssistantProvider.notifier)
         .speak("Pin dropped at this location.");
@@ -1078,7 +989,7 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
 
   // ── GPX share ────────────────────────────────────────────────────────────
 
-  Future<void> _shareTrailAsGpx(Trail trail) async {
+  Future<void> _shareTrailAsGpx(trail) async {
     try {
       final gpx = GPXService.exportTrail(trail);
       final dir = await getTemporaryDirectory();
@@ -1117,74 +1028,6 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const ARCompassScreen()),
-    );
-  }
-
-  void _zoomIn() {
-    final newZoom = (_currentZoom + 1).clamp(2.0, 18.0);
-    _mapController.move(_mapController.camera.center, newZoom);
-    setState(() => _currentZoom = newZoom);
-  }
-
-  void _zoomOut() {
-    final newZoom = (_currentZoom - 1).clamp(2.0, 18.0);
-    _mapController.move(_mapController.camera.center, newZoom);
-    setState(() => _currentZoom = newZoom);
-  }
-
-  void _centerOnMe() {
-    final locationState = ref.read(locationProvider);
-    final lat = locationState.stats.currentLat;
-    final lon = locationState.stats.currentLon;
-    if (lat != null && lon != null) {
-      _mapController.move(LatLng(lat, lon), _currentZoom);
-    }
-  }
-
-  void _addWaypointHere() {
-    final center = _mapController.camera.center;
-    showWaypointEditor(context, position: center);
-  }
-
-  void _openSettings() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const SettingsScreen()),
-    );
-  }
-
-  void _openTripStats() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const TripStatisticsScreen()),
-    );
-  }
-
-  void _openOfflineMaps() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const OfflineMapsScreen()),
-    );
-  }
-
-  void _openNavigation() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const NavigationScreen()),
-    );
-  }
-
-  void _openAgentManager() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const AgentManagerScreen()),
-    );
-  }
-
-  void _openElevation() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const ElevationProfileScreen()),
     );
   }
 

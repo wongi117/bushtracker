@@ -1,7 +1,7 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'dart:math';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 
 /// Multi-Provider AI Configuration
 class ApiConfig {
@@ -10,10 +10,12 @@ class ApiConfig {
   static const String openRouterKey = String.fromEnvironment('OPENROUTER_KEY');
   static const String openAIKey = String.fromEnvironment('OPENAI_KEY');
   static const String anthropicKey = String.fromEnvironment('ANTHROPIC_KEY');
-  static const String geminiKey = String.fromEnvironment('GEMINI_KEY');
+  static const String geminiKey = String.fromEnvironment('GEMINI_API_KEY',
+      defaultValue: String.fromEnvironment('GEMINI_KEY'));
   static const String googleProjectName = 'projects/147600682787';
   static const String googleProjectNumber = '147600682787';
-  static const String googleModelName = 'gemma-4-31b-it';
+  static const String googleModelName = 'gemini-2.5-flash';
+  static const String groqKey = String.fromEnvironment('GROQ_KEY');
   static const String minimaxKey = String.fromEnvironment('MINIMAX_KEY');
   static const String moonshotKey = String.fromEnvironment('MOONSHOT_KEY');
   static const String xaiKey = String.fromEnvironment('XAI_KEY');
@@ -23,7 +25,14 @@ class ApiConfig {
   static const String openCageKey = String.fromEnvironment('OPENCAGE_KEY');
   static const String what3WordsKey = String.fromEnvironment('W3W_KEY');
 
-  // OpenRouter (Primary Cloud AI)
+  // Groq (Primary Cloud AI — fast free Llama 3.3 70B)
+  // On web: route through Vercel serverless proxy to avoid browser CORS blocks.
+  // On mobile: call Groq directly.
+  static String get groqUrl => kIsWeb
+      ? '/api/groq'
+      : 'https://api.groq.com/openai/v1/chat/completions';
+
+  // OpenRouter (Legacy fallback)
   static const String openRouterUrl =
       'https://openrouter.ai/api/v1/chat/completions';
 
@@ -33,9 +42,10 @@ class ApiConfig {
   static const String geminiUrl =
       'https://generativelanguage.googleapis.com/v1beta/models/$googleModelName:generateContent';
 
-  // MiniMax (Chinese AI)
-  static const String minimaxUrl =
-      'https://api.minimax.chat/v1/text/chatcompletion_pro';
+  // MiniMax — proxy on web (CORS), direct on mobile
+  static String get minimaxUrl => kIsWeb
+      ? '/api/minimax'
+      : 'https://api.minimax.io/v1/chat/completions';
 
   // Moonshot AI
   static const String moonshotUrl =
@@ -60,8 +70,7 @@ class ApiConfig {
 /// Multi-Tier AI Manager
 class MultiTierAIManager {
   static const String _sysPrompt =
-      '''You are Antigravity, survival AI for outdoor adventure.
-Be concise, safety first, calm tone, actionable advice. Voice-optimized, no markdown.''';
+      '''You are Future Gen AI — an intelligent, conversational AI assistant built into a bushcraft and outdoor adventure app. You are knowledgeable, friendly, and thorough in your responses. You can discuss any topic and give complete, helpful answers.''';
 
   static Future<AIResponse> getResponse(String prompt,
       {Map<String, dynamic>? context}) async {
@@ -79,6 +88,7 @@ Be concise, safety first, calm tone, actionable advice. Voice-optimized, no mark
 
   static Future<AIResponse?> _tryCloudAI(
       String prompt, Map<String, dynamic>? context) async {
+    if (ApiConfig.groqKey.isEmpty) return null;
     try {
       String ctxStr = '';
       if (context != null) {
@@ -88,16 +98,14 @@ Be concise, safety first, calm tone, actionable advice. Voice-optimized, no mark
 
       final response = await http
           .post(
-            Uri.parse(ApiConfig.openRouterUrl),
+            Uri.parse(ApiConfig.groqUrl),
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': 'Bearer ${ApiConfig.openRouterKey}',
-              'HTTP-Referer': 'https://bushtrack.app',
-              'X-Title': 'BushTrack',
+              'Authorization': 'Bearer ${ApiConfig.groqKey}',
             },
             body: jsonEncode({
-              'model': 'anthropic/claude-3-haiku-20240307',
-              'max_tokens': 150,
+              'model': 'llama-3.3-70b-versatile',
+              'max_tokens': 1024,
               'temperature': 0.7,
               'messages': [
                 {'role': 'system', 'content': _sysPrompt},
@@ -105,7 +113,7 @@ Be concise, safety first, calm tone, actionable advice. Voice-optimized, no mark
               ],
             }),
           )
-          .timeout(const Duration(seconds: 12));
+          .timeout(const Duration(seconds: 20));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -113,12 +121,12 @@ Be concise, safety first, calm tone, actionable advice. Voice-optimized, no mark
         if (content != null && content.toString().isNotEmpty) {
           return AIResponse(
               text: _voiceOptimize(content.toString()),
-              provider: 'Cloud (Claude)',
+              provider: 'Cloud (Groq Llama 3.3 70B)',
               isOffline: false);
         }
       }
     } catch (e) {
-      debugPrint('Cloud AI failed: $e');
+      debugPrint('Groq AI failed: $e');
     }
     return null;
   }
@@ -161,13 +169,10 @@ Be concise, safety first, calm tone, actionable advice. Voice-optimized, no mark
   }
 
   static String _voiceOptimize(String text) {
-    String opt = text
-        .replaceAll(RegExp(r'[#*_`\[\]]'), '')
+    return text
+        .replaceAll(RegExp(r'[#*_`]'), '')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
-    final words = opt.split(' ');
-    if (words.length > 50) opt = '${words.take(50).join(' ')}...';
-    return opt;
   }
 }
 
@@ -186,9 +191,9 @@ class _OfflineAI {
 
   static final Map<String, List<String>> _responses = <String, List<String>>{
     'greeting': <String>[
-      'Antigravity online. What do you need?',
+      'Future Gen AI online. What do you need?',
       'Systems active. Ready to help.',
-      'Antigravity at your service.'
+      'Future Gen AI at your service.'
     ],
     'location': <String>[
       'Your GPS is locked. Position confirmed.',
@@ -246,31 +251,48 @@ class _OfflineAI {
     final lower = input.toLowerCase();
     if (lower.contains('help') ||
         lower.contains('emergency') ||
-        lower.contains('sos')) return _gt('sos');
+        lower.contains('sos')) {
+      return _gt('sos');
+    }
     if (lower.contains('scared') ||
         lower.contains('lost') ||
-        lower.contains('panic')) return _gt('panic');
+        lower.contains('panic')) {
+      return _gt('panic');
+    }
     if (lower.contains('navigate') ||
         lower.contains('direction') ||
-        lower.contains('backtrack')) return _gt('navigate');
+        lower.contains('backtrack')) {
+      return _gt('navigate');
+    }
     if (lower.contains('where am i') ||
         lower.contains('location') ||
-        lower.contains('coordinates')) return _gt('location');
+        lower.contains('coordinates')) {
+      return _gt('location');
+    }
     if (lower.contains('weather') ||
         lower.contains('rain') ||
-        lower.contains('temperature')) return _gt('weather');
-    if (lower.contains('water') || lower.contains('thirsty'))
+        lower.contains('temperature')) {
+      return _gt('weather');
+    }
+    if (lower.contains('water') || lower.contains('thirsty')) {
       return _gt('water');
+    }
     if (lower.contains('camp') ||
         lower.contains('sleep') ||
-        lower.contains('shelter')) return _gt('camp');
+        lower.contains('shelter')) {
+      return _gt('camp');
+    }
     if (lower.contains('compass') ||
         lower.contains('bearing') ||
-        lower.contains('north')) return _gt('compass');
+        lower.contains('north')) {
+      return _gt('compass');
+    }
     if (lower.contains('mesh') || lower.contains('network')) return _gt('mesh');
     if (lower.contains('hello') ||
         lower.contains('hi') ||
-        lower.contains('hey')) return _gt('greeting');
+        lower.contains('hey')) {
+      return _gt('greeting');
+    }
     return _gt('default');
   }
 

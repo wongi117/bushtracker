@@ -1,11 +1,11 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:mesh_gradient/mesh_gradient.dart';
 import 'dart:math';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:bush_track/theme/app_colors.dart';
-import 'package:bush_track/features/dashboard/presentation/home_screen_layout.dart';
+import 'package:bush_track/features/dashboard/presentation/dashboard_screen.dart';
 import 'package:bush_track/features/settings/providers/vehicle_profile_provider.dart';
 
 class OnboardingScreen extends ConsumerStatefulWidget {
@@ -15,7 +15,9 @@ class OnboardingScreen extends ConsumerStatefulWidget {
   ConsumerState<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
-class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
+class _OnboardingScreenState extends ConsumerState<OnboardingScreen>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _animController;
   final PageController _pageController = PageController();
   int _currentPage = 0;
   bool _isDownloading = false;
@@ -24,10 +26,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   @override
   void initState() {
     super.initState();
+    _animController =
+        AnimationController(vsync: this, duration: const Duration(seconds: 15))
+          ..repeat();
   }
 
   @override
   void dispose() {
+    _animController.dispose();
     _pageController.dispose();
     super.dispose();
   }
@@ -46,22 +52,37 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   void _startMapDownload() {
     setState(() {
       _isDownloading = true;
-      _downloadProgress = 1.0;
     });
-    // Minimal delay so the 100% indicator is visible before navigating
-    Future.delayed(const Duration(milliseconds: 600), () {
-      if (mounted) _finishOnboarding();
+
+    // Simulate tactical download
+    Future.delayed(const Duration(milliseconds: 500), () {
+      _simulateDownload();
     });
   }
 
-  void _finishOnboarding() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('onboarding_complete', true);
+  void _simulateDownload() {
     if (!mounted) return;
+
+    setState(() {
+      _downloadProgress += 0.05;
+    });
+
+    if (_downloadProgress < 1.0) {
+      Future.delayed(const Duration(milliseconds: 100), _simulateDownload);
+    } else {
+      // Done downloading
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) _finishOnboarding();
+      });
+    }
+  }
+
+  void _finishOnboarding() {
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         transitionDuration: const Duration(milliseconds: 800),
-        pageBuilder: (context, animation, secondaryAnimation) => const HomeScreenLayout(),
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const DashboardScreen(),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return FadeTransition(opacity: animation, child: child);
         },
@@ -75,29 +96,47 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // Gradient background — simple LinearGradient, no shaders needed
+          // Dynamic Mesh Gradient Background
           Positioned.fill(
-            child: Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    Color(0xFF050510),
-                    Color(0xFF0D1035),
-                    Color(0xFF080818),
+            child: AnimatedBuilder(
+              animation: _animController,
+              builder: (context, child) {
+                return MeshGradient(
+                  points: [
+                    MeshGradientPoint(
+                      position: Offset(
+                          -0.2 + sin(_animController.value * pi * 2) * 0.3,
+                          -0.2 + cos(_animController.value * pi * 2) * 0.3),
+                      color: AppColors.background,
+                    ),
+                    MeshGradientPoint(
+                      position: Offset(
+                          1.2 - cos(_animController.value * pi * 2) * 0.3,
+                          -0.2 + sin(_animController.value * pi * 2) * 0.3),
+                      color: const Color(0xFF1A1A24),
+                    ),
+                    MeshGradientPoint(
+                      position: const Offset(0.5, 1.2),
+                      color: AppColors.primaryOrange.withValues(alpha: 0.15),
+                    ),
+                    MeshGradientPoint(
+                      position: const Offset(0.5, 0.5),
+                      color: Colors.black.withValues(alpha: 0.9),
+                    ),
                   ],
-                ),
-              ),
+                  options: MeshGradientOptions(blend: 3.5),
+                );
+              },
             ),
           ),
-          
+
           SafeArea(
             child: Column(
               children: [
                 // Top Progress Bar
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 32.0, vertical: 24.0),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 32.0, vertical: 24.0),
                   child: Row(
                     children: List.generate(3, (index) {
                       return Expanded(
@@ -105,25 +144,31 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                           height: 4,
                           margin: const EdgeInsets.symmetric(horizontal: 4),
                           decoration: BoxDecoration(
-                            color: _currentPage >= index 
-                                ? AppColors.primaryOrange 
+                            color: _currentPage >= index
+                                ? AppColors.primaryOrange
                                 : Colors.white.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(2),
-                            boxShadow: _currentPage == index ? [
-                              BoxShadow(color: AppColors.primaryOrange.withValues(alpha: 0.5), blurRadius: 8)
-                            ] : [],
+                            boxShadow: _currentPage == index
+                                ? [
+                                    BoxShadow(
+                                        color: AppColors.primaryOrange
+                                            .withValues(alpha: 0.5),
+                                        blurRadius: 8)
+                                  ]
+                                : [],
                           ),
                         ),
                       );
                     }),
                   ),
                 ),
-                
+
                 // Content Carousel
                 Expanded(
                   child: PageView(
                     controller: _pageController,
-                    physics: const NeverScrollableScrollPhysics(), // Prevent manual swipe
+                    physics:
+                        const NeverScrollableScrollPhysics(), // Prevent manual swipe
                     onPageChanged: (index) {
                       setState(() {
                         _currentPage = index;
@@ -145,58 +190,61 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   Widget _buildWelcomePage() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 32.0),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(32, 0, 32, 40),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const SizedBox(height: 24),
           Container(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
               color: AppColors.primaryOrange.withValues(alpha: 0.1),
               shape: BoxShape.circle,
-              border: Border.all(color: AppColors.primaryOrange.withValues(alpha: 0.3), width: 2),
+              border: Border.all(
+                  color: AppColors.primaryOrange.withValues(alpha: 0.3),
+                  width: 2),
             ),
-            child: const Icon(Icons.compass_calibration_outlined, color: AppColors.primaryOrange, size: 60),
+            child: const Icon(Icons.compass_calibration_outlined,
+                color: AppColors.primaryOrange, size: 52),
           ).animate().scale(duration: 800.ms, curve: Curves.elasticOut),
-          
-          const SizedBox(height: 40),
-          
+          const SizedBox(height: 28),
           const Text(
-            'ANTIGRAVITY\nOS INITIALIZED',
+            'FUTURE GEN AI\nOS INITIALIZED',
             style: TextStyle(
               color: Colors.white,
-              fontSize: 36,
+              fontSize: 32,
               fontWeight: FontWeight.w900,
               height: 1.2,
               letterSpacing: 2.0,
             ),
           ).animate().fadeIn(delay: 400.ms).slideX(begin: -0.1),
-          
-          const SizedBox(height: 24),
-          
+          const SizedBox(height: 16),
           const Text(
             'Welcome to BushTrack. You are now equipped with the most advanced offline survival and navigation system on the planet.',
             style: TextStyle(
               color: Colors.white70,
-              fontSize: 16,
+              fontSize: 15,
               height: 1.5,
             ),
           ).animate().fadeIn(delay: 800.ms),
-          
+          const SizedBox(height: 28),
+          _buildFeatureRow(Icons.map_outlined, 'Zero-Signal Navigation')
+              .animate()
+              .fadeIn(delay: 1200.ms),
+          const SizedBox(height: 14),
+          _buildFeatureRow(Icons.wifi_tethering, 'P2P Mesh Network SOS')
+              .animate()
+              .fadeIn(delay: 1400.ms),
+          const SizedBox(height: 14),
+          _buildFeatureRow(
+                  Icons.support_agent_rounded, 'On-Device AI Specialists')
+              .animate()
+              .fadeIn(delay: 1600.ms),
           const SizedBox(height: 32),
-          
-          _buildFeatureRow(Icons.map_outlined, 'Zero-Signal Navigation').animate().fadeIn(delay: 1200.ms),
-          const SizedBox(height: 16),
-          _buildFeatureRow(Icons.wifi_tethering, 'P2P Mesh Network SOS').animate().fadeIn(delay: 1400.ms),
-          const SizedBox(height: 16),
-          _buildFeatureRow(Icons.support_agent_rounded, 'On-Device AI Specialists').animate().fadeIn(delay: 1600.ms),
-          
-          const Spacer(),
-          
-          _buildPrimaryButton('INITIALIZE PROTOCOL', _nextPage).animate().fadeIn(delay: 2000.ms),
-          const SizedBox(height: 40),
+          _buildPrimaryButton('INITIALIZE PROTOCOL', _nextPage)
+              .animate()
+              .fadeIn(delay: 2000.ms),
         ],
       ),
     );
@@ -222,110 +270,134 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   Widget _buildVehicleProfilePage() {
     final vehicleState = ref.watch(vehicleProfileProvider);
-    
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24.0),
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(height: 40),
           const Text(
             'MISSION\nPROFILE',
             style: TextStyle(
               color: Colors.white,
-              fontSize: 32,
+              fontSize: 30,
               fontWeight: FontWeight.w900,
               height: 1.2,
               letterSpacing: 2.0,
             ),
           ).animate().fadeIn().slideX(begin: -0.1),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           const Text(
             'Select your primary mode of transport. This calibrates AI routing, speed warnings, and trail preferences.',
-            style: TextStyle(color: Colors.white70, fontSize: 16, height: 1.5),
+            style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.5),
           ).animate().fadeIn(delay: 200.ms),
-          
-          const SizedBox(height: 40),
-          
-          Expanded(
-            child: GridView.builder(
-              physics: const BouncingScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                childAspectRatio: 0.9,
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
-              ),
-              itemCount: VehicleProfile.profiles.length,
-              itemBuilder: (context, index) {
-                final profile = VehicleProfile.profiles[index];
-                final isSelected = vehicleState.selectedType == profile.type;
-                
-                return GestureDetector(
-                  onTap: () {
-                    ref.read(vehicleProfileProvider.notifier).setVehicleType(profile.type);
-                  },
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: isSelected ? AppColors.primaryOrange.withValues(alpha: 0.15) : Colors.white.withValues(alpha: 0.03),
-                      borderRadius: BorderRadius.circular(24),
-                      border: Border.all(
-                        color: isSelected ? AppColors.primaryOrange.withValues(alpha: 0.5) : Colors.white.withValues(alpha: 0.05),
-                        width: isSelected ? 2 : 1,
-                      ),
-                      boxShadow: isSelected ? [
-                        BoxShadow(color: AppColors.primaryOrange.withValues(alpha: 0.2), blurRadius: 20)
-                      ] : [],
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(profile.icon, style: const TextStyle(fontSize: 48)),
-                        const SizedBox(height: 16),
-                        Text(
-                          profile.name.toUpperCase(),
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: isSelected ? AppColors.primaryOrange : Colors.white,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1.0,
-                          ),
+          const SizedBox(height: 20),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              // 3 columns on narrow phones, 2 on tablets/wide screens
+              final crossCount = constraints.maxWidth < 360 ? 2 : constraints.maxWidth > 500 ? 4 : 2;
+              return GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: crossCount,
+                  mainAxisExtent: 100,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
+                ),
+                itemCount: VehicleProfile.profiles.length,
+                itemBuilder: (context, index) {
+                  final profile = VehicleProfile.profiles[index];
+                  final isSelected = vehicleState.selectedType == profile.type;
+
+                  return GestureDetector(
+                    onTap: () {
+                      ref
+                          .read(vehicleProfileProvider.notifier)
+                          .setVehicleType(profile.type);
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? AppColors.primaryOrange.withValues(alpha: 0.15)
+                            : Colors.white.withValues(alpha: 0.06),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: isSelected
+                              ? AppColors.primaryOrange.withValues(alpha: 0.7)
+                              : Colors.white.withValues(alpha: 0.08),
+                          width: isSelected ? 2 : 1,
                         ),
-                        if (isSelected) ...[
-                          const SizedBox(height: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: AppColors.primaryOrange,
-                              borderRadius: BorderRadius.circular(12),
+                        boxShadow: isSelected
+                            ? [
+                                BoxShadow(
+                                    color: AppColors.primaryOrange
+                                        .withValues(alpha: 0.25),
+                                    blurRadius: 16)
+                              ]
+                            : [],
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(profile.icon,
+                              style: const TextStyle(fontSize: 32)),
+                          const SizedBox(height: 6),
+                          Text(
+                            profile.name.toUpperCase(),
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: isSelected
+                                  ? AppColors.primaryOrange
+                                  : Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11,
+                              letterSpacing: 1.0,
                             ),
-                            child: const Text('SELECTED', style: TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.bold)),
-                          )
-                        ]
-                      ],
+                          ),
+                          if (isSelected) ...[
+                            const SizedBox(height: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: AppColors.primaryOrange,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Text('SELECTED',
+                                  style: TextStyle(
+                                      color: Colors.black,
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.bold)),
+                            )
+                          ]
+                        ],
+                      ),
                     ),
-                  ),
-                ).animate().fadeIn(delay: Duration(milliseconds: 300 + (index * 100))).scale(curve: Curves.easeOutBack);
-              },
-            ),
+                  )
+                      .animate()
+                      .fadeIn(delay: Duration(milliseconds: 300 + (index * 80)))
+                      .scale(curve: Curves.easeOutBack);
+                },
+              );
+            },
           ),
-          
-          Padding(
-            padding: const EdgeInsets.only(bottom: 40.0, top: 20.0),
-            child: _buildPrimaryButton('CONFIRM PARAMETERS', _nextPage),
-          ).animate().fadeIn(delay: 800.ms),
+          const SizedBox(height: 28),
+          _buildPrimaryButton('CONFIRM PARAMETERS', _nextPage)
+              .animate()
+              .fadeIn(delay: 800.ms),
         ],
       ),
     );
   }
 
   Widget _buildRegionDownloadPage() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 32.0),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(32, 24, 32, 40),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(height: 40),
           const Text(
             'TACTICAL\nCACHE',
             style: TextStyle(
@@ -336,21 +408,19 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
               letterSpacing: 2.0,
             ),
           ).animate().fadeIn().slideX(begin: -0.1),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           const Text(
             'To guarantee survival in zero-signal environments, BushTrack must cache topographical data for your region.',
-            style: TextStyle(color: Colors.white70, fontSize: 16, height: 1.5),
+            style: TextStyle(color: Colors.white70, fontSize: 15, height: 1.5),
           ).animate().fadeIn(delay: 200.ms),
-          
-          const Spacer(),
-          
+          const SizedBox(height: 40),
           Center(
             child: Stack(
               alignment: Alignment.center,
               children: [
                 SizedBox(
-                  width: 200,
-                  height: 200,
+                  width: 180,
+                  height: 180,
                   child: CircularProgressIndicator(
                     value: _isDownloading ? _downloadProgress : 0.0,
                     strokeWidth: 8,
@@ -359,44 +429,54 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   ),
                 ),
                 if (!_isDownloading)
-                  const Icon(Icons.satellite_alt_rounded, color: Colors.white54, size: 80)
+                  const Icon(Icons.satellite_alt_rounded,
+                      color: Colors.white54, size: 72)
                 else
                   Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
                         '${(_downloadProgress * 100).toInt()}%',
-                        style: const TextStyle(color: AppColors.primaryOrange, fontSize: 40, fontWeight: FontWeight.w900),
+                        style: const TextStyle(
+                            color: AppColors.primaryOrange,
+                            fontSize: 36,
+                            fontWeight: FontWeight.w900),
                       ),
                       const Text(
-                        'CACHING\nYOUR REGION',
+                        'DOWNLOADING\nWA GOLDFIELDS',
                         textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.white70, fontSize: 10, letterSpacing: 2.0),
+                        style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 10,
+                            letterSpacing: 2.0),
                       ),
                     ],
                   ),
               ],
             ),
           ).animate().fadeIn(delay: 400.ms).scale(),
-          
-          const Spacer(),
-          
+          const SizedBox(height: 40),
           if (!_isDownloading) ...[
-            _buildPrimaryButton('CACHE REGION DATA', _startMapDownload).animate().fadeIn(delay: 600.ms),
+            _buildPrimaryButton('INITIATE DOWNLOAD (~45MB)', _startMapDownload)
+                .animate()
+                .fadeIn(delay: 600.ms),
             const SizedBox(height: 16),
             Center(
               child: TextButton(
                 onPressed: _finishOnboarding,
-                child: const Text('SKIP (NOT RECOMMENDED)', style: TextStyle(color: Colors.white54, letterSpacing: 1.0)),
+                child: const Text('SKIP (NOT RECOMMENDED)',
+                    style:
+                        TextStyle(color: Colors.white54, letterSpacing: 1.0)),
               ),
             ).animate().fadeIn(delay: 800.ms),
-            const SizedBox(height: 24),
           ] else ...[
             Center(
-              child: const Text('MAINTAIN CONNECTION...', style: TextStyle(color: AppColors.primaryOrange, letterSpacing: 2.0))
-                  .animate(onPlay: (c) => c.repeat(reverse: true)).fade(),
+              child: const Text('MAINTAIN CONNECTION...',
+                      style: TextStyle(
+                          color: AppColors.primaryOrange, letterSpacing: 2.0))
+                  .animate(onPlay: (c) => c.repeat(reverse: true))
+                  .fade(),
             ),
-            const SizedBox(height: 40),
           ]
         ],
       ),
@@ -412,7 +492,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primaryOrange,
           foregroundColor: Colors.black,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           elevation: 8,
           shadowColor: AppColors.primaryOrange.withValues(alpha: 0.5),
         ),

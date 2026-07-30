@@ -2,6 +2,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bush_track/theme/app_colors.dart';
 import 'package:bush_track/features/settings/providers/vehicle_profile_provider.dart';
+import 'package:bush_track/features/geofence/presentation/geofence_screen.dart';
+import 'package:bush_track/features/import_export/presentation/import_export_screen.dart';
+import 'package:bush_track/features/gallery/presentation/photo_gallery_screen.dart';
+import 'package:bush_track/features/map/presentation/offline_maps_screen.dart';
+import 'package:bush_track/features/heritage/presentation/artifact_logger_screen.dart';
+
+IconData _vehicleTypeIcon(VehicleType type) => switch (type) {
+      VehicleType.car => Icons.directions_car,
+      VehicleType.fourWD => Icons.terrain,
+      VehicleType.motorcycle => Icons.two_wheeler,
+      VehicleType.walking => Icons.directions_walk,
+      VehicleType.cycling => Icons.directions_bike,
+      VehicleType.boat => Icons.directions_boat,
+      VehicleType.horse => Icons.pets,
+    };
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -15,7 +30,11 @@ class SettingsScreen extends ConsumerWidget {
       backgroundColor: AppColors.background,
       appBar: AppBar(
         backgroundColor: AppColors.panelMatte,
-        title: const Text('⚙️ Settings', style: TextStyle(color: Colors.white)),
+        title: const Row(children: [
+          Icon(Icons.settings, color: AppColors.accent, size: 20),
+          SizedBox(width: 8),
+          Text('SETTINGS', style: TextStyle(color: Colors.white)),
+        ]),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.pop(context),
@@ -24,7 +43,7 @@ class SettingsScreen extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          _buildSectionTitle('🚗 Vehicle Profile'),
+          _buildSectionTitle('Vehicle Profile'),
           const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(16),
@@ -42,13 +61,12 @@ class SettingsScreen extends ConsumerWidget {
                       width: 60,
                       height: 60,
                       decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFFFF5722), Color(0xFFE64A19)],
-                        ),
+                        gradient: AppColors.accentGradient,
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: Center(
-                        child: Text(currentProfile.icon, style: const TextStyle(fontSize: 28)),
+                        child: Icon(_vehicleTypeIcon(currentProfile.type),
+                            color: Colors.white, size: 28),
                       ),
                     ),
                     const SizedBox(width: 16),
@@ -115,7 +133,9 @@ class SettingsScreen extends ConsumerWidget {
                   ),
                   child: Row(
                     children: [
-                      Text(profile.icon, style: const TextStyle(fontSize: 24)),
+                      Icon(_vehicleTypeIcon(profile.type),
+                          color: isSelected ? AppColors.accent : AppColors.textMuted,
+                          size: 24),
                       const SizedBox(width: 16),
                       Expanded(
                         child: Text(
@@ -135,7 +155,143 @@ class SettingsScreen extends ConsumerWidget {
             );
           }),
           const SizedBox(height: 24),
-          _buildSectionTitle('🛡️ Privacy'),
+          _buildSectionTitle('Offline Maps'),
+          const SizedBox(height: 12),
+          Container(
+            decoration: BoxDecoration(
+              color: AppColors.panelMatte,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color: AppColors.primaryOrange.withValues(alpha: 0.2)),
+            ),
+            child: ListTile(
+              leading: const Icon(Icons.download_for_offline,
+                  color: AppColors.accent, size: 22),
+              title: const Text('Offline Map Regions',
+                  style: TextStyle(color: Colors.white)),
+              subtitle: Text('Download maps for zero-signal use',
+                  style: TextStyle(
+                      color: AppColors.textSecondary.withValues(alpha: 0.7),
+                      fontSize: 12)),
+              trailing: const Icon(Icons.chevron_right,
+                  color: AppColors.textSecondary),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const OfflineMapsScreen()),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          _buildSectionTitle('Safety'),
+          const SizedBox(height: 12),
+          Container(
+            decoration: BoxDecoration(
+              color: AppColors.panelMatte,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color: AppColors.primaryOrange.withValues(alpha: 0.2)),
+            ),
+            child: ListTile(
+              leading: const Icon(Icons.circle_outlined,
+                  color: AppColors.accent, size: 22),
+              title: const Text('Geofences',
+                  style: TextStyle(color: Colors.white)),
+              subtitle: Text('Entry & exit voice alerts',
+                  style: TextStyle(
+                      color: AppColors.textSecondary.withValues(alpha: 0.7),
+                      fontSize: 12)),
+              trailing: const Icon(Icons.chevron_right,
+                  color: AppColors.textSecondary),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const GeofenceScreen()),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            decoration: BoxDecoration(
+              color: AppColors.panelMatte,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color: AppColors.primaryOrange.withValues(alpha: 0.2)),
+            ),
+            child: ListTile(
+              leading: const Icon(Icons.photo_library,
+                  color: AppColors.accent, size: 22),
+              title: const Text('Photo Gallery',
+                  style: TextStyle(color: Colors.white)),
+              subtitle: Text('View geotagged photos — tap pin to jump to map',
+                  style: TextStyle(
+                      color: AppColors.textSecondary.withValues(alpha: 0.7),
+                      fontSize: 12)),
+              trailing: const Icon(Icons.chevron_right,
+                  color: AppColors.textSecondary),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const PhotoGalleryScreen()),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            decoration: BoxDecoration(
+              color: AppColors.panelMatte,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color: AppColors.primaryOrange.withValues(alpha: 0.2)),
+            ),
+            child: ListTile(
+              leading: const Icon(Icons.import_export,
+                  color: AppColors.accent, size: 22),
+              title: const Text('GPX / KML Import & Export',
+                  style: TextStyle(color: Colors.white)),
+              subtitle: Text('Import or export waypoints and trails',
+                  style: TextStyle(
+                      color: AppColors.textSecondary.withValues(alpha: 0.7),
+                      fontSize: 12)),
+              trailing: const Icon(Icons.chevron_right,
+                  color: AppColors.textSecondary),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const ImportExportScreen()),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          _buildSectionTitle('Enterprise'),
+          const SizedBox(height: 12),
+          Container(
+            decoration: BoxDecoration(
+              color: AppColors.panelMatte,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color: AppColors.primaryOrange.withValues(alpha: 0.2)),
+            ),
+            child: ListTile(
+              leading: const Icon(Icons.history_edu,
+                  color: AppColors.accent, size: 22),
+              title: const Text('Heritage Artifact Logger',
+                  style: TextStyle(color: Colors.white)),
+              subtitle: Text('Log, photograph & GPS-pin heritage artifacts',
+                  style: TextStyle(
+                      color: AppColors.textSecondary.withValues(alpha: 0.7),
+                      fontSize: 12)),
+              trailing: const Icon(Icons.chevron_right,
+                  color: AppColors.textSecondary),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const ArtifactLoggerScreen()),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          _buildSectionTitle('Privacy'),
           const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(16),

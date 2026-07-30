@@ -26,35 +26,6 @@ const _presets = [
   _ZoomPreset('Max Detail', 'Street level', 8, 20),
 ];
 
-// ─── MapType helpers ──────────────────────────────────────────────────────────
-
-String _mapTypeLabel(MapType t) {
-  switch (t) {
-    case MapType.standard:  return 'Streets';
-    case MapType.satellite: return 'Satellite';
-    case MapType.dark:      return 'Dark';
-  }
-}
-
-String _mapTypeUrl(MapType t) {
-  switch (t) {
-    case MapType.standard:
-      return 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-    case MapType.satellite:
-      return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
-    case MapType.dark:
-      return 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png';
-  }
-}
-
-IconData _mapTypeIcon(MapType t) {
-  switch (t) {
-    case MapType.standard:  return Icons.map;
-    case MapType.satellite: return Icons.satellite_alt;
-    case MapType.dark:      return Icons.dark_mode;
-  }
-}
-
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 class OfflineMapsScreen extends ConsumerStatefulWidget {
@@ -71,7 +42,7 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
   final _mapController = MapController();
 
   int _presetIndex = 1;
-  MapType _style = MapType.standard;
+  MapStyle _style = MapStyle.streets;
   String _regionName = '';
   bool _downloading = false;
   LatLngBounds? _selectedBounds;
@@ -91,8 +62,7 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
     _progressSub = _manager.downloadProgress.listen((p) {
       if (!mounted) return;
       setState(() => _progress[p.regionId] = p);
-      // Refresh storage when a download finishes (all tiles done or all failed)
-      if (p.downloaded + p.failed >= p.total && p.total > 0) {
+      if (p.status == DownloadStatus.completed || p.status == DownloadStatus.failed) {
         _refreshStorage();
       }
     });
@@ -106,8 +76,8 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
   }
 
   Future<void> _refreshStorage() async {
-    final info = await _manager.getStorageUsage();
-    if (mounted) setState(() => _totalStorageBytes = info.totalBytes);
+    final bytes = await _manager.totalStorageBytes();
+    if (mounted) setState(() => _totalStorageBytes = bytes);
   }
 
   void _onMapReady() {
@@ -119,33 +89,33 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
       final bounds = _mapController.camera.visibleBounds;
       setState(() {
         _selectedBounds = bounds;
+        _recalcEstimate();
       });
-      _recalcEstimate();
     } catch (_) {}
   }
 
-  Future<void> _recalcEstimate() async {
+  void _recalcEstimate() {
     if (_selectedBounds == null) return;
     final p = _presets[_presetIndex];
-    final est = await _manager.estimateDownloadSize(
-        _selectedBounds!, p.minZoom, p.maxZoom);
-    if (mounted) setState(() => _estimate = est);
+    setState(() {
+      _estimate = _manager.estimate(_selectedBounds!, p.minZoom, p.maxZoom, _style);
+    });
   }
 
   Future<void> _startDownload() async {
     if (_selectedBounds == null) return;
     final name = _regionName.trim().isNotEmpty
         ? _regionName.trim()
-        : 'Region ${_manager.downloadedRegions.length + 1}';
+        : 'Region ${_manager.regions.length + 1}';
     final p = _presets[_presetIndex];
 
     setState(() => _downloading = true);
-    await _manager.downloadRegion(
+    await _manager.startDownload(
       name: name,
       bounds: _selectedBounds!,
       minZoom: p.minZoom,
       maxZoom: p.maxZoom,
-      mapType: _style,
+      style: _style,
     );
     if (mounted) {
       setState(() => _downloading = false);
@@ -202,7 +172,7 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
                 style: GoogleFonts.outfit(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             Text(
-              'Offline map downloads require the native app.\nInstall BushTrack on your device to download areas for use without internet.',
+              'Offline map downloads require the native app.\nInstall BushTrack on your Samsung to download areas for use without internet.',
               textAlign: TextAlign.center,
               style: GoogleFonts.outfit(color: Colors.white60, fontSize: 14, height: 1.6),
             ),
@@ -289,12 +259,10 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
             ),
             children: [
               TileLayer(
-                urlTemplate: _mapTypeUrl(_style),
-                subdomains: _style != MapType.satellite
-                    ? const ['a', 'b', 'c']
-                    : const [],
+                urlTemplate: _style.urlTemplate,
                 maxZoom: 20,
               ),
+              // Download region overlay
               if (_selectedBounds != null)
                 PolygonLayer(polygons: [
                   Polygon(
@@ -312,6 +280,7 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
                 ]),
             ],
           ),
+          // Corner label
           Positioned(
             top: 8, left: 8,
             child: Container(
@@ -332,13 +301,10 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
     return Wrap(
       spacing: 8,
       runSpacing: 8,
-      children: MapType.values.map((s) {
+      children: MapStyle.values.map((s) {
         final selected = s == _style;
         return GestureDetector(
-          onTap: () {
-            setState(() => _style = s);
-            _recalcEstimate();
-          },
+          onTap: () => setState(() { _style = s; _recalcEstimate(); }),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
@@ -352,9 +318,9 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(_mapTypeIcon(s), size: 14, color: selected ? AppColors.primaryOrange : Colors.white54),
+                Icon(_styleIcon(s), size: 14, color: selected ? AppColors.primaryOrange : Colors.white54),
                 const SizedBox(width: 6),
-                Text(_mapTypeLabel(s), style: GoogleFonts.outfit(
+                Text(s.label, style: GoogleFonts.outfit(
                   color: selected ? AppColors.primaryOrange : Colors.white70,
                   fontSize: 12,
                   fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
@@ -373,10 +339,7 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
         final p = _presets[i];
         final selected = i == _presetIndex;
         return GestureDetector(
-          onTap: () {
-            setState(() => _presetIndex = i);
-            _recalcEstimate();
-          },
+          onTap: () => setState(() { _presetIndex = i; _recalcEstimate(); }),
           child: Container(
             margin: const EdgeInsets.only(bottom: 8),
             padding: const EdgeInsets.all(12),
@@ -510,12 +473,12 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
   // ─── My Maps Tab ──────────────────────────────────────────────────────────────
 
   Widget _buildMyMapsTab() {
-    final regions = _manager.downloadedRegions;
+    final regions = _manager.regions;
     final storageMB = _totalStorageBytes / (1024 * 1024);
 
     return Column(
       children: [
-        _buildStorageHeader(storageMB, regions.length),
+        _buildStorageHeader(storageMB),
         if (regions.isEmpty)
           Expanded(
             child: Center(
@@ -545,7 +508,7 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
     );
   }
 
-  Widget _buildStorageHeader(double usedMB, int regionCount) {
+  Widget _buildStorageHeader(double usedMB) {
     return Container(
       margin: const EdgeInsets.all(16),
       padding: const EdgeInsets.all(14),
@@ -572,7 +535,7 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
               ],
             ),
           ),
-          Text('$regionCount maps',
+          Text('${_manager.regions.length} maps',
               style: GoogleFonts.outfit(color: Colors.white38, fontSize: 12)),
         ],
       ),
@@ -581,7 +544,7 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
 
   Widget _buildRegionCard(OfflineMapRegion region) {
     final prog = _progress[region.id];
-    final status = region.status;
+    final status = prog?.status ?? region.status;
     final downloaded = prog?.downloaded ?? region.downloadedTiles;
     final total = region.totalTiles;
     final frac = total > 0 ? downloaded / total : 0.0;
@@ -619,9 +582,10 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
           Wrap(
             spacing: 12,
             children: [
-              _chip(Icons.layers, _mapTypeLabel(region.mapType)),
+              _chip(Icons.layers, region.style.label),
               _chip(Icons.zoom_in, 'z${region.minZoom}–${region.maxZoom}'),
-              _chip(Icons.grid_4x4, '$total tiles'),
+              _chip(Icons.grid_4x4, '${region.totalTiles} tiles'),
+              if (isDone) _chip(Icons.save, region.formattedSize),
             ],
           ),
           if (!isDone) ...[
@@ -655,6 +619,16 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (status == DownloadStatus.downloading)
+          _iconBtn(Icons.pause, Colors.orange, () {
+            _manager.pauseDownload(region.id);
+            setState(() {});
+          }),
+        if (status == DownloadStatus.paused)
+          _iconBtn(Icons.play_arrow, Colors.greenAccent, () {
+            _manager.resumeDownload(region.id);
+            setState(() {});
+          }),
         _iconBtn(Icons.delete_outline, Colors.redAccent, () => _confirmDelete(region)),
       ],
     );
@@ -734,4 +708,14 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
       child: Icon(icon, color: color, size: 20),
     ),
   );
+
+  IconData _styleIcon(MapStyle s) {
+    switch (s) {
+      case MapStyle.streets:   return Icons.map;
+      case MapStyle.satellite: return Icons.satellite_alt;
+      case MapStyle.topo:      return Icons.terrain;
+      case MapStyle.outdoor:   return Icons.hiking;
+      case MapStyle.dark:      return Icons.dark_mode;
+    }
+  }
 }
