@@ -4,13 +4,15 @@ import 'package:latlong2/latlong.dart';
 /// Shown on map long-press. Two cards side-by-side.
 /// Swipe left or tap the left card → Normal Pin.
 /// Swipe right or tap the right card → Pinage (media-rich pin).
-void showPinageChooser(
+/// Returns when the sheet closes, so the caller can clear any preview marker
+/// it put on the map.
+Future<void> showPinageChooser(
   BuildContext context, {
   required LatLng position,
   required VoidCallback onNormalPin,
   required VoidCallback onPinage,
 }) {
-  showModalBottomSheet(
+  return showModalBottomSheet<void>(
     context: context,
     backgroundColor: Colors.transparent,
     builder: (_) => _PinageChooserSheet(

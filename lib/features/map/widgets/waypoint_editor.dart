@@ -674,9 +674,10 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
   }
 }
 
-// Helper function to show the waypoint editor
-void showWaypointEditor(BuildContext context, {Waypoint? waypoint, LatLng? position}) {
-  showModalBottomSheet(
+// Helper function to show the waypoint editor.
+// Returns when the sheet closes, so callers can react once the pin is saved.
+Future<void> showWaypointEditor(BuildContext context, {Waypoint? waypoint, LatLng? position}) {
+  return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,

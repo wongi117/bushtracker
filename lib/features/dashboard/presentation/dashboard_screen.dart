@@ -450,29 +450,58 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                                   ],
                                 ),
                               ),
-                            // Pin Waypoints with interaction
+                            // Pin Waypoints with interaction + live distance
                             ...pinWaypoints.map((w) {
+                              final wPos = LatLng(
+                                  w.latitude ?? 0.0, w.longitude ?? 0.0);
+                              final userLat =
+                                  locationState.stats.currentLat;
+                              final userLon =
+                                  locationState.stats.currentLon;
+                              final distLabel =
+                                  (userLat != null && userLon != null)
+                                      ? _fmtDist(_distM(
+                                          LatLng(userLat, userLon), wPos))
+                                      : null;
                               return Marker(
-                                point: LatLng(
-                                    w.latitude ?? 0.0, w.longitude ?? 0.0),
-                                width: 50,
-                                height: 50,
-                                child: WaypointMarker(
-                                  waypoint: w,
-                                  onEdit: () => w.isPinage ? _showPinageViewer(w) : _editWaypoint(w),
-                                  onDelete: () => ref
-                                      .read(locationProvider.notifier)
-                                      .deleteWaypoint(w.id!),
-                                  onColorChanged: (color) => ref
-                                      .read(locationProvider.notifier)
-                                      .updateWaypointColor(w.id!, color),
-                                  onIconChanged: (icon) => ref
-                                      .read(locationProvider.notifier)
-                                      .updateWaypointIcon(w.id!, icon),
-                                  onNavigate: () {
-                                    ref.read(aiAssistantProvider.notifier).speak(
-                                        "Setting navigation target to ${w.label ?? 'waypoint'}.");
-                                  },
+                                point: wPos,
+                                width: 62,
+                                height: 68,
+                                // Anchor the pin tip on the coordinate so the
+                                // distance chip can sit above it.
+                                alignment: Alignment.bottomCenter,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (distLabel != null)
+                                      _distanceChip(distLabel),
+                                    const SizedBox(height: 2),
+                                    SizedBox(
+                                      width: 50,
+                                      height: 50,
+                                      child: WaypointMarker(
+                                        waypoint: w,
+                                        onEdit: () => w.isPinage
+                                            ? _showPinageViewer(w)
+                                            : _editWaypoint(w),
+                                        onDelete: () => ref
+                                            .read(locationProvider.notifier)
+                                            .deleteWaypoint(w.id!),
+                                        onColorChanged: (color) => ref
+                                            .read(locationProvider.notifier)
+                                            .updateWaypointColor(w.id!, color),
+                                        onIconChanged: (icon) => ref
+                                            .read(locationProvider.notifier)
+                                            .updateWaypointIcon(w.id!, icon),
+                                        onNavigate: () {
+                                          ref
+                                              .read(aiAssistantProvider.notifier)
+                                              .speak(
+                                                  "Setting navigation target to ${w.label ?? 'waypoint'}.");
+                                        },
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               );
                             }),
@@ -1378,7 +1407,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     }
   }
 
-  void _onMapLongPress(LatLng point) {
+  Future<void> _onMapLongPress(LatLng point) async {
     // Long-press near a trail ? edit it instead of dropping a pin
     final trailState = ref.read(trailProvider);
     final near = _findNearestTrail(point, trailState.trails);
@@ -1386,12 +1415,46 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
       _showTrailEditSheet(near);
       return;
     }
+
+    // _targetPin is only a preview of where you pressed, shown while the
+    // chooser is open. It used to be left set forever, so once the real
+    // waypoint saved you got two pins stacked on the same spot — the
+    // WaypointMarker plus this red one. Clear it when the chooser closes.
     setState(() => _targetPin = point);
-    showPinageChooser(
+    await showPinageChooser(
       context,
       position: point,
-      onNormalPin: () => showWaypointEditor(context, position: point),
+      onNormalPin: () => _dropNormalPin(point),
       onPinage: () => showPinageEditor(context, position: point),
+    );
+    if (mounted) setState(() => _targetPin = null);
+  }
+
+  /// Drops a normal pin, then reports how far it landed from the user.
+  Future<void> _dropNormalPin(LatLng point) async {
+    await showWaypointEditor(context, position: point);
+    if (!mounted) return;
+
+    // Only announce a distance if a pin actually saved at this spot —
+    // backing out of the editor should stay silent.
+    final locationState = ref.read(locationProvider);
+    final saved = locationState.waypoints.any((w) =>
+        w.latitude != null &&
+        w.longitude != null &&
+        _distM(LatLng(w.latitude!, w.longitude!), point) < 1.0);
+    if (!saved) return;
+
+    final lat = locationState.stats.currentLat;
+    final lon = locationState.stats.currentLon;
+    if (lat == null || lon == null) return;
+
+    final distance = _fmtDist(_distM(LatLng(lat, lon), point));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Pin dropped — $distance from you'),
+        backgroundColor: AppColors.statusBlue,
+        duration: const Duration(seconds: 3),
+      ),
     );
   }
 
@@ -1659,6 +1722,37 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     }
 
     return layers;
+  }
+
+  // ─── distance helpers ──────────────────────────────────────────────────
+
+  String _fmtDist(double m) =>
+      m >= 1000 ? '${(m / 1000).toStringAsFixed(2)} km' : '${m.toInt()} m';
+
+  double _distM(LatLng a, LatLng b) => const Distance()(a, b);
+
+  /// Small readout above a pin showing how far it is from the user.
+  Widget _distanceChip(String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A1A).withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.25),
+          width: 0.5,
+        ),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 9,
+          fontWeight: FontWeight.w700,
+          height: 1.1,
+        ),
+      ),
+    );
   }
 
   Widget _buildNumberedMarker(int number, Color color) {
