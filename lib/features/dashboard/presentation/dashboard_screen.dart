@@ -939,6 +939,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                     MaterialPageRoute(builder: (_) => const SettingsScreen())),
                 onAnalytics: () => Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const AgentManagerScreen())),
+                onSavedPins: _showSavedPins,
+                onMyTrails: _showMyTrails,
                 onGallery: () => Navigator.push(context,
                     MaterialPageRoute(builder: (_) => PhotoGalleryScreen(
                       onJumpToMap: (loc) => _mapController.move(loc, 16.0),
@@ -1724,7 +1726,233 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     return layers;
   }
 
+  // ─── Saved Pins / My Trails ────────────────────────────────────────────
+  // Ported from home_screen_layout.dart, which nothing imports — these were
+  // wired into that dead screen in 51155c8 so they never reached the app.
+
+  void _showSavedPins() {
+    final pins = ref
+        .read(locationProvider)
+        .waypoints
+        .where((w) => w.isPin == true || w.type == WaypointType.manual)
+        .toList();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.55,
+        maxChildSize: 0.9,
+        minChildSize: 0.3,
+        builder: (_, ctrl) => Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF0D1035),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Row(children: [
+                Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2))),
+              ]),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(children: [
+                const Icon(Icons.location_on,
+                    color: Color(0xFFFF6D00), size: 20),
+                const SizedBox(width: 8),
+                Text('SAVED PINS  (${pins.length})',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 2)),
+              ]),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: pins.isEmpty
+                  ? const Center(
+                      child: Text(
+                          'No pins yet — long-press the map to drop one',
+                          style: TextStyle(
+                              color: Colors.white38, fontSize: 14),
+                          textAlign: TextAlign.center))
+                  : ListView.separated(
+                      controller: ctrl,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                      itemCount: pins.length,
+                      separatorBuilder: (_, __) =>
+                          const Divider(color: Colors.white12, height: 1),
+                      itemBuilder: (_, i) {
+                        final w = pins[i];
+                        final icon = WaypointIcon.getIconData(w.icon);
+                        final color = WaypointColors.fromHex(w.color);
+                        final here = _userLatLng();
+                        final wPos = (w.latitude != null && w.longitude != null)
+                            ? LatLng(w.latitude!, w.longitude!)
+                            : null;
+                        final distLabel = (here != null && wPos != null)
+                            ? _fmtDist(_distM(here, wPos))
+                            : null;
+                        return ListTile(
+                          leading: Icon(icon, color: color, size: 22),
+                          title: Text(w.label ?? 'Pin',
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 14)),
+                          subtitle: wPos != null
+                              ? Text(
+                                  '${w.latitude!.toStringAsFixed(4)}, ${w.longitude!.toStringAsFixed(4)}'
+                                  '${distLabel != null ? '  ·  $distLabel away' : ''}',
+                                  style: const TextStyle(
+                                      color: Colors.white38, fontSize: 11))
+                              : null,
+                          trailing: IconButton(
+                            icon: const Icon(Icons.my_location,
+                                color: Colors.white38, size: 18),
+                            onPressed: wPos == null
+                                ? null
+                                : () {
+                                    Navigator.pop(ctx);
+                                    _mapController.move(wPos, 15);
+                                  },
+                          ),
+                          dense: true,
+                          onTap: wPos == null
+                              ? null
+                              : () {
+                                  Navigator.pop(ctx);
+                                  _mapController.move(wPos, 15);
+                                },
+                        );
+                      },
+                    ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  void _showMyTrails() {
+    final trails = ref.read(trailProvider).trails;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.5,
+        maxChildSize: 0.85,
+        minChildSize: 0.3,
+        builder: (_, ctrl) => Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF0D1035),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Row(children: [
+                Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2))),
+              ]),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(children: [
+                const Icon(Icons.route, color: Color(0xFFFF6D00), size: 20),
+                const SizedBox(width: 8),
+                Text('MY TRAILS  (${trails.length})',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 2)),
+              ]),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: trails.isEmpty
+                  ? const Center(
+                      child: Text(
+                          'No trails yet — use Trail Creation on the map',
+                          style: TextStyle(
+                              color: Colors.white38, fontSize: 14),
+                          textAlign: TextAlign.center))
+                  : ListView.separated(
+                      controller: ctrl,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                      itemCount: trails.length,
+                      separatorBuilder: (_, __) =>
+                          const Divider(color: Colors.white12, height: 1),
+                      itemBuilder: (_, i) {
+                        final t = trails[i];
+                        final color = WaypointColors.fromHex(t.color);
+                        final pts = t.getWaypoints();
+                        return ListTile(
+                          leading: Container(
+                            width: 22,
+                            height: 22,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(color: color, width: 3),
+                            ),
+                          ),
+                          title: Text(t.name ?? 'Trail',
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 14)),
+                          subtitle: Text('${pts.length} points',
+                              style: const TextStyle(
+                                  color: Colors.white38, fontSize: 11)),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.fit_screen,
+                                color: Colors.white38, size: 18),
+                            onPressed: pts.isNotEmpty
+                                ? () {
+                                    Navigator.pop(ctx);
+                                    _mapController.move(pts.first, 14);
+                                  }
+                                : null,
+                          ),
+                          dense: true,
+                          onTap: pts.isNotEmpty
+                              ? () {
+                                  Navigator.pop(ctx);
+                                  _mapController.move(pts.first, 14);
+                                }
+                              : null,
+                        );
+                      },
+                    ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
   // ─── distance helpers ──────────────────────────────────────────────────
+
+  /// Current position as a LatLng, or null before the first GPS fix.
+  LatLng? _userLatLng() {
+    final stats = ref.read(locationProvider).stats;
+    final lat = stats.currentLat;
+    final lon = stats.currentLon;
+    return (lat == null || lon == null) ? null : LatLng(lat, lon);
+  }
+
 
   String _fmtDist(double m) =>
       m >= 1000 ? '${(m / 1000).toStringAsFixed(2)} km' : '${m.toInt()} m';
@@ -2506,6 +2734,8 @@ class _HamburgerDrawer extends StatelessWidget {
   final VoidCallback onSettings;
   final VoidCallback onAnalytics;
   final VoidCallback onGallery;
+  final VoidCallback onSavedPins;
+  final VoidCallback onMyTrails;
   final VoidCallback onSOS;
 
   const _HamburgerDrawer({
@@ -2541,6 +2771,8 @@ class _HamburgerDrawer extends StatelessWidget {
     required this.onSettings,
     required this.onAnalytics,
     required this.onGallery,
+    required this.onSavedPins,
+    required this.onMyTrails,
     required this.onSOS,
   });
 
@@ -2584,6 +2816,10 @@ class _HamburgerDrawer extends StatelessWidget {
                       _item(context, Icons.add_location_alt, const Color(0xFF4CAF50), 'Add Waypoint', 'Drop a pin', 'Drop a waypoint marker at the current map centre.', () => _go(onAddWaypoint)),
                       _item(context, Icons.timeline, const Color(0xFF9C60F0), 'Track Record', isCreatingTrail ? 'Recording…' : 'Record a trail', 'Activate trail recording mode — tap the map to drop route points.', () => _go(onTrackRecord)),
                       _item(context, Icons.analytics, const Color(0xFF2196F3), 'Export Track', 'Trip stats & export', 'View trip statistics, distance, speed and export your track data.', () => _go(onExportTrack)),
+
+                      _section('MY DATA'),
+                      _item(context, Icons.location_on, const Color(0xFFFF6D00), 'Saved Pins', 'All your dropped pins', 'Every pin you have dropped, with its distance from you. Tap one to jump to it on the map.', () => _go(onSavedPins)),
+                      _item(context, Icons.route, const Color(0xFFFF6D00), 'My Trails', 'Recorded trails', 'Every trail you have recorded. Tap one to jump to its starting point.', () => _go(onMyTrails)),
 
                       _section('TOOLS'),
                       _item(context, Icons.straighten, const Color(0xFF00BCD4), 'Measure Distance', showMeasurementTool ? 'Active' : 'Tap to measure', 'Tap points on the map to measure distance, area, and bearing.', () => _go(onMeasure)),
