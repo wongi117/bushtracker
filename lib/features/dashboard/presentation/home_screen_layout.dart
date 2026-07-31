@@ -1,11 +1,9 @@
-import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:sensors_plus/sensors_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:path_provider/path_provider.dart';
@@ -16,6 +14,7 @@ import '../../tracking/providers/location_provider.dart';
 import '../../mesh/providers/mesh_provider.dart';
 import '../../ai/providers/ai_assistant_provider.dart';
 import '../../mesh/providers/mesh_sync_provider.dart';
+import 'package:bush_track/core/services/heading/heading_provider.dart';
 import 'package:bush_track/features/map/widgets/compass_rose.dart';
 import 'package:bush_track/features/map/widgets/scale_bar.dart';
 import 'package:bush_track/features/map/widgets/coordinate_display.dart';
@@ -76,10 +75,6 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
       GlobalKey<MeasurementToolState>();
   bool _showMeasurementTool = false;
 
-  // Live compass heading (radians) from magnetometer
-  double _headingRad = 0.0;
-  StreamSubscription<MagnetometerEvent>? _magSub;
-
   @override
   void initState() {
     super.initState();
@@ -87,20 +82,6 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) setState(() { _mapInitialized = true; _tilesLoading = false; });
     });
-    // Subscribe to magnetometer for compass + user-dot heading
-    try {
-      _magSub = magnetometerEvents.listen((event) {
-        // Heading in radians clockwise from north
-        final heading = math.atan2(event.x, event.y);
-        if (mounted) setState(() => _headingRad = heading);
-      });
-    } catch (_) {}
-  }
-
-  @override
-  void dispose() {
-    _magSub?.cancel();
-    super.dispose();
   }
 
   @override
@@ -261,9 +242,20 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
                                 ],
                               ),
                             ),
-                            // Bearing arrow rotates with magnetometer
-                            Transform.rotate(
-                              angle: _headingRad,
+                            // Bearing arrow rotates with the live compass.
+                            // Scoped to a Consumer so a heading tick repaints
+                            // the arrow only, not the whole map screen.
+                            Consumer(
+                              builder: (context, ref, child) {
+                                final heading =
+                                    ref.watch(headingProvider).valueOrNull;
+                                return Transform.rotate(
+                                  angle: heading != null && heading.isLive
+                                      ? heading.radians
+                                      : 0.0,
+                                  child: child,
+                                );
+                              },
                               child: const Icon(Icons.navigation,
                                   color: Colors.white, size: 18),
                             ),
@@ -521,9 +513,24 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
           Positioned(
             top: 120,
             left: 12,
-            child: CompassRose(
-              rotation: _headingRad,
-              onTap: () => _mapController.rotate(0),
+            child: Consumer(
+              builder: (context, ref, _) {
+                final heading = ref.watch(headingProvider).valueOrNull ??
+                    const HeadingReading.unavailable();
+                return CompassRose(
+                  rotation: heading.isLive ? heading.radians : 0.0,
+                  quality: heading.quality,
+                  onTap: () async {
+                    // On iOS Safari the browser only hands over orientation
+                    // events if the page asks from inside a tap, so this is
+                    // the one place the compass can be switched on.
+                    if (!heading.isLive) {
+                      await requestHeadingPermission(ref);
+                    }
+                    _mapController.rotate(0);
+                  },
+                );
+              },
             ),
           ),
           if (trailState.isCreating)

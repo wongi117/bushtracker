@@ -1,50 +1,111 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
 
-/// Compass Rose widget that rotates with the map
+import 'package:bush_track/core/services/heading/heading_reading.dart';
+
+/// Compass Rose widget that rotates with the live device heading.
 class CompassRose extends StatelessWidget {
   final double rotation; // Rotation in radians
   final double size;
   final VoidCallback? onTap;
+
+  /// Drives the status ring: acquiring, magnetic interference, or no compass
+  /// at all. Defaults to [HeadingQuality.good] so existing callers are
+  /// unaffected.
+  final HeadingQuality quality;
 
   const CompassRose({
     super.key,
     required this.rotation,
     this.size = 60,
     this.onTap,
+    this.quality = HeadingQuality.good,
   });
+
+  bool get _isLive =>
+      quality == HeadingQuality.good || quality == HeadingQuality.interference;
+
+  Color get _ringColor {
+    switch (quality) {
+      case HeadingQuality.good:
+        return Colors.white24;
+      case HeadingQuality.interference:
+        return const Color(0xFFFFB020); // amber — reading is being skewed
+      case HeadingQuality.waiting:
+        return Colors.white12;
+      case HeadingQuality.unavailable:
+        return const Color(0xFFFF2D55);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          color: const Color(0xFF1A1A1A).withValues(alpha: 0.9),
-          shape: BoxShape.circle,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.3),
-              blurRadius: 8,
-              spreadRadius: 2,
+      child: Tooltip(
+        message: _tooltip,
+        child: Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            color: const Color(0xFF1A1A1A).withValues(alpha: 0.9),
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.3),
+                blurRadius: 8,
+                spreadRadius: 2,
+              ),
+            ],
+            border: Border.all(
+              color: _ringColor,
+              width: quality == HeadingQuality.good ? 1 : 2,
             ),
-          ],
-          border: Border.all(
-            color: Colors.white24,
-            width: 1,
           ),
-        ),
-        child: Transform.rotate(
-          angle: -rotation, // Negative because map rotation is clockwise
-          child: CustomPaint(
-            size: Size(size, size),
-            painter: CompassRosePainter(),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Opacity(
+                opacity: _isLive ? 1.0 : 0.35,
+                child: Transform.rotate(
+                  angle: -rotation, // Negative because map rotation is clockwise
+                  child: CustomPaint(
+                    size: Size(size, size),
+                    painter: CompassRosePainter(),
+                  ),
+                ),
+              ),
+              if (quality == HeadingQuality.unavailable)
+                Icon(Icons.touch_app,
+                    size: size * 0.3, color: const Color(0xFFFF2D55)),
+              if (quality == HeadingQuality.waiting)
+                SizedBox(
+                  width: size * 0.3,
+                  height: size * 0.3,
+                  child: const CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation(Colors.white38),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
     );
+  }
+
+  String get _tooltip {
+    switch (quality) {
+      case HeadingQuality.good:
+        return 'Compass live — tap to reset map north';
+      case HeadingQuality.interference:
+        return 'Magnetic interference — move away from the vehicle, '
+            'or wave the phone in a figure-8 to recalibrate';
+      case HeadingQuality.waiting:
+        return 'Acquiring compass…';
+      case HeadingQuality.unavailable:
+        return 'No compass — tap to enable device orientation';
+    }
   }
 }
 

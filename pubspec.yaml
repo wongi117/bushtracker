@@ -14,6 +14,9 @@ dependencies:
   latlong2: ^0.9.0
   maplibre_gl: ^0.26.0
   sensors_plus: ^3.0.0
+  # Browser DeviceOrientation compass for the web build (see
+  # lib/core/services/heading/heading_source_web.dart)
+  web: ^1.1.0
   camera: ^0.11.0+1
   go_router: ^13.0.0
   path_provider: ^2.1.5

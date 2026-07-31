@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'dart:ui' as ui;
-import 'package:sensors_plus/sensors_plus.dart';
+import 'package:bush_track/core/services/heading/heading_provider.dart';
 import 'package:bush_track/core/utils/web_helpers.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:mesh_gradient/mesh_gradient.dart';
@@ -103,8 +103,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   bool _tilesLoading = true;
   bool _hasAutocentered = false;
   double _currentZoom = 13.0;
-  double _currentRotation = 0.0;
-  StreamSubscription<MagnetometerEvent>? _magnetometerSub;
 
   // NEW: Measurement tool
   final GlobalKey<MeasurementToolState> _measurementKey =
@@ -142,12 +140,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     _meshController = AnimatedMeshGradientController();
     _initializeServices();
     _setupMapListeners();
-    if (!kIsWeb) {
-      _magnetometerSub = magnetometerEvents.listen((event) {
-        final heading = math.atan2(event.y, event.x);
-        if (mounted) setState(() => _currentRotation = heading);
-      });
-    }
   }
 
   Future<void> _initializeServices() async {
@@ -789,10 +781,20 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
           Positioned(
             top: MediaQuery.of(context).padding.top + 76,
             right: 80,
-            child: CompassRose(
-              rotation: _currentRotation,
-              onTap: () {
-                _mapController.rotate(0);
+            child: Consumer(
+              builder: (context, ref, _) {
+                final heading = ref.watch(headingProvider).valueOrNull ??
+                    const HeadingReading.unavailable();
+                return CompassRose(
+                  rotation: heading.isLive ? heading.radians : 0.0,
+                  quality: heading.quality,
+                  onTap: () async {
+                    if (!heading.isLive) {
+                      await requestHeadingPermission(ref);
+                    }
+                    _mapController.rotate(0);
+                  },
+                );
               },
             ),
           ),
@@ -1134,7 +1136,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
   @override
   void dispose() {
-    _magnetometerSub?.cancel();
     _meshController.dispose();
     super.dispose();
   }

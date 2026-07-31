@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:sensors_plus/sensors_plus.dart';
+import 'package:bush_track/core/services/heading/heading_provider.dart';
 import 'package:bush_track/core/models/artifact.dart';
 import 'package:bush_track/features/heritage/providers/artifact_provider.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
@@ -597,35 +597,14 @@ class _ArReviewTab extends ConsumerStatefulWidget {
 }
 
 class _ArReviewTabState extends ConsumerState<_ArReviewTab> {
-  double _compassHeading = 0.0;
-
-  @override
-  void initState() {
-    super.initState();
-    if (!kIsWeb) {
-      magnetometerEvents.listen((e) {
-        if (!mounted) return;
-        double h = math.atan2(e.y, e.x) * 180 / math.pi;
-        if (h < 0) h += 360;
-        setState(() => _compassHeading = h);
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    if (kIsWeb) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(32),
-          child: Text(
-            'AR Review requires the mobile app — camera and compass sensors are not available in a browser.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: AppColors.textMuted),
-          ),
-        ),
-      );
-    }
+    // This tab draws over a plain black background rather than a camera feed,
+    // so with the shared compass it now works in the browser too.
+    final headingReading = ref.watch(headingProvider).valueOrNull ??
+        const HeadingReading.unavailable();
+    final compassHeading =
+        headingReading.isLive ? headingReading.degrees : 0.0;
 
     final artifacts = ref.watch(artifactProvider).artifacts;
     final stats = ref.watch(locationProvider).stats;
@@ -648,7 +627,7 @@ class _ArReviewTabState extends ConsumerState<_ArReviewTab> {
         painter: _ArtifactArPainter(
           artifacts: artifacts,
           currentLocation: LatLng(currentLat, currentLon),
-          heading: _compassHeading,
+          heading: compassHeading,
         ),
       ),
       // HUD
@@ -662,7 +641,10 @@ class _ArReviewTabState extends ConsumerState<_ArReviewTab> {
             borderRadius: BorderRadius.circular(10),
           ),
           child: Text(
-            'Heading: ${_compassHeading.toInt()}° · ${artifacts.length} artifact(s) logged',
+            headingReading.isLive
+                ? 'Heading: ${compassHeading.toInt()}° ${headingReading.cardinal}'
+                    ' · ${artifacts.length} artifact(s) logged'
+                : 'Compass unavailable · ${artifacts.length} artifact(s) logged',
             style: const TextStyle(color: Colors.white70, fontSize: 12),
           ),
         ),

@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:sensors_plus/sensors_plus.dart';
 import 'package:camera/camera.dart';
 import 'dart:math' as math;
 import 'dart:async';
 
+import 'package:bush_track/core/services/heading/heading_provider.dart';
 import 'package:bush_track/features/ar/services/ar_compass_service.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
 import 'package:bush_track/core/models/waypoint.dart';
@@ -28,12 +28,6 @@ class _ARCompassScreenState extends ConsumerState<ARCompassScreen>
   bool _cameraReady = false;
   bool _cameraError = false;
 
-  // Sensors
-  double _smoothHeading = 0.0;
-  double _prevHeading = 0.0;
-  bool _sensorActive = false;
-  final List<StreamSubscription> _subs = [];
-
   // Photo service
   final PhotoGeotaggingService _photoService = PhotoGeotaggingService();
   bool _capturing = false;
@@ -41,29 +35,8 @@ class _ARCompassScreenState extends ConsumerState<ARCompassScreen>
   @override
   void initState() {
     super.initState();
-    _startSensors();
     _initCamera();
     _photoService.initialize();
-  }
-
-  // ── Sensors ────────────────────────────────────────────────────────────────
-
-  void _startSensors() {
-    if (kIsWeb) return;
-    final sub = magnetometerEvents.listen((e) {
-      if (!mounted) return;
-      double h = math.atan2(e.y, e.x) * 180 / math.pi;
-      if (h < 0) h += 360;
-      double diff = h - _prevHeading;
-      if (diff > 180) diff -= 360;
-      if (diff < -180) diff += 360;
-      setState(() {
-        _smoothHeading = _prevHeading + diff * 0.25;
-        _prevHeading = _smoothHeading;
-        _sensorActive = true;
-      });
-    });
-    _subs.add(sub);
   }
 
   // ── Camera ─────────────────────────────────────────────────────────────────
@@ -217,9 +190,25 @@ class _ARCompassScreenState extends ConsumerState<ARCompassScreen>
 
   @override
   void dispose() {
-    for (final s in _subs) s.cancel();
     _cameraController?.dispose();
     super.dispose();
+  }
+
+  /// Subtitle under "AR VIEW" — tells the user what the compass is actually
+  /// doing rather than silently showing 0°.
+  String _headingLabel(HeadingReading reading, int pinCount) {
+    switch (reading.quality) {
+      case HeadingQuality.good:
+        return '${reading.degrees.toStringAsFixed(0)}° ${reading.cardinal}'
+            '  ·  $pinCount pins';
+      case HeadingQuality.interference:
+        return '${reading.degrees.toStringAsFixed(0)}° ${reading.cardinal}'
+            '  ·  magnetic interference';
+      case HeadingQuality.waiting:
+        return 'Acquiring compass…';
+      case HeadingQuality.unavailable:
+        return 'Tap to enable compass';
+    }
   }
 
   // ── Build ──────────────────────────────────────────────────────────────────
@@ -229,6 +218,12 @@ class _ARCompassScreenState extends ConsumerState<ARCompassScreen>
     final locationState = ref.watch(locationProvider);
     final lat = locationState.stats.currentLat;
     final lon = locationState.stats.currentLon;
+
+    // Shared live compass — works on the web build too, where the old
+    // magnetometer subscription never fired.
+    final headingReading = ref.watch(headingProvider).valueOrNull ??
+        const HeadingReading.unavailable();
+    final heading = headingReading.isLive ? headingReading.degrees : 0.0;
 
     final allWaypoints = locationState.waypoints
         .where((w) => w.latitude != null && w.longitude != null)
@@ -264,7 +259,7 @@ class _ARCompassScreenState extends ConsumerState<ARCompassScreen>
               waypoints: nearby,
               currentLat: lat,
               currentLon: lon,
-              heading: _smoothHeading,
+              heading: heading,
               onPinTap: _showPinDetails,
             ),
 
@@ -304,12 +299,20 @@ class _ARCompassScreenState extends ConsumerState<ARCompassScreen>
                           letterSpacing: 2,
                         ),
                       ),
-                      Text(
-                        _sensorActive
-                            ? '${_smoothHeading.toStringAsFixed(0)}°  ·  ${nearby.length} pins'
-                            : 'Calibrating…',
-                        style: const TextStyle(
-                            color: Colors.white54, fontSize: 11),
+                      GestureDetector(
+                        onTap: headingReading.isLive
+                            ? null
+                            : () => requestHeadingPermission(ref),
+                        child: Text(
+                          _headingLabel(headingReading, nearby.length),
+                          style: TextStyle(
+                            color: headingReading.quality ==
+                                    HeadingQuality.interference
+                                ? const Color(0xFFFFB020)
+                                : Colors.white54,
+                            fontSize: 11,
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -331,7 +334,7 @@ class _ARCompassScreenState extends ConsumerState<ARCompassScreen>
               mainAxisSize: MainAxisSize.min,
               children: [
                 // Compass strip
-                _CompassStrip(heading: _smoothHeading),
+                _CompassStrip(heading: heading),
                 // Shutter row
                 Container(
                   height: 110,

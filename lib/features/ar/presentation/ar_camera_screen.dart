@@ -9,9 +9,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image/image.dart' as img;
 import 'package:latlong2/latlong.dart';
-import 'package:sensors_plus/sensors_plus.dart';
-
 import 'package:bush_track/core/models/waypoint.dart';
+import 'package:bush_track/core/services/heading/heading_provider.dart';
 import 'package:bush_track/features/ar/services/ar_compass_service.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
 import 'package:bush_track/theme/app_colors.dart';
@@ -26,8 +25,6 @@ class ARCameraScreen extends ConsumerStatefulWidget {
 class _ARCameraScreenState extends ConsumerState<ARCameraScreen> {
   CameraController? _controller;
   bool _cameraReady = false;
-  double _compassHeading = 0.0;
-  StreamSubscription<MagnetometerEvent>? _magSub;
 
   // Capture state
   Uint8List? _capturedBytes;
@@ -42,14 +39,12 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen> {
   @override
   void initState() {
     super.initState();
+    // Camera plugin is unreliable on web, and build() shows a "not available"
+    // screen there — but the heading now comes from the shared provider, so
+    // there is nothing sensor-related left to set up here.
     if (kIsWeb) return;
     _arService = ref.read(arCompassServiceProvider);
     _initCamera();
-    _magSub = magnetometerEvents.listen((e) {
-      double h = math.atan2(e.y, e.x) * 180 / math.pi;
-      if (h < 0) h += 360;
-      if (mounted) setState(() => _compassHeading = h);
-    });
   }
 
   Future<void> _initCamera() async {
@@ -70,7 +65,6 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen> {
 
   @override
   void dispose() {
-    _magSub?.cancel();
     _controller?.dispose();
     for (final image in _wpImages.values) {
       image.dispose();
@@ -239,6 +233,12 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen> {
       _preloadWpImages(visibleWaypoints);
     }
 
+    // Shared tilt-compensated compass (see core/services/heading).
+    final headingReading = ref.watch(headingProvider).valueOrNull;
+    final compassHeading = headingReading != null && headingReading.isLive
+        ? headingReading.degrees
+        : 0.0;
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
@@ -266,7 +266,7 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen> {
                 painter: _ARCameraPainter(
                   waypoints: visibleWaypoints,
                   currentLocation: LatLng(currentLat, currentLon),
-                  compassHeading: _compassHeading,
+                  compassHeading: compassHeading,
                   arService: _arService,
                   wpImages: Map.unmodifiable(_wpImages),
                 ),
