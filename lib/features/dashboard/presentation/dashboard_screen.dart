@@ -637,7 +637,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             right: 14,
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final compact = constraints.maxWidth < 480;
+                // The wide bar needs ~840px of content width. The old 480
+                // breakpoint meant every width between 480 and ~865 rendered
+                // the wide bar and clipped it — tablets, and any desktop
+                // browser that isn't maximised. Phones (<480) were unaffected,
+                // so it never showed up in field testing.
+                final compact = constraints.maxWidth < 860;
 
                 // Hamburger button
                 final hamburger = GestureDetector(
@@ -753,7 +758,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                 return Row(children: [
                   hamburger,
                   const SizedBox(width: 12),
-                  Container(
+                  // Flexible so a large system font scale shrinks the branding
+                  // instead of overflowing the bar again.
+                  Flexible(
+                    child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                     decoration: BoxDecoration(
                       color: Colors.black.withValues(alpha: 0.55),
@@ -767,13 +775,17 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                         child: const Icon(Icons.explore, color: Colors.white, size: 20),
                       ),
                       const SizedBox(width: 6),
-                      Text(
-                        'BUSHTRACK',
-                        style: GoogleFonts.outfit(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1,
+                      Flexible(
+                        child: Text(
+                          'BUSHTRACK',
+                          softWrap: false,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.outfit(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -792,6 +804,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                                 fontWeight: FontWeight.bold)),
                       ),
                     ]),
+                  ),
                   ),
                   const SizedBox(width: 10),
                   camera,

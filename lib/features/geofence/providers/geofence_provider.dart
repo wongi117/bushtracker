@@ -48,6 +48,8 @@ class GeofenceNotifier extends StateNotifier<GeofenceState> {
   Future<void> _load() async {
     try {
       final rows = await db.getGeofences();
+      // See LocationNotifier._loadWaypoints — guard against a mid-load dispose.
+      if (!mounted) return;
       final fences = rows.map(Geofence.fromMap).toList();
       state = state.copyWith(geofences: fences);
     } catch (e) {

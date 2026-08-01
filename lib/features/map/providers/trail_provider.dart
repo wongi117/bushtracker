@@ -92,6 +92,8 @@ class TrailNotifier extends StateNotifier<TrailState> {
   Future<void> _loadTrails() async {
     try {
       final List<Map<String, dynamic>> maps = await databaseService.getTrails();
+      // See LocationNotifier._loadWaypoints — guard against a mid-load dispose.
+      if (!mounted) return;
       final trails = maps.map((map) => Trail.fromMap(map)).toList();
       state = state.copyWith(trails: trails);
     } catch (e) {
@@ -171,12 +173,13 @@ class TrailNotifier extends StateNotifier<TrailState> {
     trail.totalDistance = totalDistance;
 
     await databaseService.insertTrail(trail.toMap());
-    
+    if (!mounted) return;
+
     state = state.copyWith(
       isCreating: false,
       draftPoints: const [],
     );
-    
+
     await _loadTrails();
   }
 

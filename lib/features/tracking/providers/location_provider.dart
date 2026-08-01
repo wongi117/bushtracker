@@ -148,6 +148,9 @@ class LocationNotifier extends StateNotifier<LocationState> {
     try {
       final List<Map<String, dynamic>> maps =
           await databaseService.getWaypoints();
+      // The screen can be torn down while this load is in flight; touching
+      // state after dispose throws and the catch below would swallow it.
+      if (!mounted) return;
       final waypoints = maps.map((map) => Waypoint.fromMap(map)).toList();
       state = state.copyWith(waypoints: waypoints);
     } catch (e) {
@@ -159,6 +162,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
     try {
       final List<Map<String, dynamic>> maps =
           await databaseService.getBreadcrumbs(_sessionId);
+      if (!mounted) return;
       final breadcrumbs = maps.map((map) => Breadcrumb.fromMap(map)).toList();
       state = state.copyWith(breadcrumbs: breadcrumbs);
     } catch (e) {
@@ -590,6 +594,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
 
   Future<void> clearBreadcrumbs() async {
     await databaseService.clearBreadcrumbs(_sessionId);
+    if (!mounted) return;
     state = state.copyWith(breadcrumbs: []);
   }
 
