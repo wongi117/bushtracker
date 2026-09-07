@@ -851,116 +851,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             ),
           ),
 
-          // Hamburger drawer overlay
-          if (_drawerOpen)
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: () => setState(() => _drawerOpen = false),
-                child: Container(color: Colors.black.withValues(alpha: 0.45)),
-              ),
-            ),
-          if (_drawerOpen)
-            Positioned(
-              top: 0,
-              left: 0,
-              bottom: 0,
-              width: 300,
-              child: _HamburgerDrawer(
-                onClose: () => setState(() => _drawerOpen = false),
-                is3DMode: _is3DMode,
-                mapStyleIndex: _mapStyleIndex,
-                showBreadcrumbs: _showBreadcrumbs,
-                showDwellMap: _showDwellMap,
-                showMeasurementTool: _showMeasurementTool,
-                isCreatingTrail: trailState.isCreating,
-                hasGps: locationState.stats.currentLat != null,
-                hasWaypoints: locationState.waypoints.isNotEmpty,
-                onToggle3D: () => setState(() => _is3DMode = !_is3DMode),
-                onMapStyle: () {
-                  final next = (_mapStyleIndex + 1) % _tileUrls.length;
-                  setState(() => _mapStyleIndex = next);
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    content: Text('Map style: ${_tileNames[next]}'),
-                    duration: const Duration(seconds: 1),
-                    backgroundColor: AppColors.primaryOrange,
-                  ));
-                },
-                onToggleBreadcrumbs: () => setState(() => _showBreadcrumbs = !_showBreadcrumbs),
-                onRecenter: () {
-                  if (locationState.stats.currentLat != null) {
-                    _mapController.move(
-                      LatLng(locationState.stats.currentLat!, locationState.stats.currentLon!),
-                      16.0,
-                    );
-                  }
-                },
-                onZoomIn: () {
-                  _mapController.move(_mapController.camera.center,
-                      (_mapController.camera.zoom + 1).clamp(3.0, 19.0));
-                },
-                onZoomOut: () {
-                  _mapController.move(_mapController.camera.center,
-                      (_mapController.camera.zoom - 1).clamp(3.0, 19.0));
-                },
-                onScanBounds: () {
-                  if (locationState.waypoints.isNotEmpty) {
-                    _zoomToFitWaypoints(locationState.waypoints);
-                  }
-                },
-                onElevationProfile: () => setState(() {
-                  _showDwellMap = !_showDwellMap;
-                }),
-                onAddWaypoint: () {
-                  showWaypointEditor(context, position: _mapController.camera.center);
-                },
-                onTrackRecord: () {
-                  ref.read(trailProvider.notifier).startCreatingTrail();
-                  ref.read(aiAssistantProvider.notifier).speak(
-                      "Trail creation mode activated. Tap on the map to drop points.");
-                },
-                onExportTrack: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const TripStatisticsScreen())),
-                onLayerManager: () => setState(() {
-                  final next = (_mapStyleIndex + 1) % _tileUrls.length;
-                  _mapStyleIndex = next;
-                }),
-                onMeasure: () {
-                  setState(() => _showMeasurementTool = !_showMeasurementTool);
-                  if (_showMeasurementTool) {
-                    ref.read(aiAssistantProvider.notifier).speak(
-                        "Measurement tool activated. Tap the map to measure distance.");
-                  }
-                },
-                onScreenshot: _takeScreenshot,
-                onDeviceInfo: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => CoordinateInputScreen(
-                      onCoordinateEntered: (c) => _mapController.move(c, 14.0),
-                    ))),
-                onNavigation: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const RouteOptionsScreen())),
-                onAIAssistant: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => NaturalLanguageSearchScreen(
-                      onLocationFound: (c) => _mapController.move(c, 14.0),
-                    ))),
-                onSearchPlace: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const PlacesSearchScreen())),
-                onCompassNav: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const ARCompassScreen())),
-                onMeshSignal: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const OfflineMapsScreen())),
-                onSettings: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const SettingsScreen())),
-                onAnalytics: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const AgentManagerScreen())),
-                onSavedPins: _showSavedPins,
-                onMyTrails: _showMyTrails,
-                onGallery: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => PhotoGalleryScreen(
-                      onJumpToMap: (loc) => _mapController.move(loc, 16.0),
-                    ))),
-                onSOS: _showSOSConfirmation,
-              ),
-            ),
 
           // Trail creation overlay — minimal floating bar
           if (trailState.isCreating)
@@ -1172,6 +1062,120 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               onMeasurementComplete: () {
                 setState(() => _showMeasurementTool = false);
               },
+            ),
+
+          // Drawer LAST so it paints above the mesh sheet, voice and
+          // weather overlays. It used to sit mid-Stack, so the
+          // bottom-anchored mesh sheet covered the SOS button and
+          // swallowed its taps.
+          if (_drawerOpen)
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: () => setState(() => _drawerOpen = false),
+                child: Container(color: Colors.black.withValues(alpha: 0.45)),
+              ),
+            ),
+          if (_drawerOpen)
+            Positioned(
+              top: 0,
+              left: 0,
+              bottom: 0,
+              width: 300,
+              child: _HamburgerDrawer(
+                onClose: () => setState(() => _drawerOpen = false),
+                is3DMode: _is3DMode,
+                mapStyleIndex: _mapStyleIndex,
+                showBreadcrumbs: _showBreadcrumbs,
+                showDwellMap: _showDwellMap,
+                showMeasurementTool: _showMeasurementTool,
+                isCreatingTrail: trailState.isCreating,
+                hasGps: locationState.stats.currentLat != null,
+                hasWaypoints: locationState.waypoints.isNotEmpty,
+                onToggle3D: () => setState(() => _is3DMode = !_is3DMode),
+                onMapStyle: () {
+                  final next = (_mapStyleIndex + 1) % _tileUrls.length;
+                  setState(() => _mapStyleIndex = next);
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: Text('Map style: ${_tileNames[next]}'),
+                    duration: const Duration(seconds: 1),
+                    backgroundColor: AppColors.primaryOrange,
+                  ));
+                },
+                onToggleBreadcrumbs: () => setState(() => _showBreadcrumbs = !_showBreadcrumbs),
+                onRecenter: () {
+                  if (locationState.stats.currentLat != null) {
+                    _mapController.move(
+                      LatLng(locationState.stats.currentLat!, locationState.stats.currentLon!),
+                      16.0,
+                    );
+                  }
+                },
+                onZoomIn: () {
+                  _mapController.move(_mapController.camera.center,
+                      (_mapController.camera.zoom + 1).clamp(3.0, 19.0));
+                },
+                onZoomOut: () {
+                  _mapController.move(_mapController.camera.center,
+                      (_mapController.camera.zoom - 1).clamp(3.0, 19.0));
+                },
+                onScanBounds: () {
+                  if (locationState.waypoints.isNotEmpty) {
+                    _zoomToFitWaypoints(locationState.waypoints);
+                  }
+                },
+                onElevationProfile: () => setState(() {
+                  _showDwellMap = !_showDwellMap;
+                }),
+                onAddWaypoint: () {
+                  showWaypointEditor(context, position: _mapController.camera.center);
+                },
+                onTrackRecord: () {
+                  ref.read(trailProvider.notifier).startCreatingTrail();
+                  ref.read(aiAssistantProvider.notifier).speak(
+                      "Trail creation mode activated. Tap on the map to drop points.");
+                },
+                onExportTrack: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const TripStatisticsScreen())),
+                onLayerManager: () => setState(() {
+                  final next = (_mapStyleIndex + 1) % _tileUrls.length;
+                  _mapStyleIndex = next;
+                }),
+                onMeasure: () {
+                  setState(() => _showMeasurementTool = !_showMeasurementTool);
+                  if (_showMeasurementTool) {
+                    ref.read(aiAssistantProvider.notifier).speak(
+                        "Measurement tool activated. Tap the map to measure distance.");
+                  }
+                },
+                onScreenshot: _takeScreenshot,
+                onDeviceInfo: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => CoordinateInputScreen(
+                      onCoordinateEntered: (c) => _mapController.move(c, 14.0),
+                    ))),
+                onNavigation: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const RouteOptionsScreen())),
+                onAIAssistant: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => NaturalLanguageSearchScreen(
+                      onLocationFound: (c) => _mapController.move(c, 14.0),
+                    ))),
+                onSearchPlace: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const PlacesSearchScreen())),
+                onCompassNav: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const ARCompassScreen())),
+                onMeshSignal: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const OfflineMapsScreen())),
+                onSettings: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const SettingsScreen())),
+                onAnalytics: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const AgentManagerScreen())),
+                onSavedPins: _showSavedPins,
+                onMyTrails: _showMyTrails,
+                onGallery: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => PhotoGalleryScreen(
+                      onJumpToMap: (loc) => _mapController.move(loc, 16.0),
+                    ))),
+                onSOS: _showSOSConfirmation,
+              ),
             ),
         ],
       ),
