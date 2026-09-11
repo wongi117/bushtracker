@@ -1,21 +1,28 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Location -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- ACCESS_BACKGROUND_LOCATION and FOREGROUND_SERVICE_LOCATION removed:
+         nothing tracks in the background yet (the position stream stops when
+         the app is backgrounded), and Play demands a written justification
+         plus a demo video for both. Add them back together with a real
+         foreground-service tracker and its Play Console declaration. -->
 
     <!-- Camera & Storage -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <!-- camera_android_camerax declares this with maxSdkVersion 28; without
+         tools:replace the manifest merge fails and the APK won't build. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"
+        tools:replace="android:maxSdkVersion" />
 
-    <!-- SMS for SOS -->
-    <uses-permission android:name="android.permission.SEND_SMS" />
-    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- No SEND_SMS / READ_PHONE_STATE: SOS opens the messages app via an
+         sms: link, which needs neither. Play treats SMS permissions as
+         restricted and rejects apps that aren't the default SMS handler. -->
 
     <!-- Internet & Network -->
     <uses-permission android:name="android.permission.INTERNET" />
