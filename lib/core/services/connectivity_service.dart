@@ -86,10 +86,16 @@ class ConnectivityNotifier extends StateNotifier<ConnectivityState> {
     );
 
     if (kIsWeb) {
-      // On web, ping same-origin /api/ping to avoid CORS blocks
+      // Probe a static file on our own origin, NOT /api/ping. /api/ping is a
+      // Vercel serverless function and this check runs every 60s in every
+      // open tab — ~1,440 function calls a day per user, all background load.
+      // The Vercel account was switched off for billing (402) in Sept 2026.
+      // version.json is emitted by every Flutter web build and served straight
+      // from the CDN, so no function runs. The timestamp defeats the browser
+      // cache so an offline device can't be handed a stale 200.
       try {
         final response = await http.get(
-          Uri.parse('/api/ping'),
+          Uri.parse('/version.json?t=${DateTime.now().millisecondsSinceEpoch}'),
         ).timeout(const Duration(seconds: 5));
         final connected = response.statusCode == 200;
         state = ConnectivityState(
