@@ -89,8 +89,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     // 2 — Street: OpenStreetMap — standard, no API key needed
     'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
   ];
-  // maxNativeZoom: ESRI?19, OpenTopoMap?17, OSM?19
-  static const _tileMaxNativeZoom = [19, 17, 19];
+  // Highest zoom each source actually has imagery for. Past this flutter_map
+  // enlarges the last real tile instead of requesting a new one.
+  //
+  // ESRI was 19. Probed Sept 2026: around Leonora (town included) and across
+  // remote WA — Gibson, Great Victoria Desert, Nullarbor, Pilbara, Kimberley,
+  // Laverton, Wiluna — ESRI has real imagery to z17 everywhere, but at z18
+  // and z19 it returns the same 2 KB grey tile reading "Map data not yet
+  // available" (HTTP 200, so errorTileCallback never fires). Zooming in past
+  // 17 filled the screen with that watermark.
+  static const _tileMaxNativeZoom = [17, 17, 19];
   static const _tileNames = ['Satellite', 'Topo', 'Street'];
   static const _tileIcons = [
     Icons.satellite_alt,
