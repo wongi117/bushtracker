@@ -1,11 +1,11 @@
 {
-    "name": "bush_track",
-    "short_name": "bush_track",
+    "name": "BushTrack",
+    "short_name": "BushTrack",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0C0F1E",
+    "theme_color": "#0C0F1E",
+    "description": "AI-powered offline GPS, mesh comms and navigation for remote Australia.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

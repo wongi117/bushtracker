@@ -287,8 +287,15 @@ class _AIChatScreenState extends ConsumerState<AIChatScreen> {
       child: Column(
         children: [
           _buildHeader(aiState),
-          if (messages.isEmpty) _buildStarters(),
-          Expanded(child: _buildMessageList(messages)),
+          Expanded(
+            // Starters live INSIDE the scrollable area. They used to sit above
+            // it at a fixed ~250px, so in a short space — the half-open panel,
+            // or the phone keyboard taking half the screen — they shoved the
+            // input bar off the bottom with no way to scroll back to it.
+            child: messages.isEmpty
+                ? SingleChildScrollView(child: _buildStarters())
+                : _buildMessageList(messages),
+          ),
           _buildInputBar(),
           if (aiState.lastError.isNotEmpty)
             Padding(
@@ -1262,24 +1269,76 @@ void showAIChat(BuildContext context) {
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (context) => Container(
-      height: MediaQuery.of(context).size.height * 0.75,
-      decoration: BoxDecoration(
-        color: AppColors.panelMatte,
-        borderRadius:
-            const BorderRadius.vertical(top: Radius.circular(BushDS.radiusXL)),
-        border: Border.all(
-          color: AppColors.accent.withValues(alpha: 0.3),
+    builder: (context) {
+      final mq = MediaQuery.of(context);
+      // Never taller than the space left above the keyboard, so the input bar
+      // stays on screen while typing.
+      final maxHeight =
+          mq.size.height - mq.viewInsets.bottom - mq.padding.top - 24;
+      return Padding(
+        padding: EdgeInsets.only(bottom: mq.viewInsets.bottom),
+        child: Container(
+          height: (mq.size.height * 0.75).clamp(240.0, maxHeight < 240 ? 240.0 : maxHeight),
+          decoration: BoxDecoration(
+            color: AppColors.panelMatte,
+            borderRadius:
+                const BorderRadius.vertical(top: Radius.circular(BushDS.radiusXL)),
+            border: Border.all(
+              color: AppColors.accent.withValues(alpha: 0.3),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.accentGlow,
+                blurRadius: 24,
+                offset: const Offset(0, -4),
+              ),
+            ],
+          ),
+          child: const Column(
+            children: [
+              // There was no way out of this sheet on a phone except tapping the
+              // dimmed map above it — no handle, no close button.
+              _SheetCloseBar(),
+              Expanded(child: AIChatScreen()),
+            ],
+          ),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.accentGlow,
-            blurRadius: 24,
-            offset: const Offset(0, -4),
+      );
+    },
+  );
+}
+
+class _SheetCloseBar extends StatelessWidget {
+  const _SheetCloseBar();
+
+  @override
+  Widget build(BuildContext context) {
+    // Full width: in a Column with centred cross-axis a bare SizedBox shrinks to
+    // the drag handle's 44px, which put the close button on top of the handle.
+    return SizedBox(
+      width: double.infinity,
+      height: 44,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Container(
+            width: 44,
+            height: 5,
+            decoration: BoxDecoration(
+              color: Colors.white24,
+              borderRadius: BorderRadius.circular(3),
+            ),
+          ),
+          Positioned(
+            right: 4,
+            child: IconButton(
+              tooltip: 'Close',
+              icon: const Icon(Icons.close, color: Colors.white70, size: 22),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
           ),
         ],
       ),
-      child: const AIChatScreen(),
-    ),
-  );
+    );
+  }
 }
