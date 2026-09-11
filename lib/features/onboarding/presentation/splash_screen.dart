@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bush_track/theme/app_colors.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
-import 'package:bush_track/features/onboarding/presentation/onboarding_screen.dart';
+import 'package:bush_track/features/dashboard/presentation/dashboard_screen.dart';
 import 'package:geolocator/geolocator.dart';
 
 class SplashScreen extends ConsumerStatefulWidget {
@@ -46,10 +46,15 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     if (mounted) _goToApp();
   }
 
+  // Straight to the map. The old three-page onboarding sat here on EVERY
+  // launch, and two of its pages did nothing: the vehicle/activity choice was
+  // never read by anything outside settings, and the "region download" was a
+  // progress bar filling on a timer while nothing downloaded. The real offline
+  // download runs by itself on the first GPS fix (OfflineMapManager).
   void _goToApp() {
     ref.read(locationProvider); // pre-warm GPS
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const OnboardingScreen()),
+      MaterialPageRoute(builder: (_) => const DashboardScreen()),
     );
   }
 
