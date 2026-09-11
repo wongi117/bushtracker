@@ -15,4 +15,5 @@
 !/pubspec.lock
 !/vercel.json
 !/vercel-build.sh
+!/cache-bust-web.sh
 !/analysis_options.yaml

@@ -32,5 +32,8 @@ DART_DEFINES=""
 
 flutter build web --release $DART_DEFINES
 
+echo "==> Cache-busting (every build gets its own URLs)..."
+bash cache-bust-web.sh build/web
+
 echo "==> Build complete. Output: build/web"
 ls -lh build/web
