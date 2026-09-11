@@ -1,0 +1,18 @@
+# Upload ONLY what the web build needs.
+#
+# The Vercel CLI does not read .gitignore - only this file. Without it every
+# `vercel deploy` uploaded build/ (17,914 files after an Android build, which
+# blew Vercel's 15,000-file limit), .dart_tool/, and git-ignored secrets such
+# as .env (API keys) and deploy.sh.
+#
+# Allowlist: everything at the top level is ignored, then only these are let
+# back in, so anything new dropped in this folder stays off Vercel by default.
+/*
+!/lib
+!/web
+!/api
+!/pubspec.yaml
+!/pubspec.lock
+!/vercel.json
+!/vercel-build.sh
+!/analysis_options.yaml
