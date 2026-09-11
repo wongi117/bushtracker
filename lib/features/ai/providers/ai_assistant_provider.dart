@@ -540,7 +540,9 @@ class AiAssistantNotifier extends StateNotifier<AiState> {
       state = state.copyWith(isProcessing: false, isEmergencyMode: true);
       response =
           "EMERGENCY MODE ACTIVATED! Broadcasting your position to all mesh nodes. Your coordinates: ${lat.toStringAsFixed(4)}, ${lon.toStringAsFixed(4)}. Help is on the way.";
-      ref.read(meshProvider.notifier).sendSOS();
+      ref.read(meshProvider.notifier).sendSOS(
+        latitude: ref.read(locationProvider).stats.currentLat,
+        longitude: ref.read(locationProvider).stats.currentLon);
       await speak(response);
       state = state.copyWith(lastResponse: response);
       return response;
@@ -807,7 +809,9 @@ class AiAssistantNotifier extends StateNotifier<AiState> {
     state = state.copyWith(isEmergencyMode: true, isFullControlMode: false);
 
     // Immediately broadcast SOS mesh packet
-    ref.read(meshProvider.notifier).sendSOS();
+    ref.read(meshProvider.notifier).sendSOS(
+        latitude: ref.read(locationProvider).stats.currentLat,
+        longitude: ref.read(locationProvider).stats.currentLon);
 
     await speak("Emergency mode activated. Broadcasting your location. "
         "Do not move unless in immediate danger.");

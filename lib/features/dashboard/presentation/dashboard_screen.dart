@@ -19,6 +19,8 @@ import 'package:bush_track/theme/app_colors.dart';
 import 'widgets/mesh_bottom_sheet.dart';
 import '../../tracking/providers/location_provider.dart';
 import '../../mesh/providers/mesh_provider.dart';
+import 'package:bush_track/core/models/mesh_packet.dart';
+import 'package:bush_track/features/ai/providers/ai_control_provider.dart';
 import '../../ai/providers/ai_assistant_provider.dart';
 import 'package:bush_track/features/ai/services/ai_monitor_service.dart';
 import 'package:bush_track/features/geofence/providers/geofence_provider.dart';
@@ -282,6 +284,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     });
 
     // Execute pending AI map actions
+    // Another phone's SOS arrived over the mesh. Before this nothing on the
+    // receiving phone reacted at all — the packet was filed away silently.
+    ref.listen<MeshState>(meshProvider, (prev, next) {
+      final sos = next.lastIncomingSos;
+      if (sos == null || sos.id == prev?.lastIncomingSos?.id) return;
+      _showIncomingSos(sos);
+    });
+
     ref.listen<MapAction?>(pendingMapActionProvider, (_, action) {
       if (action == null) return;
       _executeMapAction(action);
@@ -345,8 +355,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                         initialCenter: locationState.stats.currentLat != null
                             ? LatLng(locationState.stats.currentLat!,
                                 locationState.stats.currentLon!)
-                            : const LatLng(-25.3444, 131.0369), // Uluru
-                        initialZoom: _currentZoom,
+                            : const LatLng(-25.3444, 131.0369), // centre of Australia
+                        // No fix: show the whole country so it's obvious we
+                        // haven't located you. It used to open zoomed into
+                        // Uluru at street level, which reads as "you are
+                        // here". The first fix zooms to 15 (see listener).
+                        initialZoom: locationState.stats.currentLat != null
+                            ? _currentZoom
+                            : 4.0,
                         minZoom: 3.0,
                         maxZoom: 19.0,
                         interactionOptions: const InteractionOptions(
@@ -541,15 +557,25 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                         // Mesh Peers
                         if (meshState.peerLocations.isNotEmpty)
                           MarkerLayer(
-                            markers:
-                                meshState.peerLocations.values.map((packet) {
+                            // SOS packets used to carry no position, and this
+                            // did packet.latitude! — so receiving an SOS threw
+                            // during the map build. Skip positionless packets.
+                            markers: meshState.peerLocations.values
+                                .where((p) =>
+                                    p.latitude != null && p.longitude != null)
+                                .map((packet) {
+                              final isSos = packet.packetType == 'sos';
                               return Marker(
                                 point:
                                     LatLng(packet.latitude!, packet.longitude!),
-                                width: 40,
-                                height: 40,
-                                child: const Icon(Icons.person_pin_circle,
-                                    color: AppColors.statusBlue, size: 40),
+                                width: isSos ? 52 : 40,
+                                height: isSos ? 52 : 40,
+                                child: Icon(
+                                    isSos ? Icons.sos : Icons.person_pin_circle,
+                                    color: isSos
+                                        ? AppColors.statusRed
+                                        : AppColors.statusBlue,
+                                    size: isSos ? 52 : 40),
                               );
                             }).toList(),
                           ),
@@ -1002,13 +1028,19 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             child: GestureDetector(
               onTap: () =>
                   setState(() => _showCoordinatePanel = !_showCoordinatePanel),
-              child: _showCoordinatePanel
+              // With no fix this used to show -25.3444, 131.0369 — Uluru — as
+              // if it were your position. Someone reading coordinates off the
+              // screen to radio them in would have read out Uluru.
+              child: locationState.stats.currentLat == null ||
+                      locationState.stats.currentLon == null
+                  ? _noGpsFixChip()
+                  : _showCoordinatePanel
                   ? SizedBox(
                       width: 280,
                       child: CoordinateDisplay(
                         position: LatLng(
-                          locationState.stats.currentLat ?? -25.3444,
-                          locationState.stats.currentLon ?? 131.0369,
+                          locationState.stats.currentLat!,
+                          locationState.stats.currentLon!,
                         ),
                         format: _coordinateFormat,
                         showAllFormats: true,
@@ -1025,8 +1057,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                     )
                   : CoordinateDisplay(
                       position: LatLng(
-                        locationState.stats.currentLat ?? -25.3444,
-                        locationState.stats.currentLon ?? 131.0369,
+                        locationState.stats.currentLat!,
+                        locationState.stats.currentLon!,
                       ),
                       format: _coordinateFormat,
                       onFormatChanged: () {
@@ -1170,6 +1202,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                     MaterialPageRoute(builder: (_) => const AgentManagerScreen())),
                 onSavedPins: _showSavedPins,
                 onMyTrails: _showMyTrails,
+                deadmanArmed: ref.watch(aiControlProvider).deadmanArmed,
+                onToggleDeadman: () {
+                  final armed = ref.read(aiControlProvider).deadmanArmed;
+                  ref.read(aiControlProvider.notifier).setDeadmanArmed(!armed);
+                },
                 onGallery: () => Navigator.push(context,
                     MaterialPageRoute(builder: (_) => PhotoGalleryScreen(
                       onJumpToMap: (loc) => _mapController.move(loc, 16.0),
@@ -1297,13 +1334,18 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'This will broadcast your emergency location via all available channels.',
+              'If you have signal, call 000 first. Then this sends your location on every channel this phone has:',
               style: GoogleFonts.outfit(color: Colors.white70, fontSize: 14),
             ),
             const SizedBox(height: 12),
-            _sosChannel(Icons.hub, 'Mesh broadcast', 'All nearby BushTrack devices'),
-            _sosChannel(Icons.sms, 'SMS link', 'Opens SMS with your GPS coords'),
-            _sosChannel(Icons.share, 'Web Share', 'Share to WhatsApp, Signal, etc.'),
+            // Say what each channel really does. The mesh can't run in a
+            // browser, and SMS only opens the messages app.
+            _sosChannel(Icons.hub, 'Mesh broadcast',
+                kIsWeb ? 'Android app only — not in the browser'
+                       : 'BushTrack phones in radio range'),
+            _sosChannel(Icons.sms, 'SMS',
+                'Opens your messages — you choose who to send to'),
+            _sosChannel(Icons.share, 'Share', 'WhatsApp, Signal, etc.'),
           ],
         ),
         actions: [
@@ -1311,6 +1353,23 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             onPressed: () => Navigator.pop(context),
             child: Text('CANCEL',
                 style: GoogleFonts.outfit(color: Colors.white54)),
+          ),
+          // 000 is the only channel here that reaches emergency services, and
+          // the SOS flow never offered it.
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: Colors.red),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () {
+              Navigator.pop(context);
+              ref.read(aiAssistantProvider.notifier).callEmergencyServices();
+            },
+            icon: const Icon(Icons.phone, color: Colors.red, size: 18),
+            label: Text('CALL 000',
+                style: GoogleFonts.outfit(
+                    color: Colors.red, fontWeight: FontWeight.bold)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -1338,59 +1397,152 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
         children: [
           Icon(icon, color: AppColors.statusRed, size: 18),
           const SizedBox(width: 10),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: GoogleFonts.outfit(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
-              Text(subtitle, style: GoogleFonts.outfit(color: Colors.white38, fontSize: 11)),
-            ],
+          // Expanded so subtitles wrap on a phone instead of running off the
+          // edge of the dialog.
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: GoogleFonts.outfit(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                Text(subtitle, style: GoogleFonts.outfit(color: Colors.white38, fontSize: 11)),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _activateSOS() async {
-    final confirmed = await showDialog<bool>(
+  static String _compass8(double bearingDeg) {
+    const names = ['north', 'north-east', 'east', 'south-east',
+                   'south', 'south-west', 'west', 'north-west'];
+    return names[(((bearingDeg % 360) + 360) % 360 / 45).round() % 8];
+  }
+
+  void _showIncomingSos(MeshPacket sos) {
+    if (!mounted) return;
+    final here = _sosPosition();
+    final there = (sos.latitude != null && sos.longitude != null)
+        ? LatLng(sos.latitude!, sos.longitude!)
+        : null;
+
+    String where;
+    String spoken;
+    if (there == null) {
+      where = 'Their location was not included.';
+      spoken = 'SOS received from a nearby BushTrack phone. '
+          'Their location was not included.';
+    } else if (here == null) {
+      where = 'At ${there.latitude.toStringAsFixed(5)}, '
+          '${there.longitude.toStringAsFixed(5)}';
+      spoken = 'SOS received from a nearby BushTrack phone.';
+    } else {
+      final dist = _fmtDist(_distM(here, there));
+      final dir = _compass8(const Distance().bearing(here, there));
+      where = '$dist to the $dir of you';
+      spoken = 'SOS received. Someone needs help, $dist to the $dir.';
+    }
+    ref.read(aiAssistantProvider.notifier).speak(spoken);
+
+    showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1A1A2E),
-        title: const Text('Send SOS?', style: TextStyle(color: Colors.white)),
-        content: const Text(
-          'This will broadcast an emergency SOS via mesh, SMS, and share. Only use in a real emergency.',
-          style: TextStyle(color: Colors.white70),
+        backgroundColor: const Color(0xFF2A0000),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: Colors.red, width: 2),
+        ),
+        title: Row(children: [
+          const Icon(Icons.sos, color: Colors.red, size: 32),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text('SOS RECEIVED',
+                style: GoogleFonts.outfit(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900)),
+          ),
+        ]),
+        content: Text(
+          '${sos.senderId} has activated an SOS.\n\n$where',
+          style: GoogleFonts.outfit(color: Colors.white, fontSize: 15),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('CANCEL', style: TextStyle(color: Colors.white54)),
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('DISMISS',
+                style: GoogleFonts.outfit(color: Colors.white54)),
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('SEND SOS', style: TextStyle(color: Color(0xFFFF3B30))),
-          ),
+          if (there != null)
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () {
+                Navigator.pop(ctx);
+                _mapController.move(there, 15.0);
+              },
+              child: Text('SHOW ON MAP',
+                  style: GoogleFonts.outfit(
+                      color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
         ],
       ),
     );
-    if (confirmed != true) return;
+  }
+
+  /// Best position to put in an SOS: the live fix, else the last breadcrumb.
+  /// Returns null if we genuinely don't know — never a made-up location.
+  LatLng? _sosPosition() {
+    final locationState = ref.read(locationProvider);
+    final lat = locationState.stats.currentLat;
+    final lon = locationState.stats.currentLon;
+    if (lat != null && lon != null) return LatLng(lat, lon);
+    for (final b in locationState.breadcrumbs.reversed) {
+      if (b.latitude != null && b.longitude != null) {
+        return LatLng(b.latitude!, b.longitude!);
+      }
+    }
+    return null;
+  }
+
+  // Confirmation is the 3-second hold plus the SOS ALERT dialog. This used to
+  // open a SECOND "Send SOS?" dialog on top — two confirmations after a long
+  // press is too slow in a real emergency.
+  Future<void> _activateSOS() async {
     if (!mounted) return;
 
-    final locationState = ref.read(locationProvider);
-    final lat = locationState.stats.currentLat ?? -25.3444;
-    final lon = locationState.stats.currentLon ?? 131.0369;
-    final msg = 'SOS EMERGENCY! GPS: $lat, $lon — BushTrack beacon activated. Send help!';
+    // Previously fell back to -25.3444, 131.0369 — Uluru — when there was no
+    // GPS fix, and sent THAT as the emergency location. Rescuers would have
+    // been pointed 1,000 km from Leonora.
+    final pos = _sosPosition();
+    final where = pos == null
+        ? 'Location unknown (no GPS fix)'
+        : 'GPS: ${pos.latitude.toStringAsFixed(5)}, '
+            '${pos.longitude.toStringAsFixed(5)} '
+            'https://maps.google.com/?q=${pos.latitude},${pos.longitude}';
+    final msg = 'SOS EMERGENCY - I need help. $where - sent from BushTrack';
 
-    // 1. Mesh broadcast (devices with app)
-    try { ref.read(meshProvider.notifier).sendSOS(); } catch (_) {}
+    // 1. Mesh — BushTrack phones in radio range (Android app only).
+    try {
+      await ref.read(meshProvider.notifier).sendSOS(
+            latitude: pos?.latitude,
+            longitude: pos?.longitude,
+          );
+    } catch (_) {}
 
-    // 2. SMS link (works on mobile and web)
+    // 2. SMS — opens the messages app with the text filled in. The user
+    //    still picks who to send it to; nothing is sent automatically.
     try { await openSmsUrl(msg); } catch (_) {}
 
-    // 3. Share API (any app — WhatsApp, Signal, etc.)
+    // 3. Share sheet — WhatsApp, Signal, etc.
     try { await shareText('SOS EMERGENCY', msg); } catch (_) {}
 
-    ref.read(aiAssistantProvider.notifier).speak(
-        "SOS activated. Broadcasting on all channels. Stay calm. Help is on the way.");
+    // This used to say "Help is on the way", which nothing here guarantees.
+    ref.read(aiAssistantProvider.notifier).speak(kIsWeb
+        ? "SOS message ready. Send it to someone who can help. "
+            "If you have signal, call triple zero."
+        : "SOS sent to nearby BushTrack phones, and your message is ready "
+            "to send. If you have signal, call triple zero.");
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1398,10 +1550,23 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
         content: Row(children: [
           const Icon(Icons.sos, color: Colors.white),
           const SizedBox(width: 12),
-          Text('SOS activated on all channels!', style: GoogleFonts.outfit(color: Colors.white)),
+          Expanded(
+            child: Text(
+              kIsWeb
+                  ? 'SOS message ready — send it, or call 000'
+                  : 'SOS broadcasting to nearby phones — call 000 if you can',
+              style: GoogleFonts.outfit(color: Colors.white),
+            ),
+          ),
         ]),
         backgroundColor: Colors.red,
         duration: const Duration(seconds: 8),
+        action: SnackBarAction(
+          label: 'CALL 000',
+          textColor: Colors.white,
+          onPressed: () =>
+              ref.read(aiAssistantProvider.notifier).callEmergencyServices(),
+        ),
       ),
     );
   }
@@ -2277,20 +2442,50 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     }
   }
 
+  /// Lines from you to each mesh peer whose position we know. This used to be
+  /// a hardcoded line between two points near Uluru, drawn whenever mesh was
+  /// on — decoration pretending to be a mesh link, 1,000 km from Leonora.
   Widget _buildMeshOverlay() {
-    return PolylineLayer(
-      polylines: [
-        Polyline(
-          points: [
-            const LatLng(-25.3444, 131.0369),
-            const LatLng(-25.3500, 131.0500),
-          ],
-          color: AppColors.primaryOrange,
-          strokeWidth: 4.0,
-        ),
-      ],
+    final loc = ref.read(locationProvider).stats;
+    final mesh = ref.read(meshProvider);
+    if (loc.currentLat == null || loc.currentLon == null) {
+      return const SizedBox.shrink();
+    }
+    final me = LatLng(loc.currentLat!, loc.currentLon!);
+    final links = mesh.peerLocations.values
+        .where((p) => p.latitude != null && p.longitude != null)
+        .map((p) => Polyline(
+              points: [me, LatLng(p.latitude!, p.longitude!)],
+              color: p.packetType == 'sos'
+                  ? AppColors.statusRed
+                  : AppColors.primaryOrange,
+              strokeWidth: 3.0,
+            ))
+        .toList();
+    if (links.isEmpty) return const SizedBox.shrink();
+    return PolylineLayer(polylines: links);
+  }
+
+  Widget _noGpsFixChip() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.orange.withValues(alpha: 0.6)),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        const Icon(Icons.gps_not_fixed, color: Colors.orange, size: 16),
+        const SizedBox(width: 8),
+        Text('No GPS fix yet',
+            style: GoogleFonts.outfit(
+                color: Colors.orange,
+                fontSize: 13,
+                fontWeight: FontWeight.w700)),
+      ]),
     );
   }
+
 
   Widget _hamburgerLine() => Container(
         width: 18,
@@ -2753,6 +2948,8 @@ class _HamburgerDrawer extends StatelessWidget {
   final VoidCallback onGallery;
   final VoidCallback onSavedPins;
   final VoidCallback onMyTrails;
+  final bool deadmanArmed;
+  final VoidCallback onToggleDeadman;
   final VoidCallback onSOS;
 
   const _HamburgerDrawer({
@@ -2790,6 +2987,8 @@ class _HamburgerDrawer extends StatelessWidget {
     required this.onGallery,
     required this.onSavedPins,
     required this.onMyTrails,
+    required this.deadmanArmed,
+    required this.onToggleDeadman,
     required this.onSOS,
   });
 
@@ -2854,6 +3053,14 @@ class _HamburgerDrawer extends StatelessWidget {
                       _section('SYSTEM'),
                       _item(context, Icons.settings, Colors.grey, 'Settings', 'App preferences', 'Configure vehicle profile, privacy settings, and app preferences.', () => _go(onSettings)),
                       _item(context, Icons.support_agent_rounded, const Color(0xFF9C60F0), 'Analytics', 'AI personas', 'Select your AI persona — Scout, Navigator, Rescue, or Tactical.', () => _go(onAnalytics)),
+
+                      _section('SAFETY'),
+                      _item(context, Icons.timer_outlined,
+                          deadmanArmed ? Colors.red : Colors.white70,
+                          'Deadman Switch',
+                          deadmanArmed ? 'ARMED — auto-SOS after 4h still' : 'Off — tap to arm',
+                          "Arm it before heading out alone. If you don't move for 4 hours you get a spoken warning, then an SOS goes to nearby BushTrack phones 10 minutes later. Walk a few metres to cancel.",
+                          () => _go(onToggleDeadman)),
 
                       const SizedBox(height: 20),
                       _sosItem(context),
@@ -2973,19 +3180,20 @@ class _HamburgerDrawer extends StatelessWidget {
           const SizedBox(width: 10),
           const Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('SOS — 505',
+              // Was "SOS — 505": leetspeak that reads like a number to dial.
+              Text('SOS',
                   style: TextStyle(
                       color: Color(0xFFFF2D55),
                       fontWeight: FontWeight.w800,
                       fontSize: 14,
                       letterSpacing: 0.5)),
-              Text('Hold 3 sec · broadcasts GPS coords via mesh',
+              Text('Hold 3 sec · call 000 · mesh · SMS',
                   style: TextStyle(
                       color: Color(0xFFFF2D55), fontSize: 10, fontWeight: FontWeight.w500)),
             ]),
           ),
-          _infoBtn(context, 'SOS — 505',
-              'Emergency broadcast to all mesh nodes. Hold for 3 seconds to activate. Sends your GPS coordinates to all nearby mesh devices. USE ONLY IN A GENUINE EMERGENCY.',
+          _infoBtn(context, 'SOS',
+              'Hold for 3 seconds. You can call 000 straight from the SOS screen — do that first if you have signal. The SOS also broadcasts your GPS position to BushTrack phones in radio range (Android app only), and opens an SMS and share sheet with your location for you to send. USE ONLY IN A GENUINE EMERGENCY.',
               isRed: true),
         ]),
       ),

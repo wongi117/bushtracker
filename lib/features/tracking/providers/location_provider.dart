@@ -41,7 +41,8 @@ class TrackStats {
 
   String get gpsAccuracyFormatted {
     if (currentAccuracyM <= 0) return 'GPS: --';
-    return currentAccuracyM < 10
+    // Was "< 10": a normal 10 m phone fix showed as "(poor)".
+    return currentAccuracyM <= 25
         ? 'GPS: ±${currentAccuracyM.toStringAsFixed(0)}m'
         : 'GPS: ±${currentAccuracyM.toStringAsFixed(0)}m (poor)';
   }
@@ -123,7 +124,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
   final DatabaseService databaseService;
   StreamSubscription<Position>? _positionSub;
   Timer? _elapsedTimer;
-  Timer? _mockTimer;
+  Timer? _gpsRetryTimer;
   Timer? _breadcrumbTimer;
   Position? _lastPosition;
   final List<Position> _recentPositions = <Position>[];
@@ -173,7 +174,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
   Future<void> _startGpsTracking() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      _startMockTracking();
+      _scheduleGpsRetry();
       return;
     }
 
@@ -183,9 +184,11 @@ class LocationNotifier extends StateNotifier<LocationState> {
     }
     if (permission == LocationPermission.deniedForever ||
         permission == LocationPermission.denied) {
-      _startMockTracking();
+      _scheduleGpsRetry();
       return;
     }
+    _gpsRetryTimer?.cancel();
+    _gpsRetryTimer = null;
 
     _trackStart = DateTime.now();
     _positionSub = Geolocator.getPositionStream(
@@ -368,31 +371,25 @@ class LocationNotifier extends StateNotifier<LocationState> {
     _profile = profile;
   }
 
-  void _startMockTracking() {
-    // Fallback mock for emulator/no GPS
-    double lat = -25.3444;
-    double lon = 131.0369;
-    _trackStart = DateTime.now();
-
-    _mockTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
-      lat += 0.0001;
-      lon += 0.0001;
-
-      final fakePosition = Position(
-        latitude: lat,
-        longitude: lon,
-        altitude: 450.0,
-        altitudeAccuracy: 5.0,
-        accuracy: 5.0,
-        speed: 1.4,
-        speedAccuracy: 1.0,
-        heading: 45.0,
-        headingAccuracy: 5.0,
-        timestamp: DateTime.now(),
-        floor: null,
-        isMocked: true,
-      );
-      _onNewPosition(fakePosition);
+  /// No GPS: leave the position empty and check again every 20 seconds.
+  ///
+  /// This used to start a FAKE position — at Uluru, walking north-east at
+  /// 1.4 m/s with "±5 m" accuracy — and feed it in exactly like a real fix:
+  /// into the map, the breadcrumb trail, pin distances and the SOS message.
+  /// For a survival app a wrong position is far worse than no position.
+  void _scheduleGpsRetry() {
+    if (_gpsRetryTimer != null) return;
+    _gpsRetryTimer = Timer.periodic(const Duration(seconds: 20), (_) async {
+      if (!mounted) return;
+      final enabled = await Geolocator.isLocationServiceEnabled();
+      final perm = await Geolocator.checkPermission(); // never re-prompts
+      if (enabled &&
+          (perm == LocationPermission.always ||
+              perm == LocationPermission.whileInUse)) {
+        _gpsRetryTimer?.cancel();
+        _gpsRetryTimer = null;
+        _startGpsTracking();
+      }
     });
   }
 
@@ -602,7 +599,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
   void dispose() {
     _positionSub?.cancel();
     _elapsedTimer?.cancel();
-    _mockTimer?.cancel();
+    _gpsRetryTimer?.cancel();
     _breadcrumbTimer?.cancel();
     super.dispose();
   }

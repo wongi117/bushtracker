@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 import '../../tracking/providers/location_provider.dart';
 import '../providers/ai_assistant_provider.dart';
+import '../../mesh/providers/mesh_provider.dart';
 import '../services/geographic_analysis_service.dart';
 import '../services/environmental_calculation_service.dart';
 
@@ -14,12 +15,20 @@ class AIControlState {
   final DateTime? lastMovementTimestamp;
   final double? lastBatteryLevel;
 
+  /// The deadman switch only runs when the user arms it before heading out.
+  /// It used to run for everyone, always — so anyone asleep for four hours
+  /// with the app open tripped it. Harmless while it sent nothing; once the
+  /// mesh SOS actually delivers, a camp full of phones would alarm each other
+  /// every night. Not persisted: you arm it per trip.
+  final bool deadmanArmed;
+
   AIControlState({
     this.isProactiveMonitoring = true,
     this.isEmergencyMode = false,
     this.lastAlert,
     this.lastMovementTimestamp,
     this.lastBatteryLevel,
+    this.deadmanArmed = false,
   });
 
   AIControlState copyWith({
@@ -28,6 +37,7 @@ class AIControlState {
     String? lastAlert,
     DateTime? lastMovementTimestamp,
     double? lastBatteryLevel,
+    bool? deadmanArmed,
   }) {
     return AIControlState(
       isProactiveMonitoring: isProactiveMonitoring ?? this.isProactiveMonitoring,
@@ -35,6 +45,7 @@ class AIControlState {
       lastAlert: lastAlert ?? this.lastAlert,
       lastMovementTimestamp: lastMovementTimestamp ?? this.lastMovementTimestamp,
       lastBatteryLevel: lastBatteryLevel ?? this.lastBatteryLevel,
+      deadmanArmed: deadmanArmed ?? this.deadmanArmed,
     );
   }
 }
@@ -46,6 +57,14 @@ class AIControlNotifier extends StateNotifier<AIControlState> {
   Timer? _deadmanTimer;
   Timer? _duplicateCheckTimer;
   DateTime? _lastMovementTime;
+
+  /// Set once the 4-hour warning has gone out, so it is spoken once — the
+  /// check runs every minute and used to restart the countdown (and speak the
+  /// warning) every single minute, forever.
+  bool _deadmanCountdownActive = false;
+
+  /// Battery saver announces itself once, not on every 5-minute check.
+  bool _batterySaverActive = false;
 
   AIControlNotifier(this._ref) : super(AIControlState()) {
     _startMonitoring();
@@ -97,19 +116,24 @@ class AIControlNotifier extends StateNotifier<AIControlState> {
     // 1. Movement check - update last movement time
     if (stats.currentSpeedMs > 0.5) { // Moving faster than 0.5 m/s
       _lastMovementTime = DateTime.now();
+      _deadmanCountdownActive = false;
       state = state.copyWith(lastMovementTimestamp: _lastMovementTime);
     }
 
-    // 2. Battery check (Mocked for now as we don't have battery package yet)
+    // 2. Battery check (battery_plus via EnvironmentalCalculationService)
     final batteryLevel = await _getBatteryLevel();
+    if (!mounted) return;
     if (batteryLevel != null) {
       state = state.copyWith(lastBatteryLevel: batteryLevel);
-      
-      // Battery saver mode
-      if (batteryLevel < 20.0) {
+
+      // Guarded on our own flag. The old recovery branch compared against
+      // state.lastBatteryLevel AFTER overwriting it with the new reading, so
+      // battery saver could never switch back off.
+      if (batteryLevel < 20.0 && !_batterySaverActive) {
+        _batterySaverActive = true;
         _activateBatterySaver();
-      } else if (state.lastBatteryLevel != null && state.lastBatteryLevel! < 20.0) {
-        // Battery recovered from low state
+      } else if (batteryLevel >= 25.0 && _batterySaverActive) {
+        _batterySaverActive = false;
         _deactivateBatterySaver();
       }
     }
@@ -222,8 +246,20 @@ class AIControlNotifier extends StateNotifier<AIControlState> {
     }
   }
 
-  /// Check deadman switch - if no movement for 4 hours in remote area
+  /// Arm or disarm the deadman switch. Arming restarts the 4-hour clock.
+  void setDeadmanArmed(bool armed) {
+    _lastMovementTime = DateTime.now();
+    _deadmanCountdownActive = false;
+    state = state.copyWith(deadmanArmed: armed);
+    _ref.read(aiAssistantProvider.notifier).speak(armed
+        ? "Deadman switch armed. If you don't move for four hours, I'll warn you, "
+            "then send an SOS to nearby BushTrack phones ten minutes later."
+        : "Deadman switch off.");
+  }
+
+  /// Check deadman switch - if no movement for 4 hours while armed
   void _checkDeadmanSwitch() {
+    if (!state.deadmanArmed || _deadmanCountdownActive) return;
     if (_lastMovementTime == null) return;
     
     final now = DateTime.now();
@@ -231,12 +267,10 @@ class AIControlNotifier extends StateNotifier<AIControlState> {
     
     // If no movement for 4 hours
     if (timeSinceLastMovement.inHours >= 4) {
-      // Check if in remote area (mock implementation)
+      // No "remote area" test: the switch only runs when the user has armed it
+      // for a trip, which is the real signal that they're somewhere remote.
       final locationState = _ref.read(locationProvider);
       if (locationState.stats.currentLat != null && locationState.stats.currentLon != null) {
-        // In a real implementation, we would check if this is a remote area
-        // For now, we'll assume it is
-        
         // Start deadman countdown
         _startDeadmanCountdown();
       }
@@ -245,13 +279,18 @@ class AIControlNotifier extends StateNotifier<AIControlState> {
 
   /// Start deadman countdown to SOS
   void _startDeadmanCountdown() {
+    _deadmanCountdownActive = true;
     // Speak warning
     _ref.read(aiAssistantProvider.notifier).speak(
-      "Warning: No movement detected for 4 hours. Initiating emergency protocol in 10 minutes unless canceled."
+      "Warning: no movement for four hours. I'll send an SOS to nearby "
+      "BushTrack phones in ten minutes. To cancel, walk a few metres or "
+      "turn off the deadman switch in the menu."
     );
-    
+
     // Start 10-minute countdown
     Timer(const Duration(minutes: 10), () {
+      // Disarmed during the countdown, or provider gone — do nothing.
+      if (!mounted || !state.deadmanArmed) return;
       // Double-check that there's still no movement
       if (_lastMovementTime != null) {
         final timeSinceLastMovement = DateTime.now().difference(_lastMovementTime!);
@@ -323,26 +362,29 @@ class AIControlNotifier extends StateNotifier<AIControlState> {
     return radians * (180 / pi);
   }
 
-  /// Get battery level (mock implementation)
+  /// Battery level via battery_plus; null where the platform can't report it.
   Future<double?> _getBatteryLevel() async {
-    // In a real implementation, we would use a battery plugin like 'battery_plus'
-    // For now, we'll use our environmental calculation service
     return await EnvironmentalCalculationService.getBatteryLevel();
   }
 
-  /// Calculate hours until sunset (mock implementation)
+  /// Hours until sunset from a real solar calculation for this location.
   Future<double?> _getHoursUntilSunset(LatLng location) async {
-    // In a real implementation, we would calculate this based on location and date
-    // For now, we'll use our environmental calculation service
     return await EnvironmentalCalculationService.getHoursUntilSunset(location);
   }
 
   void triggerEmergency() {
     state = state.copyWith(isEmergencyMode: true);
+    // This used to only SPEAK about broadcasting — the send itself was a
+    // comment. Now it sends, with the last known position.
+    final stats = _ref.read(locationProvider).stats;
+    _ref.read(meshProvider.notifier).sendSOS(
+          latitude: stats.currentLat,
+          longitude: stats.currentLon,
+        );
     _ref.read(aiAssistantProvider.notifier).speak(
-      "Emergency mode activated. Broadcasting your location across the mesh. Do not move unless in immediate danger."
+      "SOS sent to nearby BushTrack phones. It only reaches phones within "
+      "radio range. If you have any signal, call triple zero."
     );
-    // Here we would also trigger the Mesh SOS broadcast
   }
 
   @override

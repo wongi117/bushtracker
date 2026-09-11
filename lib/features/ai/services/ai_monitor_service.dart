@@ -3,7 +3,6 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
-import 'package:bush_track/features/mesh/providers/mesh_provider.dart';
 import 'package:bush_track/features/ai/providers/ai_assistant_provider.dart';
 import 'package:bush_track/features/navigation/providers/navigation_provider.dart';
 import 'package:bush_track/features/map/providers/trail_provider.dart';
@@ -15,9 +14,7 @@ class AiMonitorService {
   Timer? _monitoringTimer;
   Timer? _trailVoiceTimer;
   Position? _lastPosition;
-  DateTime? _lastMovementTime;
   bool _isMonitoring = false;
-  bool _deadmanAlertSent = false;
   bool _offRouteAlertSent = false;
   bool _sunsetAlertSent = false;
 
@@ -26,7 +23,6 @@ class AiMonitorService {
   void startMonitoring() {
     if (_isMonitoring) return;
     _isMonitoring = true;
-    _lastMovementTime = DateTime.now();
     _monitoringTimer =
         Timer.periodic(const Duration(minutes: 5), (_) => _check());
     _trailVoiceTimer =
@@ -92,36 +88,13 @@ class AiMonitorService {
           isMocked: false,
         );
 
-        if (_lastPosition != null) {
-          final dist = Geolocator.distanceBetween(
-            _lastPosition!.latitude,
-            _lastPosition!.longitude,
-            current.latitude,
-            current.longitude,
-          );
-          if (dist > 10) {
-            _lastMovementTime = DateTime.now();
-            _deadmanAlertSent = false; // Reset when user moves again
-          }
-        }
         _lastPosition = current;
       }
 
-      // ── Deadman Switch: 4 hours no movement → SOS ─────────────────────────
-      if (_lastMovementTime != null && !_deadmanAlertSent) {
-        final stationary =
-            DateTime.now().difference(_lastMovementTime!);
-        if (stationary.inHours >= 4) {
-          _deadmanAlertSent = true;
-          final hours = stationary.inHours;
-          await aiNotifier.speak(
-            'DEADMAN ALERT: You have not moved in $hours hours. '
-            'Broadcasting your location to the mesh network. '
-            'Say I am okay or tap the screen to cancel the SOS countdown.',
-          );
-          ref.read(meshProvider.notifier).sendSOS();
-        }
-      }
+      // Deadman switch lives in AIControlNotifier only. This was a second copy
+      // that ignored arming, sent the SOS instantly, and told the user they
+      // could cancel a countdown that did not exist. With two copies, four
+      // hours of stillness fired both.
 
       // ── Off-route voice alert (picked up from navigation state) ───────────
       if (navState.isActive && navState.isOffRoute) {
@@ -141,13 +114,8 @@ class AiMonitorService {
         _offRouteAlertSent = false;
       }
 
-      // ── Battery check (mobile only via battery_plus when available) ────────
-      final battery = await _getBatteryLevel();
-      if (battery != null && battery < 20) {
-        await aiNotifier.speak(
-          'Battery at $battery percent. Activating GPS power saving mode.',
-        );
-      }
+      // Battery saver lives in AIControlNotifier. This copy only spoke — it
+      // never changed the GPS rate — and repeated every 5 minutes under 20%.
 
       // ── Sunset alert ───────────────────────────────────────────────────────
       if (lat != null && lon != null) {
@@ -177,23 +145,7 @@ class AiMonitorService {
     }
   }
 
-  Future<int?> _getBatteryLevel() async {
-    // battery_plus is in pubspec — use it on mobile, skip on web
-    if (kIsWeb) return null;
-    try {
-      // Dynamic import avoids web compilation errors
-      // ignore: avoid_dynamic_calls
-      final battery =
-          await (const bool.fromEnvironment('dart.library.io') ? _readBattery() : Future.value(null));
-      return battery;
-    } catch (_) {
-      return null;
-    }
-  }
 
-  Future<int?> _readBattery() async {
-    return null; // Placeholder — wire battery_plus here if needed
-  }
 
   /// Solar noon / sunset calculation using Spencer's equation.
   /// Returns hours until sunset from the current local time, or null if past sunset.

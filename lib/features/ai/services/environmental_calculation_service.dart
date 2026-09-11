@@ -1,3 +1,4 @@
+import 'package:battery_plus/battery_plus.dart';
 import 'dart:math';
 import 'package:latlong2/latlong.dart';
 
@@ -81,9 +82,16 @@ class EnvironmentalCalculationService {
   }
 
   /// Estimate battery level (mock implementation)
+  /// Battery percentage 0-100, or null where the platform can't say (e.g.
+  /// Firefox/Safari on the web). This always returned null before, so the
+  /// battery-saver mode that is fully built in AIControlNotifier never ran.
   static Future<double?> getBatteryLevel() async {
-    // In a real implementation, this would use battery_plus package
-    // For now, return null to indicate unavailable or return mock value for testing
-    return null; // or return 85.0 for testing
+    try {
+      final level = await Battery().batteryLevel;
+      if (level < 0 || level > 100) return null;
+      return level.toDouble();
+    } catch (_) {
+      return null;
+    }
   }
 }
