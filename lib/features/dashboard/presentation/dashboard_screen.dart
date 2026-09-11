@@ -17,6 +17,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bush_track/theme/app_colors.dart';
 import 'widgets/mesh_bottom_sheet.dart';
+import 'widgets/sos_hold_button.dart';
 import '../../tracking/providers/location_provider.dart';
 import '../../mesh/providers/mesh_provider.dart';
 import 'package:bush_track/core/models/mesh_packet.dart';
@@ -873,6 +874,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                 );
               },
             ),
+          ),
+
+          // SOS — always on the map, directly under the search button. Spec §1
+          // took it off the main screen; the BHP bug brief then found it
+          // effectively missing (bottom of the drawer, and on the live build
+          // hidden under the mesh sheet). A true 3 s hold stops pocket-fires.
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 76,
+            right: 14,
+            child: SosHoldButton(onTriggered: _showSOSConfirmation),
           ),
 
           // Scale Bar (Bottom Left, above coordinate display)
@@ -3164,7 +3175,7 @@ class _HamburgerDrawer extends StatelessWidget {
       onLongPress: () => _go(onSOS),
       onTap: () => ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Hold the SOS button for 3 seconds to activate.'),
+          content: Text('Press and hold to open SOS.'),
           duration: Duration(seconds: 2),
           backgroundColor: Color(0xFFFF2D55),
         ),
@@ -3195,13 +3206,13 @@ class _HamburgerDrawer extends StatelessWidget {
                       fontWeight: FontWeight.w800,
                       fontSize: 14,
                       letterSpacing: 0.5)),
-              Text('Hold 3 sec · call 000 · mesh · SMS',
+              Text('Press and hold · call 000 · mesh · SMS',
                   style: TextStyle(
                       color: Color(0xFFFF2D55), fontSize: 10, fontWeight: FontWeight.w500)),
             ]),
           ),
           _infoBtn(context, 'SOS',
-              'Hold for 3 seconds. You can call 000 straight from the SOS screen — do that first if you have signal. The SOS also broadcasts your GPS position to BushTrack phones in radio range (Android app only), and opens an SMS and share sheet with your location for you to send. USE ONLY IN A GENUINE EMERGENCY.',
+              'Press and hold in this menu, or hold the red SOS button on the map for 3 seconds. You can call 000 straight from the SOS screen — do that first if you have signal. The SOS also broadcasts your GPS position to BushTrack phones in radio range (Android app only), and opens an SMS and share sheet with your location for you to send. USE ONLY IN A GENUINE EMERGENCY.',
               isRed: true),
         ]),
       ),
