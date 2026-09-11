@@ -12,6 +12,10 @@ class WaypointMarker extends StatelessWidget {
   final VoidCallback? onLongPress;
   final bool isDraggable;
 
+  /// e.g. "340 m · north-east (42°) from you". Shown in the pin's sheet;
+  /// null when there is no GPS fix.
+  final String? distanceInfo;
+
   const WaypointMarker({
     super.key,
     required this.waypoint,
@@ -22,6 +26,7 @@ class WaypointMarker extends StatelessWidget {
     this.onNavigate,
     this.onLongPress,
     this.isDraggable = false,
+    this.distanceInfo,
   });
 
   bool get _isPinage => waypoint.isPinage;
@@ -156,6 +161,7 @@ class WaypointMarker extends StatelessWidget {
       isScrollControlled: true,
       builder: (ctx) => _WaypointMenuSheet(
         waypoint: waypoint,
+        distanceInfo: distanceInfo,
         onEdit: () {
           Navigator.pop(ctx);
           onEdit();
@@ -181,6 +187,7 @@ class WaypointMarker extends StatelessWidget {
 
 class _WaypointMenuSheet extends StatelessWidget {
   final Waypoint waypoint;
+  final String? distanceInfo;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   final VoidCallback? onNavigate;
@@ -189,6 +196,7 @@ class _WaypointMenuSheet extends StatelessWidget {
 
   const _WaypointMenuSheet({
     required this.waypoint,
+    this.distanceInfo,
     required this.onEdit,
     required this.onDelete,
     required this.onColorChanged,
@@ -265,6 +273,18 @@ class _WaypointMenuSheet extends StatelessWidget {
                       style: const TextStyle(
                           color: Colors.white38, fontSize: 11),
                     ),
+                  // Tapping a pin used to show no distance or direction at all.
+                  if (distanceInfo != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        distanceInfo!,
+                        style: const TextStyle(
+                            color: Color(0xFF00E5FF),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -277,7 +297,8 @@ class _WaypointMenuSheet extends StatelessWidget {
                 const Color(0xFF2196F3), onEdit),
             const SizedBox(width: 10),
             if (onNavigate != null) ...[
-              _actionBtn(context, Icons.navigation_outlined, 'Navigate',
+              // Was "Navigate", which only spoke a sentence and did nothing.
+              _actionBtn(context, Icons.navigation_outlined, 'Track',
                   const Color(0xFF4CAF50), onNavigate!),
               const SizedBox(width: 10),
             ],

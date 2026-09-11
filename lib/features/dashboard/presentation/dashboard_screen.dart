@@ -109,6 +109,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
   LatLng? _targetPin;
 
+  /// Pin being tracked: live distance, direction and a compass arrow.
+  Waypoint? _trackedPin;
+
   // Map state
   bool _mapInitialized = false;
   bool _tilesLoading = true;
@@ -281,6 +284,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
     // Auto-center map on first real GPS fix
     ref.listen<LocationState>(locationProvider, (_, next) {
+      _checkTrackingArrival(next);
       if (!_hasAutocentered &&
           next.stats.currentLat != null &&
           next.stats.currentLon != null) {
@@ -442,6 +446,23 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                                 ),
                             ],
                           ),
+                        // Line from you to the pin being tracked.
+                        if (_trackedPin != null &&
+                            locationState.stats.currentLat != null &&
+                            locationState.stats.currentLon != null)
+                          PolylineLayer(polylines: [
+                            Polyline(
+                              points: [
+                                LatLng(locationState.stats.currentLat!,
+                                    locationState.stats.currentLon!),
+                                LatLng(_trackedPin!.latitude!,
+                                    _trackedPin!.longitude!),
+                              ],
+                              color: const Color(0xFF4CAF50),
+                              strokeWidth: 3,
+                              isDotted: true,
+                            ),
+                          ]),
                         // Waypoint markers with interaction
                         MarkerLayer(
                           markers: [
@@ -492,9 +513,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                                 point: wPos,
                                 width: 62,
                                 height: 68,
-                                // Anchor the pin tip on the coordinate so the
-                                // distance chip can sit above it.
-                                alignment: Alignment.bottomCenter,
+                                // The whole marker sits ABOVE the point, so the
+                                // pin's tip is on the coordinate and the chip
+                                // is above it. flutter_map 6: "topCenter means
+                                // the entire marker is located above the
+                                // point". This was bottomCenter (9822c36),
+                                // which drew every pin entirely BELOW its real
+                                // spot — ~60 px, about 280 m at zoom 15.
+                                alignment: Alignment.topCenter,
                                 child: Column(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
@@ -506,6 +532,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                                       height: 50,
                                       child: WaypointMarker(
                                         waypoint: w,
+                                        distanceInfo: _pinDistanceInfo(w),
                                         onEdit: () => w.isPinage
                                             ? _showPinageViewer(w)
                                             : _editWaypoint(w),
@@ -518,12 +545,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                                         onIconChanged: (icon) => ref
                                             .read(locationProvider.notifier)
                                             .updateWaypointIcon(w.id!, icon),
-                                        onNavigate: () {
-                                          ref
-                                              .read(aiAssistantProvider.notifier)
-                                              .speak(
-                                                  "Setting navigation target to ${w.label ?? 'waypoint'}.");
-                                        },
+                                        // Used to only speak "Setting
+                                        // navigation target" and stop there.
+                                        onNavigate: () => _startTracking(w),
                                       ),
                                     ),
                                   ],
@@ -885,6 +909,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             right: 14,
             child: SosHoldButton(onTriggered: _showSOSConfirmation),
           ),
+
+          if (_trackedPin != null)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 146,
+              left: 14,
+              right: 14,
+              child: Consumer(
+                builder: (context, ref, _) => _buildTrackingHud(ref),
+              ),
+            ),
 
           // Scale Bar (Bottom Left, above coordinate display)
           Positioned(
@@ -1509,6 +1543,143 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     );
   }
 
+  // ─── Track to a pin ─────────────────────────────────────────────────────
+  // Bug brief #3: tapping a pin showed no distance or direction, and its
+  // "Navigate" button only spoke a sentence. Tracking is straight-line on
+  // purpose: off-road there is no road network to route along, and it works
+  // with no signal.
+
+  /// "340 m · north-east (42°) from you", or null with no GPS fix.
+  String? _pinDistanceInfo(Waypoint w) {
+    final here = _userLatLng();
+    if (here == null || w.latitude == null || w.longitude == null) return null;
+    final there = LatLng(w.latitude!, w.longitude!);
+    final bearing =
+        HeadingReading.normalize(const Distance().bearing(here, there));
+    return '${_fmtDist(_distM(here, there))} · ${_compass8(bearing)} '
+        '(${bearing.round()}°) from you';
+  }
+
+  void _startTracking(Waypoint w) {
+    if (w.latitude == null || w.longitude == null) return;
+    setState(() => _trackedPin = w);
+    final name = w.label ?? 'your pin';
+    final here = _userLatLng();
+    if (here == null) {
+      ref.read(aiAssistantProvider.notifier)
+          .speak('Tracking $name. Waiting for a GPS fix.');
+      return;
+    }
+    final there = LatLng(w.latitude!, w.longitude!);
+    final bearing =
+        HeadingReading.normalize(const Distance().bearing(here, there));
+    ref.read(aiAssistantProvider.notifier).speak(
+        'Tracking $name. '
+        '${NavigationNotifier.formatSpokenDistance(_distM(here, there))} '
+        'to the ${_compass8(bearing)}.');
+  }
+
+  void _stopTracking() => setState(() => _trackedPin = null);
+
+  void _checkTrackingArrival(LocationState next) {
+    final pin = _trackedPin;
+    final lat = next.stats.currentLat;
+    final lon = next.stats.currentLon;
+    if (pin == null || lat == null || lon == null) return;
+    final d = _distM(LatLng(lat, lon), LatLng(pin.latitude!, pin.longitude!));
+    if (d > 15) return;
+    final name = pin.label ?? 'your pin';
+    ref.read(aiAssistantProvider.notifier).speak('You have arrived at $name.');
+    setState(() => _trackedPin = null);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('Arrived at $name'),
+      backgroundColor: const Color(0xFF2E7D32),
+    ));
+  }
+
+  Widget _buildTrackingHud(WidgetRef ref) {
+    final w = _trackedPin!;
+    final stats = ref.watch(locationProvider).stats;
+    final heading = ref.watch(headingProvider).valueOrNull;
+    final pin = LatLng(w.latitude!, w.longitude!);
+
+    double? dist;
+    double? bearing;
+    if (stats.currentLat != null && stats.currentLon != null) {
+      final here = LatLng(stats.currentLat!, stats.currentLon!);
+      dist = _distM(here, pin);
+      bearing = HeadingReading.normalize(const Distance().bearing(here, pin));
+    }
+    final compassLive = heading != null && heading.isLive;
+    // With a live compass the arrow is relative to where the phone points —
+    // walk the way it shows. Without one it's relative to north (the map is
+    // north-up), and the text says so.
+    final arrowDeg = bearing == null
+        ? 0.0
+        : (compassLive ? bearing - heading.degrees : bearing);
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF4CAF50), width: 1.5),
+      ),
+      child: Row(children: [
+        Container(
+          width: 60,
+          height: 60,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: const Color(0xFF4CAF50).withValues(alpha: 0.15),
+          ),
+          child: bearing == null
+              ? const Icon(Icons.gps_not_fixed, color: Colors.orange, size: 30)
+              : Transform.rotate(
+                  angle: arrowDeg * math.pi / 180,
+                  child: const Icon(Icons.navigation,
+                      color: Color(0xFF4CAF50), size: 40),
+                ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('TRACKING · ${w.label ?? 'Pin'}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.outfit(
+                      color: Colors.white70,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1)),
+              Text(dist == null ? 'Waiting for GPS…' : _fmtDist(dist),
+                  style: GoogleFonts.outfit(
+                      color: Colors.white,
+                      fontSize: 26,
+                      fontWeight: FontWeight.w900)),
+              if (bearing != null)
+                Text(
+                  '${_compass8(bearing)} · ${bearing.round()}°'
+                  '${compassLive ? '' : ' · arrow is from north'}',
+                  style: GoogleFonts.outfit(
+                      color: const Color(0xFF81C784), fontSize: 12),
+                ),
+            ],
+          ),
+        ),
+        IconButton(
+          tooltip: 'Stop tracking',
+          icon: const Icon(Icons.close, color: Colors.white70),
+          onPressed: _stopTracking,
+        ),
+      ]),
+    );
+  }
+
   /// Best position to put in an SOS: the live fix, else the last breadcrumb.
   /// Returns null if we genuinely don't know — never a made-up location.
   LatLng? _sosPosition() {
@@ -2016,13 +2187,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                                       color: Colors.white38, fontSize: 11))
                               : null,
                           trailing: IconButton(
-                            icon: const Icon(Icons.my_location,
-                                color: Colors.white38, size: 18),
+                            tooltip: 'Track to this pin',
+                            icon: const Icon(Icons.navigation,
+                                color: Color(0xFF4CAF50), size: 20),
                             onPressed: wPos == null
                                 ? null
                                 : () {
                                     Navigator.pop(ctx);
-                                    _mapController.move(wPos, 15);
+                                    _startTracking(w);
                                   },
                           ),
                           dense: true,
@@ -2372,6 +2544,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
         existing: waypoint,
       ),
       onDelete: () => ref.read(locationProvider.notifier).deleteWaypoint(waypoint.id!),
+      onTrack: () => _startTracking(waypoint),
       onJumpToMap: () {
         if (waypoint.latitude != null && waypoint.longitude != null) {
           _mapController.move(

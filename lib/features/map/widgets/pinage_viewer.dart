@@ -11,6 +11,7 @@ void showPinageViewer(
   required VoidCallback onEdit,
   required VoidCallback onDelete,
   VoidCallback? onJumpToMap,
+  VoidCallback? onTrack,
 }) {
   showModalBottomSheet(
     context: context,
@@ -27,6 +28,7 @@ void showPinageViewer(
         onEdit: onEdit,
         onDelete: onDelete,
         onJumpToMap: onJumpToMap,
+        onTrack: onTrack,
       ),
     ),
   );
@@ -37,12 +39,14 @@ class PinageViewerSheet extends ConsumerStatefulWidget {
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   final VoidCallback? onJumpToMap;
+  final VoidCallback? onTrack;
 
   const PinageViewerSheet({
     required this.waypoint,
     required this.onEdit,
     required this.onDelete,
     this.onJumpToMap,
+    this.onTrack,
     super.key,
   });
 
@@ -271,6 +275,22 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
                       ]),
                     ),
                     const SizedBox(height: 20),
+
+                    // ── Track: the point of dropping a pin is getting back to it.
+                    if (widget.onTrack != null) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        child: _actionBtn(
+                          Icons.navigation_outlined, 'TRACK TO THIS PIN',
+                          const Color(0xFF4CAF50),
+                          () {
+                            Navigator.pop(context);
+                            widget.onTrack!();
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
 
                     // ── Action buttons ────────────────────────────────────
                     Row(children: [
