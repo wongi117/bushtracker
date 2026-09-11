@@ -125,6 +125,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
   StreamSubscription<Position>? _positionSub;
   Timer? _elapsedTimer;
   Timer? _gpsRetryTimer;
+  Timer? _gpsRestartTimer;
   Timer? _breadcrumbTimer;
   Position? _lastPosition;
   final List<Position> _recentPositions = <Position>[];
@@ -191,13 +192,39 @@ class LocationNotifier extends StateNotifier<LocationState> {
     _gpsRetryTimer = null;
 
     _trackStart = DateTime.now();
+    _listenToPosition();
+  }
+
+  void _listenToPosition() {
+    _positionSub?.cancel();
     _positionSub = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.bestForNavigation,
         distanceFilter: 5,
       ),
-    ).listen((Position position) {
-      _onNewPosition(position);
+    ).listen(
+      (Position position) {
+        _onNewPosition(position);
+      },
+      // GPS drops out routinely — tree cover, gullies, near buildings — and
+      // the plugin reports that as an error on this stream ("Something went
+      // wrong while listening for position updates"). With no handler it was
+      // an unhandled exception, and on web index.html's error overlay then
+      // blacked out the whole app. Keep the last known position (and the
+      // trip's distance/time) and start listening again shortly.
+      onError: (Object e) {
+        debugPrint('GPS stream error: $e');
+        _restartGpsSoon();
+      },
+      cancelOnError: true,
+    );
+  }
+
+  void _restartGpsSoon() {
+    _positionSub = null;
+    _gpsRestartTimer?.cancel();
+    _gpsRestartTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted) _listenToPosition();
     });
   }
 
@@ -308,10 +335,28 @@ class LocationNotifier extends StateNotifier<LocationState> {
     }
   }
 
-  Position _averageRecentPosition() {
-    final samples = _recentPositions.isEmpty
-        ? <Position>[_lastPosition ?? _recentPositions.last]
-        : _recentPositions;
+  Position _averageRecentPosition() => smoothFixes(_recentPositions);
+
+  /// Smooth GPS jitter without dragging the position behind real movement.
+  ///
+  /// This used to be a plain mean of the last 5 fixes. On a straight path
+  /// that sits two fixes BEHIND you — ~10 m walking, 50-60 m driving — and
+  /// because distanceFilter stops new fixes once you're still, it never
+  /// caught up after you stopped: the pin-tracking arrival check (15 m) could
+  /// fail to fire, and SOS, off-route and turn advance all used the lagged
+  /// point. Now only fixes that agree with the newest one (within ~2x its
+  /// accuracy) are averaged: jitter while standing still gets smoothed, and
+  /// as soon as you've really moved the older fixes drop out.
+  @visibleForTesting
+  static Position smoothFixes(List<Position> recent) {
+    final newest = recent.last;
+    final radius = (newest.accuracy * 2).clamp(10.0, 60.0);
+    const distance = Distance();
+    final here = LatLng(newest.latitude, newest.longitude);
+    final samples = recent
+        .where((p) =>
+            distance(here, LatLng(p.latitude, p.longitude)) <= radius)
+        .toList();
     double lat = 0;
     double lon = 0;
     double alt = 0;
@@ -600,6 +645,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
     _positionSub?.cancel();
     _elapsedTimer?.cancel();
     _gpsRetryTimer?.cancel();
+    _gpsRestartTimer?.cancel();
     _breadcrumbTimer?.cancel();
     super.dispose();
   }

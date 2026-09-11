@@ -279,9 +279,21 @@ class TrailNotifier extends StateNotifier<TrailState> {
         accuracy: LocationAccuracy.best,
         distanceFilter: 5, // Update every 5 meters
       ),
-    ).listen((position) {
-      _updateNavigation(position);
-    });
+    ).listen(
+      (position) {
+        _updateNavigation(position);
+      },
+      // Same as LocationNotifier: a GPS dropout arrives as a stream error and
+      // used to be unhandled. Pick following back up once signal returns.
+      onError: (Object e) {
+        debugPrint('Trail GPS stream error: $e');
+        _positionSub = null;
+        Future.delayed(const Duration(seconds: 5), () {
+          if (mounted && state.isFollowing) _startFollowingTracking();
+        });
+      },
+      cancelOnError: true,
+    );
   }
 
   void _queueVoice(String message) {

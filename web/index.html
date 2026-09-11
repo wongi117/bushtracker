@@ -29,8 +29,14 @@
   <div id="error-box"></div>
 
   <script>
-    // Show a visible error if Flutter fails to start
+    // Show a visible error if Flutter fails to START. Once Flutter has
+    // rendered, a stray runtime error (e.g. a GPS dropout) used to put this
+    // full-screen box over the running app, which looked like a crash.
     window.addEventListener('error', function(e) {
+      if (document.querySelector('flutter-view, flt-glass-pane')) {
+        console.error('JS error after start-up:', e.message, e.error);
+        return;
+      }
       var box = document.getElementById('error-box');
       if (box) {
         box.style.display = 'block';
