@@ -272,8 +272,8 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
                   backgroundColor: AppColors.primaryOrange,
                   child: const Icon(Icons.navigation, size: 32),
                   onPressed: () {
-                    // In a real implementation, this would trigger voice guidance
-                    // For now, we'll just move to the next step
+                    // Manual override — steps now advance by GPS on their own
+                    // (NavigationNotifier._maybeAdvanceStep).
                     if (navigationState.currentStepIndex < navigationState.steps.length - 1) {
                       ref.read(navigationProvider.notifier).nextStep();
                     } else {

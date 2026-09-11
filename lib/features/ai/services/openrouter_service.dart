@@ -563,18 +563,38 @@ class OpenRouterService {
     return '${diff.inHours}h ago';
   }
 
-Future<Map<String, String>> testAllTiers() async {
+  // Shared for 60s. App start fired this four times in parallel from separate
+  // init paths — on web, four Vercel function calls per launch.
+  static Future<Map<String, String>>? _tierTest;
+  static DateTime? _tierTestAt;
+
+  Future<Map<String, String>> testAllTiers() {
+    final at = _tierTestAt;
+    final cached = _tierTest;
+    if (cached != null &&
+        at != null &&
+        DateTime.now().difference(at) < const Duration(seconds: 60)) {
+      return cached;
+    }
+    _tierTestAt = DateTime.now();
+    return _tierTest = _runTierTest();
+  }
+
+  Future<Map<String, String>> _runTierTest() async {
     final results = <String, String>{};
 
     if (kIsWeb) {
-      // Test MiniMax proxy — it's our primary web provider
+      // Reachability only. This POSTed to /api/ping (a serverless function)
+      // and then reported "Cloud AI Online (MiniMax proxy)" — but /api/ping
+      // never touches MiniMax, so the claim was never checked. Now a static
+      // CDN file (no function run), labelled for what it actually proves.
       try {
-        final resp = await http.post(
-          Uri.parse('/api/ping'),
+        final resp = await http.get(
+          Uri.parse('/version.json?t=${DateTime.now().millisecondsSinceEpoch}'),
         ).timeout(const Duration(seconds: 5));
         results['cloud'] = resp.statusCode == 200
-            ? '✅ Cloud AI Online (MiniMax proxy)'
-            : '⚠️ Proxy unreachable (${resp.statusCode})';
+            ? '✅ Online (server reachable)'
+            : '⚠️ Server unreachable (${resp.statusCode})';
       } catch (e) {
         results['cloud'] = '❌ Proxy unreachable';
       }

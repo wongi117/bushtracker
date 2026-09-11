@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:bush_track/features/navigation/services/navigation_service.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
+import 'package:bush_track/features/ai/providers/ai_assistant_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
@@ -226,9 +227,12 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
           final m = (s['maneuver'] as Map<String, dynamic>? ?? const {});
           final loc = m['location'] as List<dynamic>? ?? const [];
           steps.add(NavigationStep(
+            // OSRM sends no instruction text, so this used to fall back to the
+            // bare road name — "Leonora-Gwalia Road" rather than "Turn left
+            // onto Leonora-Gwalia Road". Build it from type + modifier.
             instruction: m['instruction']?.toString() ??
-                s['name']?.toString() ??
-                'Continue',
+                describeManoeuvre(m['type']?.toString(),
+                    m['modifier']?.toString(), s['name']?.toString()),
             distanceM: (s['distance'] as num? ?? 0).toDouble(),
             bearing: (m['bearing_after'] as num? ?? 0).toDouble(),
             location: loc.length >= 2
@@ -279,9 +283,8 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
     _stopOffRouteMonitoring(); // Stop any existing timer
 
     _offRouteTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
-      // In a real implementation, this would check the user's current position
-      // against the route polyline and trigger alerts if they're off-route
-      // For now, we'll just simulate the check
+      // Real check: live GPS vs route polyline, 100 m threshold. (A comment
+      // here used to claim this was "simulated" — it never was.)
       _checkOffRouteCondition();
     });
   }
@@ -300,6 +303,63 @@ class NavigationNotifier extends StateNotifier<NavigationState> {
     final lon = locationState.stats.currentLon;
     if (lat == null || lon == null) return;
     updateOffRouteStatus(LatLng(lat, lon));
+    _maybeAdvanceStep(LatLng(lat, lon), locationState.stats.currentSpeedMs);
+  }
+
+  /// Turn-by-turn only advanced when you pressed the button. Now, reaching a
+  /// manoeuvre point moves to the next step and speaks it. The capture radius
+  /// grows with speed so a 5-second GPS sample can't jump past a turn.
+  void _maybeAdvanceStep(LatLng user, double speedMs) {
+    if (!state.isActive || state.steps.isEmpty) return;
+    final i = state.currentStepIndex;
+    if (i >= state.steps.length) return;
+    final radius = speedMs * 8 > 30 ? speedMs * 8 : 30.0;
+    if (const Distance()(user, state.steps[i].location) > radius) return;
+
+    final voice = ref.read(aiAssistantProvider.notifier);
+    if (i >= state.steps.length - 1) {
+      voice.speak('You have arrived.');
+      stopNavigation();
+      return;
+    }
+    final legM = state.steps[i].distanceM;
+    nextStep();
+    final next = state.steps[state.currentStepIndex].instruction;
+    voice.speak(legM >= 50
+        ? 'In ${formatSpokenDistance(legM)}, $next.'
+        : '$next.');
+  }
+
+  static String formatSpokenDistance(double m) {
+    if (m < 1000) return '${(m / 50).round() * 50} metres';
+    final km = m / 1000;
+    return km < 10
+        ? '${km.toStringAsFixed(1)} kilometres'
+        : '${km.round()} kilometres';
+  }
+
+  /// Plain-English instruction from an OSRM manoeuvre.
+  static String describeManoeuvre(String? type, String? modifier, String? road) {
+    final onto = (road == null || road.isEmpty) ? '' : ' onto $road';
+    final along = (road == null || road.isEmpty) ? '' : ' along $road';
+    if (modifier == 'uturn') return 'Make a U-turn$along';
+    final dir = (modifier == null || modifier == 'straight') ? null : modifier;
+    switch (type) {
+      case 'depart':
+        return 'Head off$along';
+      case 'arrive':
+        return 'Arrive at your destination';
+      case 'roundabout':
+      case 'rotary':
+        return 'Take the roundabout$onto';
+      case 'merge':
+        return 'Merge$onto';
+      case 'continue':
+      case 'new name':
+        return dir == null ? 'Continue$onto' : 'Keep $dir$onto';
+      default: // turn, fork, end of road, on ramp, off ramp
+        return dir == null ? 'Continue straight$onto' : 'Turn $dir$onto';
+    }
   }
 
   /// Update off-route status based on user's current position.
