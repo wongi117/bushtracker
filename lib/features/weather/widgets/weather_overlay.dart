@@ -10,11 +10,16 @@ class WeatherOverlay extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    ref.watch(locationProvider);
     final weatherState = ref.watch(weatherProvider);
-    
-    // Fetch weather data when location changes
+
+    // Fetch when the position changes (the provider throttles further). This
+    // used to also ref.watch(locationProvider), rebuilding every second for
+    // the elapsed-time tick, and fetched on every one of those ticks.
     ref.listen<LocationState>(locationProvider, (previous, next) {
+      if (previous?.stats.currentLat == next.stats.currentLat &&
+          previous?.stats.currentLon == next.stats.currentLon) {
+        return;
+      }
       if (next.stats.currentLat != null && next.stats.currentLon != null) {
         final location = LatLng(
           next.stats.currentLat!,
@@ -24,25 +29,19 @@ class WeatherOverlay extends ConsumerWidget {
       }
     });
     
-    if (weatherState.isLoading) {
-      return const Positioned(
-        top: 100,
-        right: 20,
-        child: CircularProgressIndicator(
-          valueColor: AlwaysStoppedAnimation<Color>(AppColors.primaryOrange),
-        ),
-      );
-    }
-    
+    // No spinner: it sat at top-right on top of the SOS button, flickering
+    // on every fetch. Weather isn't urgent — show it when it arrives.
     if (weatherState.weatherData == null) {
       return const SizedBox.shrink();
     }
-    
+
     final weather = weatherState.weatherData!;
-    
+
+    // Top-left under the menu button. At top-right it covered the compass,
+    // the SOS button and the top of the pin-tracking panel.
     return Positioned(
-      top: 100,
-      right: 20,
+      top: MediaQuery.of(context).padding.top + 76,
+      left: 14,
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -141,11 +140,16 @@ class WeatherOverlay extends ConsumerWidget {
   
   IconData _getWeatherIcon(int weatherCode) {
     // Simplified weather code mapping
-    if (weatherCode < 30) return Icons.wb_sunny; // Clear sky
-    if (weatherCode < 50) return Icons.cloud; // Mainly clear, partly cloudy
-    if (weatherCode < 70) return Icons.cloud_queue; // Overcast
-    if (weatherCode < 80) return Icons.grain; // Fog
-    if (weatherCode < 90) return Icons.water_drop; // Drizzle
-    return Icons.thunderstorm; // Thunderstorm
+    // WMO weather codes as used by Open-Meteo. The old ranges showed rain
+    // (61-67) as "overcast" and snow (71-77) as "fog".
+    if (weatherCode == 0) return Icons.wb_sunny; // clear
+    if (weatherCode <= 2) return Icons.wb_cloudy; // mainly clear / partly cloudy
+    if (weatherCode == 3) return Icons.cloud; // overcast
+    if (weatherCode == 45 || weatherCode == 48) return Icons.cloud; // fog
+    if (weatherCode >= 51 && weatherCode <= 67) return Icons.grain; // drizzle / rain
+    if (weatherCode >= 71 && weatherCode <= 77) return Icons.ac_unit; // snow
+    if (weatherCode >= 80 && weatherCode <= 82) return Icons.water_drop; // showers
+    if (weatherCode >= 85 && weatherCode <= 86) return Icons.ac_unit; // snow showers
+    return Icons.thunderstorm; // 95-99
   }
 }

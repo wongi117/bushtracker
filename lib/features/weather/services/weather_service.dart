@@ -11,6 +11,12 @@ class WeatherService {
       final response = await http.get(Uri.parse(
         '$_baseUrl?latitude=${location.latitude}&longitude=${location.longitude}'
         '&hourly=temperature_2m,precipitation,wind_speed_10m,weather_code'
+        // `current` is the conditions now; `daily` feeds the 3-day forecast.
+        // The parser always needed `daily` but it was never requested, so
+        // every parse threw and the weather card has never appeared.
+        '&current=temperature_2m,precipitation,wind_speed_10m,weather_code'
+        '&daily=temperature_2m_max,temperature_2m_min'
+        '&timezone=auto'
         '&forecast_days=3'
       ));
       
@@ -44,21 +50,33 @@ class WeatherData {
   });
 
   factory WeatherData.fromJson(Map<String, dynamic> json) {
-    final hourly = json['hourly'] as Map<String, dynamic>;
-    final daily = json['daily'] as Map<String, dynamic>;
-    
-    final hourlyTimes = List<String>.from(hourly['time'] as List);
-    final temperatures = List<double>.from(hourly['temperature_2m'] as List);
-    final precipitation = List<double>.from(hourly['precipitation'] as List);
-    final windSpeeds = List<double>.from(hourly['wind_speed_10m'] as List);
-    final weatherCodes = List<int>.from(hourly['weather_code'] as List);
-    
-    final dailyTimes = List<String>.from(daily['time'] as List);
-    final maxTemps = List<double>.from(daily['temperature_2m_max'] as List);
-    final minTemps = List<double>.from(daily['temperature_2m_min'] as List);
-    
+    // JSON numbers can arrive as int or double (and null for gaps); a bare
+    // List<double>.from throws on an int in the Dart VM.
+    List<double> nums(dynamic v) =>
+        (v as List? ?? const []).map((e) => (e as num?)?.toDouble() ?? 0.0).toList();
+    List<int> ints(dynamic v) =>
+        (v as List? ?? const []).map((e) => (e as num?)?.toInt() ?? 0).toList();
+
+    final hourly = json['hourly'] as Map<String, dynamic>? ?? const {};
+    final daily = json['daily'] as Map<String, dynamic>? ?? const {};
+    final current = json['current'] as Map<String, dynamic>?;
+
+    final hourlyTimes = List<String>.from(hourly['time'] as List? ?? const []);
+    final temperatures = nums(hourly['temperature_2m']);
+    final precipitation = nums(hourly['precipitation']);
+    final windSpeeds = nums(hourly['wind_speed_10m']);
+    final weatherCodes = ints(hourly['weather_code']);
+
+    final dailyTimes = List<String>.from(daily['time'] as List? ?? const []);
+    final maxTemps = nums(daily['temperature_2m_max']);
+    final minTemps = nums(daily['temperature_2m_min']);
+
     final hourlyForecast = <HourlyForecast>[];
-    for (int i = 0; i < hourlyTimes.length && i < 24; i++) {
+    for (int i = 0;
+        i < hourlyTimes.length && i < 24 && i < temperatures.length &&
+            i < precipitation.length && i < windSpeeds.length &&
+            i < weatherCodes.length;
+        i++) {
       hourlyForecast.add(HourlyForecast(
         time: hourlyTimes[i],
         temperature: temperatures[i],
@@ -69,7 +87,9 @@ class WeatherData {
     }
     
     final dailyForecast = <DailyForecast>[];
-    for (int i = 0; i < dailyTimes.length && i < 3; i++) {
+    for (int i = 0;
+        i < dailyTimes.length && i < 3 && i < maxTemps.length && i < minTemps.length;
+        i++) {
       dailyForecast.add(DailyForecast(
         date: dailyTimes[i],
         maxTemperature: maxTemps[i],
@@ -78,10 +98,16 @@ class WeatherData {
     }
     
     return WeatherData(
-      currentTemperature: temperatures.first,
-      windSpeed: windSpeeds.first,
-      precipitation: precipitation.first,
-      weatherCode: weatherCodes.first,
+      // Was temperatures.first — the first HOURLY slot, i.e. midnight UTC,
+      // which is 8 am in WA. Use the API's actual current conditions.
+      currentTemperature: (current?['temperature_2m'] as num?)?.toDouble() ??
+          (temperatures.isNotEmpty ? temperatures.first : 0.0),
+      windSpeed: (current?['wind_speed_10m'] as num?)?.toDouble() ??
+          (windSpeeds.isNotEmpty ? windSpeeds.first : 0.0),
+      precipitation: (current?['precipitation'] as num?)?.toDouble() ??
+          (precipitation.isNotEmpty ? precipitation.first : 0.0),
+      weatherCode: (current?['weather_code'] as num?)?.toInt() ??
+          (weatherCodes.isNotEmpty ? weatherCodes.first : 0),
       hourlyForecast: hourlyForecast,
       dailyForecast: dailyForecast,
     );

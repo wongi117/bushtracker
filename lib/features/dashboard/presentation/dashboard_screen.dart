@@ -920,6 +920,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               ),
             ),
 
+          // Weather sits under the bottom sheet (so an expanded sheet covers it)
+          // and steps aside while the tracking or navigation panels are up.
+          if (_trackedPin == null && !navState.isActive) const WeatherOverlay(),
+
           // Scale Bar (Bottom Left, above coordinate display)
           Positioned(
             bottom: 260,
@@ -1137,7 +1141,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             ),
           ),
           const AiVoiceOverlay(),
-          const WeatherOverlay(),
 
           // Measurement Tool
           if (_showMeasurementTool)
