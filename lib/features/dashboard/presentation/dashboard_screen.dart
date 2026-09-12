@@ -879,10 +879,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             ),
           ),
 
-          // Compass Rose — below the top bar
+          // Compass Rose — bottom right, out of the way of the top-of-screen
+          // panels (pin tracking, navigation) and clear of the scale bar,
+          // coordinates and breadcrumb buttons, which all sit left/centre.
           Positioned(
-            top: MediaQuery.of(context).padding.top + 76,
-            right: 80,
+            bottom: 150,
+            right: 14,
             child: Consumer(
               builder: (context, ref, _) {
                 final heading = ref.watch(headingProvider).valueOrNull ??
