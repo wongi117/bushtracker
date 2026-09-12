@@ -29,7 +29,23 @@
   <div id="error-box"></div>
 
   <script>
-    // Show a visible error if Flutter fails to START. Once Flutter has
+    // Older builds installed a service worker that served the whole app from
+    // the phone's storage, so a device could keep running a months-old copy
+    // no matter what the server sent. Clear any of those out on load.
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations()
+        .then(function (rs) { rs.forEach(function (r) { r.unregister(); }); })
+        .catch(function () {});
+    }
+    if (window.caches && caches.keys) {
+      caches.keys()
+        .then(function (ks) { ks.forEach(function (k) { caches.delete(k); }); })
+        .catch(function () {});
+    }
+  </script>
+
+  <script>
+    // Show a visible error if Flutter fails to START.Once Flutter has
     // rendered, a stray runtime error (e.g. a GPS dropout) used to put this
     // full-screen box over the running app, which looked like a crash.
     window.addEventListener('error', function(e) {

@@ -30,7 +30,12 @@ DART_DEFINES=""
 [ -n "$MAPBOX_TOKEN" ]    && DART_DEFINES="$DART_DEFINES --dart-define=MAPBOX_TOKEN=$MAPBOX_TOKEN"
 [ -n "$MAPTILER_KEY" ]    && DART_DEFINES="$DART_DEFINES --dart-define=MAPTILER_KEY=$MAPTILER_KEY"
 
-flutter build web --release $DART_DEFINES
+# One id for this build: baked into the app (shown in the menu) and used for
+# the cache-busted URLs, so the number on screen matches the ?v= being served.
+export BUILD_ID="$(date -u +%Y%m%d%H%M%S)"
+echo "==> Build id: $BUILD_ID"
+
+flutter build web --release $DART_DEFINES --dart-define=BUILD_ID=$BUILD_ID
 
 echo "==> Cache-busting (every build gets its own URLs)..."
 bash cache-bust-web.sh build/web

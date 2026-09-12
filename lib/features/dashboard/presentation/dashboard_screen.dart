@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'dart:ui' as ui;
 import 'package:bush_track/core/services/heading/heading_provider.dart';
+import 'package:bush_track/core/config/build_info.dart';
 import 'package:bush_track/core/utils/web_helpers.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:mesh_gradient/mesh_gradient.dart';
@@ -3284,8 +3285,18 @@ class _HamburgerDrawer extends StatelessWidget {
           child: const Icon(Icons.explore, color: Colors.white, size: 20),
         ),
         const SizedBox(width: 8),
-        const Text('BUSHTRACK',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15, letterSpacing: 1)),
+        const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('BUSHTRACK',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15, letterSpacing: 1)),
+            // Which build is actually running on this phone. Field reports
+            // are guesswork without it — a stale cached copy looks identical.
+            Text('build $kBuildId',
+                style: TextStyle(color: Colors.white38, fontSize: 10)),
+          ],
+        ),
         const Spacer(),
         GestureDetector(
           onTap: onClose,
