@@ -9,23 +9,37 @@ class UnifiedVoiceService {
 
   FlutterTts? _tts;
   bool _isInitialized = false;
-  double _speechRate = 1.1;
+
+  /// Speed on a scale where 1.0 is ordinary talking speed, whatever the
+  /// platform. Converted by [_platformRate] on the way to the engine.
+  double _speechRate = 1.0;
   double _pitch = 1.0;
   String _language = 'en-AU';
 
   static const Map<String, double> speedPresets = {
     'slow': 0.8,
-    'normal': 1.1,
-    'fast': 1.4,
-    'very_fast': 1.7,
+    'normal': 1.0,
+    'fast': 1.25,
+    'very_fast': 1.5,
   };
+
+  /// flutter_tts does not use one scale.
+  ///
+  /// Android and iOS take 0.0-1.0 where **0.5** is normal speech; the web
+  /// speech API takes 0-10 where **1.0** is normal. The app set 1.1 on every
+  /// platform, which is about right on the web and roughly double speed on a
+  /// phone — which is exactly how it sounded in the field.
+  static double _platformRate(double normalised) {
+    if (kIsWeb) return normalised.clamp(0.1, 3.0);
+    return (normalised * 0.5).clamp(0.0, 1.0);
+  }
 
   Future<void> initialize() async {
     if (_isInitialized) return;
     _tts = FlutterTts();
     try {
       await _tts!.setLanguage(_language);
-      await _tts!.setSpeechRate(_speechRate);
+      await _tts!.setSpeechRate(_platformRate(_speechRate));
       await _tts!.setPitch(_pitch);
       await _tts!.setVolume(1.0);
     } catch (e) {
@@ -54,16 +68,16 @@ class UnifiedVoiceService {
   }
 
   Future<void> setSpeechRate(String speed) async {
-    _speechRate = speedPresets[speed] ?? 1.1;
+    _speechRate = speedPresets[speed] ?? 1.0;
     try {
-      await _tts?.setSpeechRate(_speechRate);
+      await _tts?.setSpeechRate(_platformRate(_speechRate));
     } catch (_) {}
   }
 
   Future<void> setCustomSpeechRate(double rate) async {
     _speechRate = rate.clamp(0.5, 2.0);
     try {
-      await _tts?.setSpeechRate(_speechRate);
+      await _tts?.setSpeechRate(_platformRate(_speechRate));
     } catch (_) {}
   }
 

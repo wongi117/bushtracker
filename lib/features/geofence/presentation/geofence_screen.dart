@@ -1,10 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:bush_track/theme/app_colors.dart';
+import 'package:latlong2/latlong.dart';
+
+import 'package:bush_track/core/models/geofence.dart';
+import 'package:bush_track/core/utils/geo_geometry.dart';
+import 'package:bush_track/features/geofence/presentation/zone_drawing.dart';
+import 'package:bush_track/features/files/providers/files_provider.dart';
 import 'package:bush_track/features/geofence/providers/geofence_provider.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
-import 'package:bush_track/core/models/geofence.dart';
+import 'package:bush_track/theme/app_colors.dart';
 
+/// Every zone that has been flagged: circles and drawn boundaries.
+///
+/// Tapping one closes the list and returns it, so the map can fly there —
+/// the previous version had no way at all to see where a zone was.
 class GeofenceScreen extends ConsumerStatefulWidget {
   const GeofenceScreen({super.key});
 
@@ -16,16 +25,29 @@ class _GeofenceScreenState extends ConsumerState<GeofenceScreen> {
   @override
   Widget build(BuildContext context) {
     final geofenceState = ref.watch(geofenceProvider);
-    final fences = geofenceState.geofences;
+    final locationState = ref.watch(locationProvider);
+    final here = locationState.stats.currentLat == null
+        ? null
+        : LatLng(locationState.stats.currentLat!,
+            locationState.stats.currentLon!);
+
+    // Nearest first when there is a position to measure from — the zone being
+    // stood next to is the one being looked for.
+    final zones = [...geofenceState.geofences];
+    if (here != null) {
+      const distance = Distance();
+      zones.sort((a, b) =>
+          distance(here, a.centre).compareTo(distance(here, b.centre)));
+    }
 
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
         backgroundColor: AppColors.panelMatte,
         title: const Row(children: [
-          Icon(Icons.circle_outlined, color: AppColors.accent, size: 20),
+          Icon(Icons.layers_outlined, color: AppColors.accent, size: 20),
           SizedBox(width: 8),
-          Text('GEOFENCES', style: TextStyle(color: Colors.white)),
+          Text('ZONES', style: TextStyle(color: Colors.white)),
         ]),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
@@ -33,49 +55,64 @@ class _GeofenceScreenState extends ConsumerState<GeofenceScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.add_circle_outline, color: AppColors.accent),
-            tooltip: 'Add geofence at current location',
+            icon: const Icon(Icons.my_location, color: AppColors.accent),
+            tooltip: 'Quick circle where I am standing',
             onPressed: () => _showAddDialog(context),
           ),
         ],
       ),
-      body: fences.isEmpty
+      body: zones.isEmpty
           ? _buildEmpty()
           : ListView.builder(
               padding: const EdgeInsets.all(16),
-              itemCount: fences.length,
-              itemBuilder: (_, i) => _buildTile(fences[i]),
+              itemCount: zones.length,
+              itemBuilder: (_, i) => _buildTile(zones[i], here),
             ),
     );
   }
 
   Widget _buildEmpty() => Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.circle_outlined,
-                size: 64,
-                color: AppColors.textSecondary.withValues(alpha: 0.5)),
-            const SizedBox(height: 16),
-            const Text(
-              'No geofences yet',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 16),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Tap + to create a zone around your current location.',
-              style: TextStyle(
-                  color: AppColors.textSecondary.withValues(alpha: 0.6),
-                  fontSize: 13),
-              textAlign: TextAlign.center,
-            ),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.layers_outlined,
+                  size: 64,
+                  color: AppColors.textSecondary.withValues(alpha: 0.5)),
+              const SizedBox(height: 16),
+              const Text(
+                'No zones yet',
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 16),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Use Draw Zone in the menu to tap out a boundary on the map, '
+                'or the target button up top for a quick circle where you are '
+                'standing.',
+                style: TextStyle(
+                    color: AppColors.textSecondary.withValues(alpha: 0.6),
+                    fontSize: 13),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
         ),
       );
 
-  Widget _buildTile(Geofence fence) {
-    final isInside =
-        ref.watch(geofenceProvider).insideIds.contains(fence.id);
+  Widget _buildTile(Geofence zone, LatLng? here) {
+    final isInside = ref.watch(geofenceProvider).insideIds.contains(zone.id);
+    final color = Color(zone.category.colorValue);
+
+    final facts = <String>[
+      zone.isPolygon
+          ? '${zone.points.length} corners'
+          : '${zone.radiusMeters.round()} m radius',
+      formatArea(zone.areaSqMetres),
+      if (here != null && !isInside)
+        '${formatDistance(zone.distanceToEdgeMetres(here))} away',
+    ];
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -84,44 +121,267 @@ class _GeofenceScreenState extends ConsumerState<GeofenceScreen> {
         border: Border.all(
           color: isInside
               ? AppColors.statusGreen.withValues(alpha: 0.6)
-              : AppColors.primaryOrange.withValues(alpha: 0.2),
+              : color.withValues(alpha: 0.3),
         ),
       ),
       child: ListTile(
-        leading: Icon(
-          isInside ? Icons.location_on : Icons.circle_outlined,
-          color: isInside ? AppColors.statusGreen : AppColors.textSecondary,
+        onTap: () => Navigator.pop(context, ZoneAction(zone)),
+        leading: Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.18),
+            borderRadius: BorderRadius.circular(9),
+            border: Border.all(color: color.withValues(alpha: 0.6)),
+          ),
+          child: Icon(
+            zone.isPolygon ? Icons.pentagon_outlined : Icons.circle_outlined,
+            color: color,
+            size: 20,
+          ),
         ),
-        title: Text(fence.name,
-            style: const TextStyle(color: Colors.white, fontSize: 14)),
-        subtitle: Text(
-          '${fence.radiusMeters.toInt()} m radius  •  '
-          '${fence.latitude.toStringAsFixed(4)}, ${fence.longitude.toStringAsFixed(4)}'
-          '${isInside ? '  •  INSIDE' : ''}',
-          style: TextStyle(
-              color: isInside
-                  ? AppColors.statusGreen
-                  : AppColors.textSecondary.withValues(alpha: 0.7),
-              fontSize: 11),
+        title: Row(
+          children: [
+            Flexible(
+              child: Text(zone.name,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white, fontSize: 14)),
+            ),
+            if (isInside) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppColors.statusGreen.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text('INSIDE',
+                    style: TextStyle(
+                        color: AppColors.statusGreen,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800)),
+              ),
+            ],
+          ],
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 2),
+            Text(
+              '${zone.category.label}  •  ${facts.join('  •  ')}',
+              style: TextStyle(
+                  color: AppColors.textSecondary.withValues(alpha: 0.8),
+                  fontSize: 11),
+            ),
+            if (zone.notes != null && zone.notes!.isNotEmpty) ...[
+              const SizedBox(height: 3),
+              Text(
+                zone.notes!,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    color: AppColors.textMuted,
+                    fontSize: 11,
+                    fontStyle: FontStyle.italic),
+              ),
+            ],
+          ],
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Switch(
-              value: fence.isActive,
+              value: zone.isActive,
               activeThumbColor: AppColors.accent,
               onChanged: (_) =>
-                  ref.read(geofenceProvider.notifier).toggleGeofence(fence.id!),
+                  ref.read(geofenceProvider.notifier).toggleGeofence(zone.id!),
             ),
             IconButton(
-              icon: const Icon(Icons.delete_outline,
-                  color: AppColors.statusRed, size: 20),
-              onPressed: () => _confirmDelete(fence),
+              icon: const Icon(Icons.more_vert,
+                  color: AppColors.textSecondary, size: 20),
+              onPressed: () => _showZoneActions(zone),
             ),
           ],
         ),
       ),
     );
+  }
+
+  void _showZoneActions(Geofence zone) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.panelMatte,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            ListTile(
+              leading: const Icon(Icons.near_me, color: AppColors.statusGreen),
+              title: const Text('Track this zone',
+                  style: TextStyle(color: Colors.white)),
+              subtitle: const Text('Distance and direction until you reach it',
+                  style: TextStyle(
+                      color: AppColors.textSecondary, fontSize: 12)),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                Navigator.pop(context, ZoneAction(zone, track: true));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_outlined, color: AppColors.accent),
+              title: const Text('Move to a file',
+                  style: TextStyle(color: Colors.white)),
+              subtitle: Text(
+                  _fileLabel(zone),
+                  style: const TextStyle(
+                      color: AppColors.textSecondary, fontSize: 12)),
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                await _pickFile(zone);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit, color: AppColors.accent),
+              title: const Text('Rename or re-flag',
+                  style: TextStyle(color: Colors.white)),
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                await _editZone(zone);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.open_in_full, color: AppColors.accent),
+              title: Text(
+                  zone.isPolygon ? 'Redraw on map' : 'Resize on map',
+                  style: const TextStyle(color: Colors.white)),
+              subtitle: Text(
+                  zone.isPolygon
+                      ? 'Tap out new corners for this zone'
+                      : 'Drag its edge to make it bigger or smaller',
+                  style: const TextStyle(
+                      color: AppColors.textSecondary, fontSize: 12)),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                Navigator.pop(context, ZoneAction(zone, resize: true));
+              },
+            ),
+            ListTile(
+              leading:
+                  const Icon(Icons.delete_outline, color: AppColors.statusRed),
+              title: const Text('Delete zone',
+                  style: TextStyle(color: AppColors.statusRed)),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _confirmDelete(zone);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Which file this zone is filed under, for the action sheet subtitle.
+  String _fileLabel(Geofence zone) {
+    final files = ref.read(filesProvider).files;
+    final match = files.where((f) => f.id == zone.fileId);
+    return match.isEmpty ? 'Not in a file' : 'In ${match.first.name}';
+  }
+
+  /// Move a zone into a field file — or out of one.
+  ///
+  /// Zones are filed automatically when a file is open as they are drawn, but
+  /// one flagged before the file existed needs a way in afterwards.
+  Future<void> _pickFile(Geofence zone) async {
+    final files = ref.read(filesProvider).files;
+    if (files.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('No files yet — make one from the folder button first.'),
+        backgroundColor: AppColors.primaryOrange,
+      ));
+      return;
+    }
+
+    final chosen = await showModalBottomSheet<int?>(
+      context: context,
+      backgroundColor: AppColors.panelMatte,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(18, 16, 18, 8),
+              child: Text('FILE THIS ZONE UNDER',
+                  style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1)),
+            ),
+            ...files.map((f) => ListTile(
+                  leading: Icon(
+                      zone.fileId == f.id
+                          ? Icons.folder_open_rounded
+                          : Icons.folder_rounded,
+                      color: AppColors.accent),
+                  title: Text(f.name,
+                      style: const TextStyle(color: Colors.white)),
+                  trailing: zone.fileId == f.id
+                      ? const Icon(Icons.check, color: AppColors.statusGreen)
+                      : null,
+                  onTap: () => Navigator.pop(sheetContext, f.id),
+                )),
+            const Divider(color: AppColors.panelHighlight),
+            ListTile(
+              leading:
+                  const Icon(Icons.folder_off_outlined, color: AppColors.textMuted),
+              title: const Text('Not in a file',
+                  style: TextStyle(color: AppColors.textSecondary)),
+              onTap: () => Navigator.pop(sheetContext, -1),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (chosen == null) return;
+    await ref.read(geofenceProvider.notifier).updateZone(
+        zone.copyWith(fileId: chosen == -1 ? null : chosen, clearFile: chosen == -1));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(chosen == -1
+          ? '${zone.name} removed from its file'
+          : '${zone.name} filed'),
+      backgroundColor: AppColors.statusGreen,
+    ));
+  }
+
+  Future<void> _editZone(Geofence zone) async {
+    final summary = zone.isPolygon
+        ? '${zone.points.length} corners  •  ${formatArea(zone.areaSqMetres)}'
+        : '${zone.radiusMeters.round()} m radius  •  ${formatArea(zone.areaSqMetres)}';
+
+    final details = await showZoneDetailsSheet(
+      context,
+      summary: summary,
+      initial: ZoneDetails(
+          name: zone.name, category: zone.category, notes: zone.notes),
+    );
+    if (details == null) return;
+
+    await ref.read(geofenceProvider.notifier).updateZone(zone.copyWith(
+          name: details.name,
+          category: details.category,
+          notes: details.notes,
+        ));
   }
 
   void _showAddDialog(BuildContext context) {
@@ -137,8 +397,8 @@ class _GeofenceScreenState extends ConsumerState<GeofenceScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setStateDlg) => AlertDialog(
           backgroundColor: AppColors.panelMatte,
-          title: const Text('New Geofence',
-              style: TextStyle(color: Colors.white)),
+          title: const Text('Zone where I am standing',
+              style: TextStyle(color: Colors.white, fontSize: 17)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -162,8 +422,7 @@ class _GeofenceScreenState extends ConsumerState<GeofenceScreen> {
                   labelStyle:
                       const TextStyle(color: AppColors.textSecondary),
                   filled: true,
-                  fillColor:
-                      AppColors.background.withValues(alpha: 0.5),
+                  fillColor: AppColors.background.withValues(alpha: 0.5),
                   border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8)),
                 ),
@@ -179,6 +438,10 @@ class _GeofenceScreenState extends ConsumerState<GeofenceScreen> {
                 activeColor: AppColors.accent,
                 onChanged: (v) => setStateDlg(() => radius = v),
               ),
+              const Text(
+                'For a boundary that is not a circle, use Draw Zone on the map.',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 11),
+              ),
             ],
           ),
           actions: [
@@ -188,21 +451,22 @@ class _GeofenceScreenState extends ConsumerState<GeofenceScreen> {
                   style: TextStyle(color: AppColors.textSecondary)),
             ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.accent),
-              onPressed: lat == null || nameCtrl.text.trim().isEmpty
+              style:
+                  ElevatedButton.styleFrom(backgroundColor: AppColors.accent),
+              onPressed: lat == null
                   ? null
                   : () {
+                      final name = nameCtrl.text.trim();
                       ref.read(geofenceProvider.notifier).addGeofence(
-                            name: nameCtrl.text.trim(),
+                            name: name.isEmpty ? 'Zone' : name,
                             latitude: lat,
                             longitude: lon!,
                             radiusMeters: radius,
                           );
                       Navigator.pop(ctx);
                     },
-              child: const Text('Save',
-                  style: TextStyle(color: Colors.white)),
+              child:
+                  const Text('Save', style: TextStyle(color: Colors.black)),
             ),
           ],
         ),
@@ -215,8 +479,7 @@ class _GeofenceScreenState extends ConsumerState<GeofenceScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.panelMatte,
-        title: const Text('Delete Geofence',
-            style: TextStyle(color: Colors.white)),
+        title: const Text('Delete zone', style: TextStyle(color: Colors.white)),
         content: Text('Delete "${fence.name}"?',
             style: const TextStyle(color: AppColors.textSecondary)),
         actions: [
@@ -227,9 +490,7 @@ class _GeofenceScreenState extends ConsumerState<GeofenceScreen> {
           ),
           TextButton(
             onPressed: () {
-              ref
-                  .read(geofenceProvider.notifier)
-                  .deleteGeofence(fence.id!);
+              ref.read(geofenceProvider.notifier).deleteGeofence(fence.id!);
               Navigator.pop(ctx);
             },
             child: const Text('Delete',

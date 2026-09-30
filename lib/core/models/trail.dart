@@ -27,6 +27,9 @@ class Trail {
   bool? showDirection; // Show arrows along the trail
   bool? isActive; // Currently being followed
 
+  /// The field file this was recorded under, if one was open at the time.
+  int? fileId;
+
   Trail({
     this.id,
     this.name,
@@ -43,6 +46,7 @@ class Trail {
     this.lineStyle,
     this.showDirection,
     this.isActive,
+    this.fileId,
   });
 
   /// Get trail waypoints as list of LatLng
@@ -87,6 +91,7 @@ class Trail {
       lineStyle: map['line_style'] ?? 'solid',
       showDirection: map['show_direction'] == 1,
       isActive: map['is_active'] == 1,
+      fileId: map['file_id'] as int?,
     );
   }
 
@@ -108,6 +113,7 @@ class Trail {
       'line_style': lineStyle,
       'show_direction': showDirection == true ? 1 : 0,
       'is_active': isActive == true ? 1 : 0,
+      'file_id': fileId,
     };
   }
 

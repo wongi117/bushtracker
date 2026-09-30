@@ -35,7 +35,11 @@ DART_DEFINES=""
 export BUILD_ID="$(date -u +%Y%m%d%H%M%S)"
 echo "==> Build id: $BUILD_ID"
 
-flutter build web --release $DART_DEFINES --dart-define=BUILD_ID=$BUILD_ID
+# --no-web-resources-cdn serves CanvasKit (~5 MB) from our own domain instead
+# of gstatic.com. Fetching it cross-origin was a second large download before
+# anything could paint, on a connection that may barely have one - and if
+# gstatic is slow or blocked, the app never renders at all.
+flutter build web --release --no-web-resources-cdn $DART_DEFINES --dart-define=BUILD_ID=$BUILD_ID
 
 echo "==> Cache-busting (every build gets its own URLs)..."
 bash cache-bust-web.sh build/web

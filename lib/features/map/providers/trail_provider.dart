@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import '../../../core/models/trail.dart';
 import '../../../core/services/database_service.dart';
+import '../../files/providers/files_provider.dart';
 import '../../../main.dart';
 
 class TrailState {
@@ -85,7 +86,11 @@ class TrailNotifier extends StateNotifier<TrailState> {
   StreamSubscription<Position>? _positionSub;
   double? _lastVoiceDistanceM;
 
-  TrailNotifier(this.databaseService) : super(const TrailState()) {
+  /// For reading the open field file, so a trail recorded while one is open
+  /// is filed under it like pins and zones are.
+  final Ref ref;
+
+  TrailNotifier(this.databaseService, this.ref) : super(const TrailState()) {
     _loadTrails();
   }
 
@@ -156,6 +161,7 @@ class TrailNotifier extends StateNotifier<TrailState> {
       lineStyle: lineStyle,
       showDirection: showDirection,
       isSaved: true,
+      fileId: ref.read(filesProvider).activeFileId,
     );
     
     trail.setWaypoints(state.draftPoints);
@@ -395,5 +401,5 @@ class TrailNotifier extends StateNotifier<TrailState> {
 
 final trailProvider = StateNotifierProvider<TrailNotifier, TrailState>((ref) {
   final databaseService = ref.watch(databaseServiceProvider);
-  return TrailNotifier(databaseService);
+  return TrailNotifier(databaseService, ref);
 });

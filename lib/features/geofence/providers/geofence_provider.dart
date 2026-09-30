@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:bush_track/core/models/geofence.dart';
 import 'package:bush_track/core/services/database_service.dart';
+import 'package:bush_track/features/files/providers/files_provider.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
 import 'package:bush_track/main.dart';
 
@@ -62,6 +63,8 @@ class GeofenceNotifier extends StateNotifier<GeofenceState> {
     required double latitude,
     required double longitude,
     double radiusMeters = 200,
+    ZoneCategory category = ZoneCategory.exclusion,
+    String? notes,
   }) async {
     final fence = Geofence(
       name: name,
@@ -70,8 +73,41 @@ class GeofenceNotifier extends StateNotifier<GeofenceState> {
       radiusMeters: radiusMeters,
       isActive: true,
       createdAt: DateTime.now(),
+      category: category,
+      notes: notes,
+      fileId: ref.read(filesProvider).activeFileId,
     );
     await db.insertGeofence(fence.toMap());
+    await _load();
+  }
+
+  /// Save a boundary drawn corner by corner. Fewer than three corners does
+  /// not enclose anything, so there is nothing to be inside of.
+  Future<void> addPolygonZone({
+    required String name,
+    required List<LatLng> points,
+    ZoneCategory category = ZoneCategory.exclusion,
+    String? notes,
+  }) async {
+    if (points.length < 3) return;
+    final zone = Geofence.polygon(
+      name: name,
+      points: points,
+      isActive: true,
+      createdAt: DateTime.now(),
+      category: category,
+      notes: notes,
+      fileId: ref.read(filesProvider).activeFileId,
+    );
+    await db.insertGeofence(zone.toMap());
+    await _load();
+  }
+
+  /// Rename, recolour or re-note an existing zone. The shape is not editable
+  /// here — redrawing a boundary means drawing a new one.
+  Future<void> updateZone(Geofence zone) async {
+    if (zone.id == null) return;
+    await db.updateGeofence(zone.toMap());
     await _load();
   }
 
@@ -103,10 +139,13 @@ class GeofenceNotifier extends StateNotifier<GeofenceState> {
       final activeFences = state.geofences.where((f) => f.isActive);
       final newInside = <int>{};
 
+      // Shape-aware: a circle is a distance test, a drawn boundary is a
+      // point-in-polygon test. Checking a boundary by distance to its centre
+      // would call a long, thin lease "entered" from well outside one end and
+      // miss it entirely at the other.
+      final here = LatLng(lat, lon);
       for (final fence in activeFences) {
-        final dist = Geolocator.distanceBetween(
-            lat, lon, fence.latitude, fence.longitude);
-        if (dist <= fence.radiusMeters) {
+        if (fence.id != null && fence.contains(here)) {
           newInside.add(fence.id!);
         }
       }

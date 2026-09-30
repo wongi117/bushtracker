@@ -4,10 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sqflite_common/sqflite.dart';
 import 'core/services/database_service.dart';
+import 'core/utils/startup_trace.dart';
 
-// Conditional imports for platform-specific database
-import 'core/services/native_database_stub.dart'
-    if (dart.library.io) 'core/services/native_database_io.dart';
 
 import 'theme/app_theme.dart';
 import 'features/onboarding/presentation/splash_screen.dart';
@@ -26,7 +24,9 @@ final databaseProvider = Provider<Database>((ref) {
 final isarProvider = Provider<dynamic>((ref) => null);
 
 void main() async {
+  StartupTrace.mark('main');
   WidgetsFlutterBinding.ensureInitialized();
+  StartupTrace.mark('binding');
   
   // Add comprehensive error handling for Flutter errors
   FlutterError.onError = (details) {
@@ -45,15 +45,18 @@ void main() async {
   // Initialize database service (works on all platforms including web)
   final databaseService = DatabaseService();
   await databaseService.initialize();
-  debugPrint('🟢 DatabaseService initialized successfully');
+  StartupTrace.mark('database');
 
-  // Initialize native database only for mobile platforms
-  dynamic isar;
-  if (!kIsWeb) {
-    isar = await initializeIsar();
-    debugPrint('🟢 Isar database initialized successfully');
-  }
+  // Isar is not opened any more.
+  //
+  // It threw "IllegalArg: Collection id is invalid" on every Android launch,
+  // and nothing read it: isarProvider is consumed nowhere outside this file,
+  // and every feature persists through DatabaseService (sqflite). So it cost
+  // a failed open and the startup time to do it, and gave nothing back.
+  // initializeIsar() is still in core/services if it is ever wanted.
+  const dynamic isar = null;
 
+  StartupTrace.mark('runApp');
   runApp(
     ProviderScope(
       overrides: [
@@ -103,7 +106,7 @@ class BushTrackApp extends StatelessWidget {
       title: 'BushTrack',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
-      home: const SplashScreen(),
+      home: const SplashGate(),
     );
   }
 }

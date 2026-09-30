@@ -6,6 +6,8 @@ import 'package:flutter/rendering.dart';
 import 'dart:ui' as ui;
 import 'package:bush_track/core/services/heading/heading_provider.dart';
 import 'package:bush_track/core/config/build_info.dart';
+import 'package:bush_track/core/utils/startup_trace.dart';
+import 'package:bush_track/main.dart' show databaseServiceProvider;
 import 'package:bush_track/core/utils/web_helpers.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:mesh_gradient/mesh_gradient.dart';
@@ -14,18 +16,28 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:bush_track/features/map/widgets/immersive_3d_map.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as mgl;
 import 'package:flutter_map/flutter_map.dart';
+import 'package:http/http.dart' show Client;
+import 'package:http/retry.dart' show RetryClient;
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bush_track/theme/app_colors.dart';
 import 'widgets/mesh_bottom_sheet.dart';
 import 'widgets/sos_hold_button.dart';
 import '../../tracking/providers/location_provider.dart';
+import '../../tracking/providers/track_target_provider.dart';
 import '../../mesh/providers/mesh_provider.dart';
 import 'package:bush_track/core/models/mesh_packet.dart';
 import 'package:bush_track/features/ai/providers/ai_control_provider.dart';
 import '../../ai/providers/ai_assistant_provider.dart';
 import 'package:bush_track/features/ai/services/ai_monitor_service.dart';
+import 'package:bush_track/core/models/geofence.dart';
+import 'package:bush_track/core/utils/geo_geometry.dart' show formatArea, formatDistance;
+import 'package:bush_track/features/geofence/presentation/geofence_screen.dart';
+import 'package:bush_track/features/geofence/presentation/zone_drawing.dart';
 import 'package:bush_track/features/geofence/providers/geofence_provider.dart';
+import 'package:bush_track/features/chat/presentation/ai_chat_screen.dart' show showAIChat;
+import 'package:bush_track/features/files/presentation/files_screen.dart';
+import 'package:bush_track/features/files/providers/files_provider.dart';
 import 'package:bush_track/features/gallery/presentation/photo_gallery_screen.dart';
 import 'widgets/ai_voice_overlay.dart';
 import '../../mesh/providers/mesh_sync_provider.dart';
@@ -33,7 +45,9 @@ import 'package:bush_track/features/weather/widgets/weather_overlay.dart';
 import 'package:bush_track/features/places/presentation/places_search_screen.dart';
 import 'package:bush_track/features/navigation/presentation/route_options_screen.dart';
 import 'package:bush_track/features/navigation/providers/navigation_provider.dart';
+import 'package:bush_track/features/map/presentation/marker_picker_screen.dart';
 import 'package:bush_track/features/map/providers/map_action_provider.dart';
+import 'package:bush_track/features/map/providers/marker_visibility_provider.dart';
 import 'package:bush_track/features/ar/presentation/ar_compass_screen.dart';
 import 'package:bush_track/features/ar/presentation/ar_camera_screen.dart';
 import 'package:bush_track/features/settings/presentation/settings_screen.dart';
@@ -113,6 +127,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   /// Pin being tracked: live distance, direction and a compass arrow.
   Waypoint? _trackedPin;
 
+  /// Whatever is being tracked — a pin or a zone. The map line, the
+  /// heads-up panel and the AR ground track all read this rather than
+  /// the pin, so a zone is a destination like any other.
+  TrackTarget? get _trackTarget => ref.read(trackTargetProvider);
+
   // Map state
   bool _mapInitialized = false;
   bool _tilesLoading = true;
@@ -123,6 +142,33 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   final GlobalKey<MeasurementToolState> _measurementKey =
       GlobalKey<MeasurementToolState>();
   bool _showMeasurementTool = false;
+
+  /// The zone being drawn, or null when not drawing. Held here because the
+  /// corners come from taps on the map.
+  ZoneDraft? _zoneDraft;
+
+  /// The map's own coordinate space, for turning a finger position on screen
+  /// back into a position on the ground while dragging a zone bigger.
+  final GlobalKey _mapAreaKey = GlobalKey();
+
+  /// Tiles that survive a flaky connection.
+  ///
+  /// Retries on ANY failure, not just 503: out here the failure is a dropped
+  /// connection or a name that would not resolve, and those are exactly the
+  /// ones worth trying again. Backs off so a genuinely offline phone is not
+  /// hammering the radio and flattening the battery.
+  late final _retryingTileProvider = NetworkTileProvider(
+    httpClient: RetryClient(
+      Client(),
+      // Patient enough to outlast wifi associating after a cold start:
+      // 0.5 + 1 + 2 + 4 + 8 seconds. The tile failures seen at launch were
+      // all in the first few seconds while the radio was still coming up.
+      retries: 5,
+      when: (response) => response.statusCode >= 500,
+      whenError: (_, __) => true,
+      delay: (attempt) => Duration(milliseconds: 500 * (1 << attempt)),
+    ),
+  );
 
   // NEW: Coordinate display
   CoordinateFormat _coordinateFormat = CoordinateFormat.decimalDegrees;
@@ -163,8 +209,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   }
 
   void _setupMapListeners() {
+    StartupTrace.mark('dashboard_build');
     // Mark map as initialized immediately — tile loading state is managed by TileLayer itself
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      StartupTrace.mark('dashboard_first_frame');
       if (mounted) {
         setState(() {
           _mapInitialized = true;
@@ -281,7 +329,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     final navState = ref.watch(navigationProvider);
     // Initialize monitoring services so their timers start.
     ref.watch(aiMonitorServiceProvider);
-    ref.watch(geofenceProvider);
+    final geofenceState = ref.watch(geofenceProvider);
 
     // Auto-center map on first real GPS fix
     ref.listen<LocationState>(locationProvider, (_, next) {
@@ -324,8 +372,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
         '?? DASHBOARD PROVIDERS LOADED - waypoints: ${locationState.waypoints.length}');
 
     // Get pin waypoints (not track points)
+    // Hidden markers are still saved — they just stop being drawn, so a
+    // busy map can be narrowed to whatever the job actually is.
+    final visibility = ref.watch(markerVisibilityProvider);
     final pinWaypoints = locationState.waypoints
         .where((w) => w.isPin == true || w.type == WaypointType.manual)
+        .where((w) => visibility.showsPin(id: w.id, fileId: w.fileId))
         .toList();
 
     final baseTileUrl = _tileUrls[_mapStyleIndex];
@@ -364,6 +416,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                     behavior: HitTestBehavior.translucent,
                     onScaleStart: _isCreatingTrail ? null : (_) {},
                     child: FlutterMap(
+                      key: _mapAreaKey,
                       mapController: _mapController,
                       options: MapOptions(
                         initialCenter: locationState.stats.currentLat != null
@@ -397,6 +450,17 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                         // Tile layer with OpenStreetMap
                         TileLayer(
                           urlTemplate: baseTileUrl,
+                          // OpenStreetMap's tile policy rejects clients that
+                          // do not identify themselves — without this their
+                          // server returns 403 and the style shows "access
+                          // blocked". OpenTopoMap asks for the same thing.
+                          userAgentPackageName: 'au.com.futuregenai.pinagemaps',
+                          // flutter_map already wraps tiles in a RetryClient,
+                          // but its default only retries HTTP 503 — a DNS or
+                          // socket failure is not retried at all. So one blip
+                          // as the app opens leaves those tiles permanently
+                          // blank, which reads as "the map never loaded".
+                          tileProvider: _retryingTileProvider,
                           // OpenTopoMap uses {s} subdomain rotation
                           subdomains: _mapStyleIndex == 1 ? const ['a', 'b', 'c'] : const [],
                           maxZoom: 19.0,
@@ -448,7 +512,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                             ],
                           ),
                         // Line from you to the pin being tracked.
-                        if (_trackedPin != null &&
+                        if (_trackTarget != null &&
                             locationState.stats.currentLat != null &&
                             locationState.stats.currentLon != null)
                           PolylineLayer(polylines: [
@@ -456,8 +520,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                               points: [
                                 LatLng(locationState.stats.currentLat!,
                                     locationState.stats.currentLon!),
-                                LatLng(_trackedPin!.latitude!,
-                                    _trackedPin!.longitude!),
+                                _trackTarget!.position,
                               ],
                               color: const Color(0xFF4CAF50),
                               strokeWidth: 3,
@@ -512,8 +575,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                                       : null;
                               return Marker(
                                 point: wPos,
-                                width: 62,
-                                height: 68,
+                                width: 78,
+                                height: 78,
                                 // The whole marker sits ABOVE the point, so the
                                 // pin's tip is on the coordinate and the chip
                                 // is above it. flutter_map 6: "topCenter means
@@ -575,6 +638,20 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                               ),
                             ],
                           ),
+                        // Saved zones, and whatever is being drawn. Under the
+                        // pins and the user's own marker so a boundary never
+                        // hides them.
+                        ...buildZoneMapLayers(
+                          zones: geofenceState.geofences
+                              .where((z) =>
+                                  visibility.showsZone(id: z.id, fileId: z.fileId))
+                              .toList(),
+                          insideIds: geofenceState.insideIds,
+                          draft: _zoneDraft,
+                          showLabels: _currentZoom >= 11,
+                          onRadiusDragTo: _resizeZoneDraftTo,
+                        ),
+
                         // Target Pin
                         if (_targetPin != null)
                           MarkerLayer(
@@ -654,42 +731,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               ),
             ),
 
-          // Offline banner
-          if (_showOfflineBanner)
-            Positioned(
-              top: 50,
-              left: 20,
-              right: 20,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(
-                  color: AppColors.accent.withValues(alpha: 0.9),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.wifi_off, color: Colors.white),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'Some map tiles need internet. Core survival features work fully offline.',
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.9),
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                    GestureDetector(
-                      onTap: () => setState(() => _showOfflineBanner = false),
-                      child: const Icon(Icons.close,
-                          color: Colors.white, size: 20),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
           // Floating top buttons — no background bar, sit directly over the map
           Positioned(
             top: MediaQuery.of(context).padding.top + 10,
@@ -741,10 +782,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
                 // Camera button — opens AR camera (live feed + pin save)
                 final camera = GestureDetector(
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const ARCameraScreen()),
-                  ),
+                  onTap: _openCamera,
                   child: Container(
                     width: 54,
                     height: 54,
@@ -769,6 +807,51 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                   ),
                 );
 
+                // Files button. Glows when a file is open, because anything
+                // dropped while one is open gets filed under it and that
+                // needs to be visible without opening a menu.
+                final hasOpenFile =
+                    ref.watch(filesProvider).activeFileId != null;
+                final files = GestureDetector(
+                  onTap: _showFiles,
+                  child: Container(
+                    width: 54,
+                    height: 54,
+                    decoration: BoxDecoration(
+                      // Brown, so the three buttons read apart at a glance.
+                      // An open file keeps the brown but gains a lit rim and
+                      // an open-folder icon — that state has to stay obvious,
+                      // because everything dropped is being filed under it.
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFA9744F), Color(0xFF5D4037)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                          color: hasOpenFile
+                              ? AppColors.accentLight
+                              : Colors.white.withValues(alpha: 0.18),
+                          width: hasOpenFile ? 2 : 1.2),
+                      boxShadow: [
+                        BoxShadow(
+                          color: hasOpenFile
+                              ? AppColors.accent.withValues(alpha: 0.5)
+                              : Colors.black.withValues(alpha: 0.35),
+                          blurRadius: hasOpenFile ? 18 : 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                        hasOpenFile
+                            ? Icons.folder_open_rounded
+                            : Icons.folder_rounded,
+                        color: Colors.white,
+                        size: 26),
+                  ),
+                );
+
                 // Search button
                 final search = GestureDetector(
                   onTap: () => Navigator.push(
@@ -780,27 +863,24 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                     width: 54,
                     height: 54,
                     decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          Colors.white.withValues(alpha: 0.18),
-                          Colors.white.withValues(alpha: 0.08),
-                        ],
+                      // Green, matching the brown folder and purple camera as
+                      // three distinguishable buttons rather than three greys.
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF4CAF50), Color(0xFF1B5E20)],
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                       ),
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.25), width: 1.2),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.35),
-                          blurRadius: 12,
+                          color: const Color(0xFF2E7D32).withValues(alpha: 0.5),
+                          blurRadius: 16,
                           offset: const Offset(0, 4),
                         ),
                       ],
                     ),
-                    child: Icon(Icons.search_rounded,
-                        color: Colors.white.withValues(alpha: 0.9), size: 26),
+                    child: const Icon(Icons.search_rounded,
+                        color: Colors.white, size: 26),
                   ),
                 );
 
@@ -808,8 +888,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                   return Row(children: [
                     hamburger,
                     const Spacer(),
+                    files,
+                    const SizedBox(width: 8),
                     camera,
-                    const Spacer(),
+                    const SizedBox(width: 8),
                     search,
                   ]);
                 }
@@ -867,6 +949,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                   ),
                   ),
                   const SizedBox(width: 10),
+                  files,
+                  const SizedBox(width: 8),
                   camera,
                   const SizedBox(width: 8),
                   search,
@@ -913,7 +997,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             child: SosHoldButton(onTriggered: _showSOSConfirmation),
           ),
 
-          if (_trackedPin != null)
+          if (_trackTarget != null)
             Positioned(
               top: MediaQuery.of(context).padding.top + 146,
               left: 14,
@@ -925,7 +1009,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
           // Weather sits under the bottom sheet (so an expanded sheet covers it)
           // and steps aside while the tracking or navigation panels are up.
-          if (_trackedPin == null && !navState.isActive) const WeatherOverlay(),
+          if (_trackTarget == null && !navState.isActive) const WeatherOverlay(),
 
           // Scale Bar (Bottom Left, above coordinate display)
           Positioned(
@@ -1080,6 +1164,20 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               child: _buildTrailDistanceHUD(trailState),
             ),
 
+          // Says so, on the map, when the map is not showing everything.
+          //
+          // A project scope can hide a great deal at once, and a filter you
+          // cannot see is indistinguishable from lost work — the first thing
+          // anyone thinks when their pins are missing is that the app threw
+          // them away. This sits above the coordinates where the left column is
+          // otherwise empty, and one tap puts everything back.
+          if (!_drawerOpen && visibility.isFiltered)
+            Positioned(
+              bottom: 200,
+              left: 20,
+              child: _filterPill(visibility),
+            ),
+
           // Coordinate Display — hidden when drawer is open to prevent z-order clash.
           if (!_drawerOpen)
           Positioned(
@@ -1094,6 +1192,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               child: locationState.stats.currentLat == null ||
                       locationState.stats.currentLon == null
                   ? _noGpsFixChip()
+                  // A coarse fix is worse than no fix if it is presented as
+                  // though it were exact — it puts you on the wrong street
+                  // while looking perfectly confident.
+                  : locationState.stats.currentAccuracyM >
+                          LocationNotifier.maxUsableAccuracyMetres
+                      ? _coarseFixChip(locationState.stats.currentAccuracyM)
                   : _showCoordinatePanel
                   ? SizedBox(
                       width: 280,
@@ -1144,6 +1248,65 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             ),
           ),
           const AiVoiceOverlay(),
+
+          // Offline banner. Sits below the weather card and the SOS button
+          // rather than on top of them, and paints late so nothing covers it.
+          // It used to be at top:50 spanning the full width, directly under
+          // the SOS button and the weather card, so its text was clipped
+          // behind both.
+          if (_showOfflineBanner && _trackTarget == null && !navState.isActive)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 180,
+              left: 14,
+              right: 14,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppColors.accent.withValues(alpha: 0.92),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.wifi_off, color: Colors.white, size: 18),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        'Some map tiles need internet. Core survival features '
+                        'work fully offline.',
+                        style: TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () => setState(() => _showOfflineBanner = false),
+                      child: const Padding(
+                        padding: EdgeInsets.only(left: 8),
+                        child: Icon(Icons.close, color: Colors.white, size: 18),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          // Zone drawing controls
+          if (_zoneDraft != null)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: ZoneDrawPanel(
+                draft: _zoneDraft!,
+                onShapeChanged: (shape) =>
+                    setState(() => _zoneDraft = _zoneDraft!.withShape(shape)),
+                onRadiusChanged: (r) => setState(
+                    () => _zoneDraft = _zoneDraft!.copyWith(radiusMetres: r)),
+                onUndo: () =>
+                    setState(() => _zoneDraft = _zoneDraft!.undoLastPoint()),
+                onCancel: () => setState(() => _zoneDraft = null),
+                onSave: _saveZoneDraft,
+              ),
+            ),
 
           // Measurement Tool
           if (_showMeasurementTool)
@@ -1261,7 +1424,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                     MaterialPageRoute(builder: (_) => const AgentManagerScreen())),
                 onSavedPins: _showSavedPins,
                 onMyTrails: _showMyTrails,
+                onFiles: _showFiles,
+                onMarkerPicker: _showMarkerPicker,
+                hiddenCount: ref.watch(markerVisibilityProvider).hiddenCount,
+                openFileName: ref.watch(filesProvider).activeFile?.name,
+                onDrawZone: _startZoneDrawing,
+                onZones: _showZones,
+                zoneCount: geofenceState.geofences.length,
                 deadmanArmed: ref.watch(aiControlProvider).deadmanArmed,
+                storageOk: ref.read(databaseServiceProvider).isPersistent,
+                storageNote: ref.read(databaseServiceProvider).storageReport,
                 onToggleDeadman: () {
                   final armed = ref.read(aiControlProvider).deadmanArmed;
                   ref.read(aiControlProvider.notifier).setDeadmanArmed(!armed);
@@ -1566,9 +1738,47 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
         '(${bearing.round()}°) from you';
   }
 
+  /// Track a flagged zone. Arrival is its boundary, not its centre — walking
+  /// to the middle of a 2 km exclusion area is not what anyone means.
+  void _startTrackingZone(Geofence zone) {
+    setState(() => _trackedPin = null);
+    _setTrackTarget(TrackTarget(
+      name: zone.name,
+      position: zone.centre,
+      colour: Color(zone.category.colorValue),
+      arriveWithinMetres: math.max(zone.radiusMeters, 25),
+      isZone: true,
+    ));
+    _announceTracking(zone.name, zone.centre);
+  }
+
+  void _setTrackTarget(TrackTarget? target) {
+    ref.read(trackTargetProvider.notifier).state = target;
+  }
+
+  void _announceTracking(String name, LatLng there) {
+    final here = _userLatLng();
+    if (here == null) {
+      ref.read(aiAssistantProvider.notifier)
+          .speak('Tracking $name. Waiting for a GPS fix.');
+      return;
+    }
+    final bearing =
+        HeadingReading.normalize(const Distance().bearing(here, there));
+    ref.read(aiAssistantProvider.notifier).speak(
+        'Tracking $name. '
+        '${NavigationNotifier.formatSpokenDistance(_distM(here, there))} '
+        'to the ${_compass8(bearing)}.');
+  }
+
   void _startTracking(Waypoint w) {
     if (w.latitude == null || w.longitude == null) return;
     setState(() => _trackedPin = w);
+    _setTrackTarget(TrackTarget(
+      name: w.label ?? 'your pin',
+      position: LatLng(w.latitude!, w.longitude!),
+      colour: WaypointColors.fromHex(w.color),
+    ));
     final name = w.label ?? 'your pin';
     final here = _userLatLng();
     if (here == null) {
@@ -1585,18 +1795,24 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
         'to the ${_compass8(bearing)}.');
   }
 
-  void _stopTracking() => setState(() => _trackedPin = null);
+  void _stopTracking() {
+    setState(() => _trackedPin = null);
+    _setTrackTarget(null);
+  }
 
   void _checkTrackingArrival(LocationState next) {
-    final pin = _trackedPin;
+    final target = ref.read(trackTargetProvider);
     final lat = next.stats.currentLat;
     final lon = next.stats.currentLon;
-    if (pin == null || lat == null || lon == null) return;
-    final d = _distM(LatLng(lat, lon), LatLng(pin.latitude!, pin.longitude!));
-    if (d > 15) return;
-    final name = pin.label ?? 'your pin';
-    ref.read(aiAssistantProvider.notifier).speak('You have arrived at $name.');
+    if (target == null || lat == null || lon == null) return;
+    final d = _distM(LatLng(lat, lon), target.position);
+    // A zone is reached at its boundary; a pin at the spot itself.
+    if (d > target.arriveWithinMetres) return;
+    final name = target.name;
+    ref.read(aiAssistantProvider.notifier).speak(
+        target.isZone ? 'You have reached $name.' : 'You have arrived at $name.');
     setState(() => _trackedPin = null);
+    _setTrackTarget(null);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text('Arrived at $name'),
@@ -1605,10 +1821,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   }
 
   Widget _buildTrackingHud(WidgetRef ref) {
-    final w = _trackedPin!;
+    final target = ref.watch(trackTargetProvider)!;
     final stats = ref.watch(locationProvider).stats;
     final heading = ref.watch(headingProvider).valueOrNull;
-    final pin = LatLng(w.latitude!, w.longitude!);
+    final pin = target.position;
 
     double? dist;
     double? bearing;
@@ -1654,7 +1870,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('TRACKING · ${w.label ?? 'Pin'}',
+              Text('TRACKING · ${target.name}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.outfit(
@@ -1768,6 +1984,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   }
 
   void _onMapTap(LatLng point, TrailState trailState) {
+    // Drawing a zone takes the tap before anything else, so placing a corner
+    // near a trail cannot open that trail's edit sheet instead.
+    final draft = _zoneDraft;
+    if (draft != null) {
+      setState(() => _zoneDraft = draft.withTap(point));
+      return;
+    }
+
     if (_showMeasurementTool && _measurementKey.currentState != null) {
       _measurementKey.currentState!.handleMapTap(point);
       return;
@@ -1780,11 +2004,56 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
       return;
     }
 
+    // Tap NEAR a pin counts as tapping it. The marker is 62 px wide and sits
+    // above its point, so on a phone a fingertip regularly lands just off it
+    // and the tap was treated as empty ground — which is what "tapping a pin
+    // does nothing" actually was.
+    final pin = _findNearestPin(point);
+    if (pin != null) {
+      _openPinSheet(pin);
+      return;
+    }
+
     // Tap near a saved trail ? open edit sheet
     final near = _findNearestTrail(point, trailState.trails);
     if (near != null) {
       _showTrailEditSheet(near);
     }
+  }
+
+  /// The closest dropped pin to [tap], within a zoom-scaled tolerance, or null
+  /// if the tap was not near one. Same approach as _findNearestTrail.
+  Waypoint? _findNearestPin(LatLng tap) {
+    final threshold = 0.0006 * math.pow(2, (16 - _currentZoom).clamp(-3.0, 4.0));
+    Waypoint? nearest;
+    var nearestDist = double.infinity;
+    for (final w in ref.read(locationProvider).waypoints) {
+      if (w.isPin != true || w.latitude == null || w.longitude == null) continue;
+      final d = _latlngDeg(tap, LatLng(w.latitude!, w.longitude!));
+      if (d < threshold && d < nearestDist) {
+        nearestDist = d;
+        nearest = w;
+      }
+    }
+    return nearest;
+  }
+
+  /// The pin's sheet — distance, bearing and the Track button — opened from a
+  /// map tap rather than from the marker itself.
+  void _openPinSheet(Waypoint w) {
+    showWaypointMenu(
+      context,
+      waypoint: w,
+      distanceInfo: _pinDistanceInfo(w),
+      onEdit: () => w.isPinage ? _showPinageViewer(w) : _editWaypoint(w),
+      onDelete: () =>
+          ref.read(locationProvider.notifier).deleteWaypoint(w.id!),
+      onColorChanged: (color) =>
+          ref.read(locationProvider.notifier).updateWaypointColor(w.id!, color),
+      onIconChanged: (icon) =>
+          ref.read(locationProvider.notifier).updateWaypointIcon(w.id!, icon),
+      onNavigate: () => _startTracking(w),
+    );
   }
 
   Future<void> _onMapLongPress(LatLng point) async {
@@ -1808,6 +2077,220 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
       onPinage: () => showPinageEditor(context, position: point),
     );
     if (mounted) setState(() => _targetPin = null);
+  }
+
+  /// Choose what is drawn and what to follow.
+  Future<void> _showMarkerPicker() async {
+    final choice = await Navigator.push<MarkerChoice>(
+      context,
+      MaterialPageRoute(builder: (_) => const MarkerPickerScreen()),
+    );
+    if (choice == null || !mounted) return;
+
+    if (choice.waypoint != null) {
+      _startTracking(choice.waypoint!);
+      _mapController.move(
+          LatLng(choice.waypoint!.latitude!, choice.waypoint!.longitude!), 16);
+    } else if (choice.zone != null) {
+      _startTrackingZone(choice.zone!);
+      _mapController.move(
+          choice.zone!.centre, _zoomForRadius(choice.zone!.radiusMeters));
+    }
+  }
+
+  /// Open the camera. If a photo was identified and the user wants to talk
+  /// about it, the chat opens with that result already asked.
+  Future<void> _openCamera() async {
+    final prompt = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (_) => const ARCameraScreen()),
+    );
+    if (prompt == null || !mounted) return;
+    showAIChat(context, initialMessage: prompt);
+  }
+
+  /// Open the files, and fly to whatever was tapped inside one.
+  Future<void> _showFiles() async {
+    final goTo = await Navigator.push<LatLng>(
+      context,
+      MaterialPageRoute(builder: (_) => const FilesScreen()),
+    );
+    if (goTo == null || !mounted) return;
+    _mapController.move(goTo, 16.0);
+  }
+
+  /// Open the zone list, then either fly to the zone that was tapped or
+  /// reopen it for resizing.
+  Future<void> _showZones() async {
+    final action = await Navigator.push<ZoneAction>(
+      context,
+      MaterialPageRoute(builder: (_) => const GeofenceScreen()),
+    );
+    if (action == null || !mounted) return;
+    final zone = action.zone;
+
+    if (action.track) {
+      _startTrackingZone(zone);
+      if (zone.isPolygon && zone.points.length >= 2) {
+        _mapController.fitCamera(CameraFit.bounds(
+          bounds: LatLngBounds.fromPoints(zone.points),
+          padding: const EdgeInsets.all(60),
+        ));
+      } else {
+        _mapController.move(zone.centre, _zoomForRadius(zone.radiusMeters));
+      }
+      return;
+    }
+
+    if (action.resize) {
+      setState(() {
+        _showMeasurementTool = false;
+        _zoneDraft = ZoneDraft.from(zone);
+      });
+      _mapController.move(zone.centre, _zoomForRadius(zone.radiusMeters));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(zone.isPolygon
+            ? 'Tap out new corners for ${zone.name}.'
+            : 'Drag the grip on the edge to resize ${zone.name}.'),
+        duration: const Duration(seconds: 3),
+        backgroundColor: AppColors.primaryOrange,
+      ));
+      return;
+    }
+
+    // Frame the whole zone rather than centring blindly: a 5 km boundary at
+    // zoom 16 fills the screen with the middle of it and nothing else.
+    if (zone.isPolygon && zone.points.length >= 2) {
+      _mapController.fitCamera(CameraFit.bounds(
+        bounds: LatLngBounds.fromPoints(zone.points),
+        padding: const EdgeInsets.all(60),
+      ));
+    } else {
+      _mapController.move(zone.centre, _zoomForRadius(zone.radiusMeters));
+    }
+  }
+
+  /// A zoom level that fits a circle of this radius on screen.
+  double _zoomForRadius(double radiusMetres) {
+    if (radiusMetres <= 0) return 16;
+    // Each zoom level halves the ground covered; 156543 m/px is zoom 0 at the
+    // equator. Aim for the circle taking about half the screen width.
+    final target = (radiusMetres * 2.5) / 180;
+    final zoom = math.log(156543 / target) / math.ln2;
+    return zoom.clamp(5.0, 17.0);
+  }
+
+  /// Size the circle being drawn by dragging its edge handle.
+  ///
+  /// The radius is the real ground distance from the centre to wherever the
+  /// finger is, so it stays correct however the map is rotated or zoomed —
+  /// working from the pixel delta would drift on both.
+  void _resizeZoneDraftTo(Offset globalPosition) {
+    final draft = _zoneDraft;
+    final centre = draft?.centre;
+    if (draft == null || centre == null) return;
+
+    final box = _mapAreaKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+
+    final local = box.globalToLocal(globalPosition);
+    final underFinger = _mapController.camera.offsetToCrs(local);
+    final metres = const Distance()(centre, underFinger);
+
+    setState(() => _zoneDraft = draft.copyWith(
+        radiusMetres: metres.clamp(kZoneMinRadius, kZoneMaxRadius)));
+  }
+
+  /// Start drawing a zone. Closes anything that also wants map taps, so a
+  /// corner tap cannot be claimed by the measuring tool at the same time.
+  void _startZoneDrawing() {
+    setState(() {
+      _showMeasurementTool = false;
+      _zoneDraft = const ZoneDraft();
+    });
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('Tap the map to place the zone.'),
+      duration: Duration(seconds: 2),
+      backgroundColor: AppColors.primaryOrange,
+    ));
+  }
+
+  /// Name the drawn zone and save it.
+  Future<void> _saveZoneDraft() async {
+    final draft = _zoneDraft;
+    if (draft == null || !draft.isSaveable) return;
+
+    final isCircle = draft.shape == ZoneShape.circle;
+    final summary = isCircle
+        ? '${formatDistance(draft.radiusMetres)} radius  •  ${formatArea(draft.areaSqMetres)}'
+        : '${draft.points.length} corners  •  ${formatArea(draft.areaSqMetres)}';
+
+    // Resizing an existing zone keeps its name, category and notes rather
+    // than asking for them again; only the shape changed.
+    final editingId = draft.editingId;
+    if (editingId != null) {
+      final existing = ref
+          .read(geofenceProvider)
+          .geofences
+          .where((z) => z.id == editingId);
+      if (existing.isNotEmpty) {
+        final was = existing.first;
+        final updated = isCircle
+            ? was.copyWith(
+                latitude: draft.centre!.latitude,
+                longitude: draft.centre!.longitude,
+                radiusMeters: draft.radiusMetres,
+                shape: ZoneShape.circle,
+                points: const [],
+              )
+            : Geofence.polygon(
+                id: was.id,
+                name: was.name,
+                points: draft.points,
+                isActive: was.isActive,
+                createdAt: was.createdAt,
+                category: was.category,
+                notes: was.notes,
+              );
+        await ref.read(geofenceProvider.notifier).updateZone(updated);
+        if (!mounted) return;
+        setState(() => _zoneDraft = null);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('${was.name} resized to $summary'),
+          backgroundColor: AppColors.statusGreen,
+        ));
+        return;
+      }
+    }
+
+    final details = await showZoneDetailsSheet(context, summary: summary);
+    if (details == null || !mounted) return;
+
+    final zones = ref.read(geofenceProvider.notifier);
+    if (isCircle) {
+      await zones.addGeofence(
+        name: details.name,
+        latitude: draft.centre!.latitude,
+        longitude: draft.centre!.longitude,
+        radiusMeters: draft.radiusMetres,
+        category: details.category,
+        notes: details.notes,
+      );
+    } else {
+      await zones.addPolygonZone(
+        name: details.name,
+        points: draft.points,
+        category: details.category,
+        notes: details.notes,
+      );
+    }
+
+    if (!mounted) return;
+    setState(() => _zoneDraft = null);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('Zone saved: ${details.name}'),
+      backgroundColor: AppColors.statusGreen,
+    ));
   }
 
   /// Drops a normal pin, then reports how far it landed from the user.
@@ -2664,6 +3147,133 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     return PolylineLayer(polylines: links);
   }
 
+  /// Shown when the only fix available is far too rough to trust. On Android
+  /// the usual cause is the location permission being granted as "Approximate"
+  /// rather than "Precise", which no amount of waiting will improve.
+  Widget _coarseFixChip(double accuracyM) {
+    return GestureDetector(
+      onTap: () => showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.panelMatte,
+          title: const Text('Rough position only',
+              style: TextStyle(color: Colors.white, fontSize: 17)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Your position is only accurate to about '
+                '${accuracyM.round()} m, so the map cannot show which '
+                'street you are on.',
+                style: TextStyle(color: AppColors.textSecondary, height: 1.4),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'On Android this usually means location permission is set '
+                'to Approximate. Open Settings > Apps > Pinage Maps > '
+                'Permissions > Location and choose "Precise".',
+                style: TextStyle(color: AppColors.textSecondary, height: 1.4),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Otherwise step into the open — GPS cannot see satellites '
+                'through a roof.',
+                style: TextStyle(color: AppColors.textMuted, height: 1.4),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK',
+                  style: TextStyle(color: AppColors.primaryOrange)),
+            ),
+          ],
+        ),
+      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.7),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.orange.withValues(alpha: 0.6)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.gps_not_fixed, color: Colors.orange, size: 16),
+          const SizedBox(width: 8),
+          Text('Rough fix ±${accuracyM.round()} m — tap',
+              style: GoogleFonts.outfit(
+                  color: Colors.orange,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700)),
+        ]),
+      ),
+    );
+  }
+
+  /// A quiet marker that the map is filtered, and the way out of it.
+  ///
+  /// Worded for what was actually done rather than in numbers: "showing
+  /// Kookynie only" is a thing someone remembers choosing, where "37 hidden"
+  /// is just alarming.
+  Widget _filterPill(MarkerVisibility visibility) {
+    final scope = visibility.scopeFileId;
+    final named = ref
+        .watch(filesProvider)
+        .files
+        .where((f) => f.id == scope)
+        .map((f) => f.name)
+        .toList();
+
+    final String label;
+    if (visibility.isSoloed) {
+      label = 'Showing one marker';
+    } else if (scope != null) {
+      label = 'Showing ${named.isEmpty ? 'one project' : named.first} only';
+    } else {
+      final n = visibility.hiddenCount;
+      label = '$n ${n == 1 ? 'marker' : 'markers'} hidden';
+    }
+
+    return GestureDetector(
+      onTap: () =>
+          ref.read(markerVisibilityProvider.notifier).showEverything(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+        decoration: BoxDecoration(
+          color: AppColors.panelMatte.withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppColors.accent.withValues(alpha: 0.6)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(
+              visibility.isScoped
+                  ? Icons.folder_open_rounded
+                  : Icons.visibility_off_rounded,
+              color: AppColors.accent,
+              size: 14),
+          const SizedBox(width: 7),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 190),
+            child: Text(label,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600)),
+          ),
+          const SizedBox(width: 8),
+          const Text('SHOW ALL',
+              style: TextStyle(
+                  color: AppColors.accent,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800)),
+        ]),
+      ),
+    );
+  }
+
   Widget _noGpsFixChip() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -3146,7 +3756,22 @@ class _HamburgerDrawer extends StatelessWidget {
   final VoidCallback onGallery;
   final VoidCallback onSavedPins;
   final VoidCallback onMyTrails;
+  final VoidCallback onFiles;
+  final VoidCallback onMarkerPicker;
+
+  /// How many pins and zones are currently hidden from view.
+  final int hiddenCount;
+
+  /// The open field file's name, or null when none is open.
+  final String? openFileName;
+  final VoidCallback onDrawZone;
+  final VoidCallback onZones;
+  final int zoneCount;
   final bool deadmanArmed;
+
+  /// False when storage fell back to memory: nothing survives a refresh.
+  final bool storageOk;
+  final String storageNote;
   final VoidCallback onToggleDeadman;
   final VoidCallback onSOS;
 
@@ -3185,7 +3810,16 @@ class _HamburgerDrawer extends StatelessWidget {
     required this.onGallery,
     required this.onSavedPins,
     required this.onMyTrails,
+    required this.onFiles,
+    required this.onMarkerPicker,
+    required this.hiddenCount,
+    required this.openFileName,
+    required this.onDrawZone,
+    required this.onZones,
+    required this.zoneCount,
     required this.deadmanArmed,
+    required this.storageOk,
+    required this.storageNote,
     required this.onToggleDeadman,
     required this.onSOS,
   });
@@ -3234,6 +3868,14 @@ class _HamburgerDrawer extends StatelessWidget {
                       _section('MY DATA'),
                       _item(context, Icons.location_on, const Color(0xFFFF6D00), 'Saved Pins', 'All your dropped pins', 'Every pin you have dropped, with its distance from you. Tap one to jump to it on the map.', () => _go(onSavedPins)),
                       _item(context, Icons.route, const Color(0xFFFF6D00), 'My Trails', 'Recorded trails', 'Every trail you have recorded. Tap one to jump to its starting point.', () => _go(onMyTrails)),
+
+                      _item(context, Icons.folder_rounded, const Color(0xFFFF6B00), 'Files', openFileName == null ? 'Notes and field records' : 'Open: $openFileName', 'A folder per job, site or trip. While a file is open, every note, pin and zone you make is filed under it, so you can come back and see where you worked.', () => _go(onFiles)),
+
+                      _item(context, Icons.visibility, const Color(0xFF00BCD4), 'Show & Follow', hiddenCount == 0 ? 'Choose what is drawn' : '$hiddenCount hidden', 'Pick which pins and zones appear on the map and through the camera, and choose one to follow. Hiding never deletes anything.', () => _go(onMarkerPicker)),
+
+                      _section('ZONES'),
+                      _item(context, Icons.draw, const Color(0xFFFF6B00), 'Draw Zone', 'Flag an area', 'Draw a circle, or tap out a boundary corner by corner around a site, hazard or heritage area. You get told when you cross in or out of it.', () => _go(onDrawZone)),
+                      _item(context, Icons.layers_outlined, const Color(0xFFAB47BC), 'My Zones', zoneCount == 0 ? 'No zones yet' : '$zoneCount saved', 'Every zone and boundary you have flagged. Tap one to jump to it on the map.', () => _go(onZones)),
 
                       _section('TOOLS'),
                       _item(context, Icons.straighten, const Color(0xFF00BCD4), 'Measure Distance', showMeasurementTool ? 'Active' : 'Tap to measure', 'Tap points on the map to measure distance, area, and bearing.', () => _go(onMeasure)),
@@ -3287,16 +3929,23 @@ class _HamburgerDrawer extends StatelessWidget {
           child: const Icon(Icons.explore, color: Colors.white, size: 20),
         ),
         const SizedBox(width: 8),
-        const Column(
+        Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('BUSHTRACK',
+            const Text('BUSHTRACK',
                 style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15, letterSpacing: 1)),
-            // Which build is actually running on this phone. Field reports
-            // are guesswork without it — a stale cached copy looks identical.
-            Text('build $kBuildId',
-                style: TextStyle(color: Colors.white38, fontSize: 10)),
+            // Which build is running, and whether anything saved will still
+            // be here after a refresh. Both are invisible otherwise — a
+            // stale copy and a memory-only session look completely normal.
+            Text(
+              storageOk
+                  ? 'build $kBuildId · $storageNote'
+                  : 'build $kBuildId · NOT SAVING',
+              style: TextStyle(
+                  color: storageOk ? Colors.white38 : const Color(0xFFFF6D00),
+                  fontSize: 10),
+            ),
           ],
         ),
         const Spacer(),
@@ -3423,8 +4072,13 @@ class _HamburgerDrawer extends StatelessWidget {
           ),
           title: Text(title,
               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-          content: Text(desc,
-              style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.5)),
+          // Scrollable: a long description used to overflow the dialog and
+          // render behind the OK button, with no way to reach the rest of it.
+          content: SingleChildScrollView(
+            child: Text(desc,
+                style: const TextStyle(
+                    color: Colors.white70, fontSize: 13, height: 1.5)),
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),

@@ -25,6 +25,17 @@ class ApiConfig {
   static const String openCageKey = String.fromEnvironment('OPENCAGE_KEY');
   static const String what3WordsKey = String.fromEnvironment('W3W_KEY');
 
+  /// Where our own serverless proxies live.
+  ///
+  /// On web these are same-origin (/api/...). The phone app has no origin of
+  /// its own, so it calls the deployed site — which keeps every provider key
+  /// on the server for the phone build too, instead of compiling keys into an
+  /// APK anyone can unzip.
+  static const String proxyBase = String.fromEnvironment(
+    'PROXY_BASE',
+    defaultValue: 'https://pinagemaps.com',
+  );
+
   // Groq (Primary Cloud AI — fast free Llama 3.3 70B)
   // On web: route through Vercel serverless proxy to avoid browser CORS blocks.
   // On mobile: call Groq directly.
@@ -88,7 +99,10 @@ class MultiTierAIManager {
 
   static Future<AIResponse?> _tryCloudAI(
       String prompt, Map<String, dynamic>? context) async {
-    if (ApiConfig.groqKey.isEmpty) return null;
+    // On web the key lives server-side in the /api/groq proxy, so there is
+    // nothing to check here. Requiring a client-side key meant the web build
+    // never even tried the cloud and dropped straight to canned replies.
+    if (!kIsWeb && ApiConfig.groqKey.isEmpty) return null;
     try {
       String ctxStr = '';
       if (context != null) {

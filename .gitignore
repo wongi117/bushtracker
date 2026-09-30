@@ -52,3 +52,12 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 .vercel
+
+# Build and deploy archives — 12 MB each, rebuilt by deploy.ps1
+build-web.zip
+deploy.zip
+
+# Agent tooling scratch, not part of the app
+.agent/
+.autoclaw/
+.netlify/

@@ -1,4 +1,4 @@
-package com.bushtrack.bush_track
+package au.com.futuregenai.pinagemaps
 
 import io.flutter.embedding.android.FlutterActivity
 

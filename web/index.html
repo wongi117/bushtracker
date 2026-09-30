@@ -7,7 +7,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="AI-powered offline GPS, mesh comms and navigation for survey teams, rangers and remote workers in the WA outback.">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="theme-color" content="#0C0F1E">
+  <meta name="theme-color" content="#0A0A0A">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="BushTrack">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
@@ -17,16 +17,120 @@
 
   <!-- MapLibre GL JS — loaded DEFERRED so it never blocks Flutter init -->
   <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js" defer></script>
-  <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+  <!-- The stylesheet above was NOT deferred, and a stylesheet from a
+       third-party CDN blocks rendering until it answers: on a weak outback
+       connection that alone can hold the screen blank for minutes. Loading it
+       as "print" and switching to "all" on arrival takes it off that path. -->
+  <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet"
+        media="print" onload="this.media='all'" />
 
   <style>
-    html, body { margin: 0; padding: 0; background: #0C0F1E; height: 100%; }
-    #error-box { display:none; position:fixed; inset:0; background:#0C0F1E; color:#ff4444;
+    /* Background matches the app's own, so any moment where Flutter has not
+       yet covered the page reads as the app loading rather than as a coloured
+       bar across the bottom of the screen. */
+    html, body {
+      margin: 0; padding: 0; background: #0A0A0A;
+      height: 100%; overflow: hidden;
+    }
+    /* dvh follows the visual viewport, so the layout no longer leaves a strip
+       of page showing when the phone browser's address bar collapses. */
+    @supports (height: 100dvh) {
+      html, body { height: 100dvh; }
+    }
+    #error-box { display:none; position:fixed; inset:0; background:#0A0A0A; color:#ff4444;
       font-family:monospace; padding:32px; font-size:13px; z-index:99999; overflow:auto; }
+
+    /* Shown until Flutter paints. The app is several megabytes and on a weak
+       connection that is a long wait; without this the screen was simply a
+       blank coloured page, which reads as a broken app rather than a loading
+       one. */
+    #boot {
+      position: fixed; inset: 0; z-index: 9998;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: #0A0A0A; color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      transition: opacity .35s ease;
+    }
+    #boot .mark {
+      font-size: 20px; font-weight: 800; letter-spacing: 3px; color: #fff;
+    }
+    #boot .sub { margin-top: 8px; font-size: 12px; color: #9E9E9E; }
+    /* A rotating tip gives the wait a purpose: by the time the map is up the
+       user has learnt something, instead of watching a bar. */
+    #boot .tip {
+      margin-top: 26px; max-width: 300px; padding: 0 24px;
+      text-align: center; font-size: 13px; line-height: 1.5;
+      color: #FF9240; min-height: 40px;
+      transition: opacity .4s ease;
+    }
+    #boot .ring {
+      margin-top: 22px; width: 30px; height: 30px; border-radius: 50%;
+      border: 3px solid rgba(255,107,0,.25); border-top-color: #FF6B00;
+      animation: boot-spin 1s linear infinite;
+    }
+    @keyframes boot-spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
   <div id="error-box"></div>
+
+  <div id="boot">
+    <div class="mark">BUSHTRACK</div>
+    <div class="sub">Loading maps and offline data</div>
+    <div class="ring"></div>
+    <div class="tip" id="boot-tip"></div>
+  </div>
+
+  <script>
+    // Rotating tips while the app downloads. Kept in plain HTML rather than in
+    // the Flutter splash because the long wait happens BEFORE Flutter runs.
+    (function () {
+      var tips = [
+        'Tap the compass at the bottom right to activate it.',
+        'Long-press the map to drop a pin where you are looking.',
+        'Open a file first — every pin, zone and note is filed under it.',
+        'Draw a zone to flag a hazard, a heritage site or a work area.',
+        'Boundaries do not have to be circles — tap out the corners.',
+        'Hold SOS for three seconds to send your position to nearby phones.',
+        'Drag the grip on a circle zone to make it bigger or smaller.',
+        'Tap a pin to see how far away it is and which way to walk.'
+      ];
+      var el = document.getElementById('boot-tip');
+      if (!el) return;
+      var i = Math.floor(Math.random() * tips.length);
+      el.textContent = tips[i];
+      setInterval(function () {
+        el.style.opacity = '0';
+        setTimeout(function () {
+          i = (i + 1) % tips.length;
+          el.textContent = tips[i];
+          el.style.opacity = '1';
+        }, 400);
+      }, 3600);
+    })();
+  </script>
+
+  <script>
+    // Clear the loading screen the moment Flutter has something on screen.
+    (function () {
+      var boot = document.getElementById('boot');
+      if (!boot) return;
+      function done() {
+        boot.style.opacity = '0';
+        setTimeout(function () { boot.remove(); }, 400);
+      }
+      var seen = new MutationObserver(function () {
+        if (document.querySelector('flutter-view, flt-glass-pane')) {
+          seen.disconnect();
+          done();
+        }
+      });
+      seen.observe(document.body, { childList: true, subtree: true });
+      // Never leave it covering a running app if that element is never matched.
+      setTimeout(done, 30000);
+    })();
+  </script>
 
   <script>
     // Older builds installed a service worker that served the whole app from

@@ -23,10 +23,65 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
 
   static const double _collapsedHeight = 120.0;
 
+  /// The live height while a finger is on the sheet. Null when not dragging,
+  /// in which case the height comes from [_sheetState] and animates.
+  ///
+  /// The sheet used to only toggle between the three sizes on a tap or a
+  /// flick, so it jumped rather than following the finger. This is what makes
+  /// it behave like a real bottom sheet.
+  double? _dragHeight;
+
   void _advanceState() => setState(() => _sheetState = (_sheetState + 1) % 3);
-  void _expandOne()    { if (_sheetState < 2) setState(() => _sheetState++); }
-  void _collapseOne()  { if (_sheetState > 0) setState(() => _sheetState--); }
+  void _collapseOne() { if (_sheetState > 0) setState(() => _sheetState--); }
   bool get _isExpanded => _sheetState > 0;
+
+  /// The three heights the sheet settles at.
+  List<double> _stops(double screenHeight) =>
+      [_collapsedHeight, screenHeight * 0.5, screenHeight];
+
+  void _onDragStart(double screenHeight) {
+    setState(() => _dragHeight = _stops(screenHeight)[_sheetState]);
+  }
+
+  void _onDragUpdate(DragUpdateDetails d, double screenHeight) {
+    // Dragging up (negative dy) makes the sheet taller.
+    final next = (_dragHeight ?? _stops(screenHeight)[_sheetState]) - d.delta.dy;
+    setState(() =>
+        _dragHeight = next.clamp(_collapsedHeight, screenHeight));
+  }
+
+  void _onDragEnd(DragEndDetails d, double screenHeight) {
+    final stops = _stops(screenHeight);
+    final height = _dragHeight ?? stops[_sheetState];
+    final velocity = d.velocity.pixelsPerSecond.dy;
+
+    int target;
+    if (velocity < -400) {
+      // Thrown upwards: go to the next size up, however far it was dragged.
+      target = (_sheetState + 1).clamp(0, 2);
+      for (var i = 0; i < stops.length; i++) {
+        if (stops[i] > height + 1) { target = i; break; }
+      }
+    } else if (velocity > 400) {
+      target = (_sheetState - 1).clamp(0, 2);
+      for (var i = stops.length - 1; i >= 0; i--) {
+        if (stops[i] < height - 1) { target = i; break; }
+      }
+    } else {
+      // Released slowly: settle at whichever size it is closest to.
+      target = 0;
+      var best = double.infinity;
+      for (var i = 0; i < stops.length; i++) {
+        final gap = (stops[i] - height).abs();
+        if (gap < best) { best = gap; target = i; }
+      }
+    }
+
+    setState(() {
+      _sheetState = target;
+      _dragHeight = null;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -35,15 +90,13 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
     final stats         = locationState.stats;
     final screenHeight  = MediaQuery.of(context).size.height;
 
-    final double height = switch (_sheetState) {
-      1 => screenHeight * 0.5,
-      2 => screenHeight,
-      _ => _collapsedHeight,
-    };
+    // While a finger is down the height is whatever it has been dragged to,
+    // with no animation, so it tracks the finger exactly.
+    final double height = _dragHeight ?? _stops(screenHeight)[_sheetState];
 
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 280),
-      curve: Curves.easeInOut,
+      duration: Duration(milliseconds: _dragHeight == null ? 280 : 0),
+      curve: Curves.easeOut,
       height: height,
       child: Container(
         decoration: BoxDecoration(
@@ -65,13 +118,12 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
           children: [
             // ── Drag handle ────────────────────────────────────────────────
             GestureDetector(
-              onVerticalDragEnd: (d) {
-                if (d.velocity.pixelsPerSecond.dy < -200) {
-                  _expandOne();
-                } else if (d.velocity.pixelsPerSecond.dy > 200) {
-                  _collapseOne();
-                }
-              },
+              behavior: HitTestBehavior.opaque,
+              onVerticalDragStart: (_) => _onDragStart(screenHeight),
+              onVerticalDragUpdate: (d) => _onDragUpdate(d, screenHeight),
+              onVerticalDragEnd: (d) => _onDragEnd(d, screenHeight),
+              // Tap still works: a thumb on a rough track is not always
+              // steady enough to drag.
               onTap: _advanceState,
               child: Container(
                 width: double.infinity,
@@ -114,10 +166,10 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
                         const SizedBox(width: 6),
                         Text(
                           _sheetState == 0
-                              ? 'Tap to expand'
+                              ? 'Swipe up'
                               : _sheetState == 1
-                                  ? 'Tap for fullscreen'
-                                  : 'Tap to collapse',
+                                  ? 'Swipe up for fullscreen'
+                                  : 'Swipe down to close',
                           style: TextStyle(
                             color: AppColors.accent.withValues(alpha: 0.85),
                             fontSize: 13,
@@ -335,6 +387,18 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
                         style: TextStyle(
                             color: AppColors.textSecondary,
                             fontSize: BushDS.fontXS),
+                      )
+                    // A mesh that failed to start looks exactly like a mesh
+                    // with nobody else on it. Say which it is.
+                    else if (meshState.meshError.isNotEmpty)
+                      SizedBox(
+                        width: 190,
+                        child: Text(
+                          meshState.meshError,
+                          style: const TextStyle(
+                              color: AppColors.statusRed,
+                              fontSize: BushDS.fontXS),
+                        ),
                       ),
                   ],
                 ),

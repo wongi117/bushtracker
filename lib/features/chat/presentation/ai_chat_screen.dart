@@ -144,7 +144,11 @@ class AntigravityMemory {
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 class AIChatScreen extends ConsumerStatefulWidget {
-  const AIChatScreen({super.key});
+  const AIChatScreen({super.key, this.initialMessage});
+
+  /// Sent as soon as the chat opens. Used when a camera identification is
+  /// handed over, so the photo and the conversation about it are one thread.
+  final String? initialMessage;
 
   @override
   ConsumerState<AIChatScreen> createState() => _AIChatScreenState();
@@ -166,6 +170,15 @@ class _AIChatScreenState extends ConsumerState<AIChatScreen> {
   void initState() {
     super.initState();
     _loadMemory();
+
+    // A camera identification opens the chat with its result already asked,
+    // so the answer lands in the normal conversation and can be followed up.
+    final opening = widget.initialMessage;
+    if (opening != null && opening.trim().isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _sendMessage(opening);
+      });
+    }
   }
 
   @override
@@ -1264,21 +1277,82 @@ Only include a command when the user explicitly asks to move the map, zoom, or n
 }
 
 // ── Bottom sheet launcher ─────────────────────────────────────────────────────
-void showAIChat(BuildContext context) {
+void showAIChat(BuildContext context, {String? initialMessage}) {
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (context) {
-      final mq = MediaQuery.of(context);
-      // Never taller than the space left above the keyboard, so the input bar
-      // stays on screen while typing.
-      final maxHeight =
-          mq.size.height - mq.viewInsets.bottom - mq.padding.top - 24;
-      return Padding(
+    builder: (context) => _AIChatSheet(initialMessage: initialMessage),
+  );
+}
+
+/// The chat sheet, draggable between three quarters and fullscreen.
+///
+/// It used to be a fixed 75% panel with no way to make it bigger: a long
+/// answer had to be read through a letterbox. Swipe the handle up for
+/// fullscreen, down to close.
+class _AIChatSheet extends StatefulWidget {
+  const _AIChatSheet({this.initialMessage});
+
+  final String? initialMessage;
+
+  @override
+  State<_AIChatSheet> createState() => _AIChatSheetState();
+}
+
+class _AIChatSheetState extends State<_AIChatSheet> {
+  /// Share of the available height the sheet occupies.
+  double _fraction = 0.75;
+
+  /// Live fraction while a finger is down; null when settled.
+  double? _dragFraction;
+
+  static const double _minFraction = 0.4;
+
+  void _onDragUpdate(DragUpdateDetails d, double available) {
+    final next = (_dragFraction ?? _fraction) - d.delta.dy / available;
+    setState(() => _dragFraction = next.clamp(0.2, 1.0));
+  }
+
+  void _onDragEnd(DragEndDetails d) {
+    final fraction = _dragFraction ?? _fraction;
+    final velocity = d.velocity.pixelsPerSecond.dy;
+
+    // Thrown down, or dragged below the smallest useful size: close it.
+    if (velocity > 500 || fraction < _minFraction * 0.8) {
+      Navigator.of(context).pop();
+      return;
+    }
+
+    final settled = velocity < -400
+        ? 1.0
+        : (fraction > 0.88
+            ? 1.0
+            : fraction < 0.58
+                ? _minFraction
+                : 0.75);
+    setState(() {
+      _fraction = settled;
+      _dragFraction = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mq = MediaQuery.of(context);
+    // Never taller than the space left above the keyboard, so the input bar
+    // stays on screen while typing.
+    final maxHeight =
+        mq.size.height - mq.viewInsets.bottom - mq.padding.top - 24;
+    final available = maxHeight < 240 ? 240.0 : maxHeight;
+    final fraction = _dragFraction ?? _fraction;
+
+    return Padding(
         padding: EdgeInsets.only(bottom: mq.viewInsets.bottom),
-        child: Container(
-          height: (mq.size.height * 0.75).clamp(240.0, maxHeight < 240 ? 240.0 : maxHeight),
+        child: AnimatedContainer(
+          duration: Duration(milliseconds: _dragFraction == null ? 220 : 0),
+          curve: Curves.easeOut,
+          height: (available * fraction).clamp(180.0, available),
           decoration: BoxDecoration(
             color: AppColors.panelMatte,
             borderRadius:
@@ -1294,18 +1368,24 @@ void showAIChat(BuildContext context) {
               ),
             ],
           ),
-          child: const Column(
+          child: Column(
             children: [
               // There was no way out of this sheet on a phone except tapping the
-              // dimmed map above it — no handle, no close button.
-              _SheetCloseBar(),
-              Expanded(child: AIChatScreen()),
+              // dimmed map above it — no handle, no close button. The handle
+              // now also drags the sheet between sizes.
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onVerticalDragUpdate: (d) => _onDragUpdate(d, available),
+                onVerticalDragEnd: _onDragEnd,
+                child: const _SheetCloseBar(),
+              ),
+              Expanded(
+                  child: AIChatScreen(initialMessage: widget.initialMessage)),
             ],
           ),
         ),
       );
-    },
-  );
+  }
 }
 
 class _SheetCloseBar extends StatelessWidget {

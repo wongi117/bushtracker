@@ -59,12 +59,14 @@ void main() {
 
   group('Screen Widget Tests', () {
     
-    testWidgets('SplashScreen loads without crash', (tester) async {
-      await tester.pumpWidget(createTestWidget(const SplashScreen()));
-      expect(find.byType(SplashScreen), findsOneWidget);
-      expect(find.textContaining('BUSH'), findsOneWidget);
-      // Wait for the multi-stage initialization timer to complete
-      await tester.pump(const Duration(seconds: 15));
+    testWidgets('SplashGate loads without crash', (tester) async {
+      // SplashScreen became SplashGate: the splash is now a lid over the
+      // dashboard rather than a route before it, so the map loads underneath.
+      await tester.pumpWidget(createTestWidget(const SplashGate()));
+      expect(find.byType(SplashGate), findsOneWidget);
+      expect(find.textContaining('PINAGE'), findsOneWidget);
+      // Let the minimum-show timer and the tip rotation run.
+      await tester.pump(const Duration(seconds: 3));
       await tester.pumpWidget(Container()); // Dispose to stop animations
     });
 

@@ -30,8 +30,24 @@ enum HeadingQuality {
 
 /// A single compass reading, always clockwise from north.
 class HeadingReading {
-  /// 0–360, clockwise from north.
+  /// 0–360, clockwise from north: where the handset's top edge points.
+  ///
+  /// The right bearing for a compass rose on a phone held flat like a map.
+  /// Not the right one for an AR camera — see [cameraDegrees].
   final double degrees;
+
+  /// Where the lens is pointed, 0–360 clockwise from north, or null if it has
+  /// not been measurable yet.
+  ///
+  /// A separate number because it answers a different question, and because
+  /// [degrees] cannot answer this one: held up to look through the camera, the
+  /// top edge points at the sky and its bearing is noise. Markers pinned to
+  /// [degrees] drifted along with the camera instead of staying on their
+  /// feature. See magnetic_bearing.dart.
+  ///
+  /// Null while the lens points at the ground or the sky and no earlier
+  /// reading exists, where the bearing genuinely has no value.
+  final double? cameraDegrees;
   final HeadingQuality quality;
   final HeadingSourceKind source;
 
@@ -39,15 +55,32 @@ class HeadingReading {
   /// Earth's field is roughly 25–65 uT; well outside that means interference.
   final double? fieldStrengthUt;
 
+  /// How far the camera is tilted up or down from level, in radians.
+  /// Positive is up. Needed to put the horizon in the right place on screen —
+  /// without it, AR markers sit at a fixed height regardless of how the phone
+  /// is held.
+  final double pitchRad;
+
+  /// Rotation about the camera axis, in radians. Positive is the phone
+  /// rolled clockwise from portrait.
+  final double rollRad;
+
   const HeadingReading({
     required this.degrees,
     required this.quality,
     required this.source,
+    this.cameraDegrees,
     this.fieldStrengthUt,
+    this.pitchRad = 0,
+    this.rollRad = 0,
   });
 
   const HeadingReading.waiting(HeadingSourceKind source)
       : this(degrees: 0, quality: HeadingQuality.waiting, source: source);
+
+  /// True when the magnetic field says the compass cannot be trusted and a
+  /// figure-of-eight would fix it.
+  bool get needsCalibration => quality == HeadingQuality.interference;
 
   const HeadingReading.unavailable([
     HeadingSourceKind source = HeadingSourceKind.none,
@@ -56,6 +89,9 @@ class HeadingReading {
   /// True once we have a real bearing to show, trustworthy or not.
   bool get isLive =>
       quality == HeadingQuality.good || quality == HeadingQuality.interference;
+
+  /// True once the lens bearing is good for anchoring an AR marker.
+  bool get hasCameraBearing => isLive && cameraDegrees != null;
 
   /// Clockwise from north, in radians — what `Transform.rotate` wants.
   double get radians => degrees * math.pi / 180.0;

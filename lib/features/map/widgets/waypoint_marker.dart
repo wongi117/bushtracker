@@ -1,6 +1,86 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import '../../../core/models/waypoint.dart';
 import 'color_picker.dart';
+
+/// The pin's sheet: distance and bearing from you, plus Edit, Track and
+/// Delete.
+///
+/// Lives outside the marker widget so the map can open it for a tap that
+/// landed near a pin rather than exactly on it.
+void showWaypointMenu(
+  BuildContext context, {
+  required Waypoint waypoint,
+  required VoidCallback onEdit,
+  required VoidCallback onDelete,
+  required Function(String color) onColorChanged,
+  required Function(String icon) onIconChanged,
+  String? distanceInfo,
+  VoidCallback? onNavigate,
+}) {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.transparent,
+    isScrollControlled: true,
+    builder: (ctx) => _WaypointMenuSheet(
+      waypoint: waypoint,
+      distanceInfo: distanceInfo,
+      onEdit: () {
+        Navigator.pop(ctx);
+        onEdit();
+      },
+      onDelete: () {
+        Navigator.pop(ctx);
+        onDelete();
+      },
+      onNavigate: onNavigate == null
+          ? null
+          : () {
+              Navigator.pop(ctx);
+              onNavigate();
+            },
+      onColorChanged: onColorChanged,
+      onIconChanged: onIconChanged,
+    ),
+  );
+}
+
+/// The stored photo as bytes, if this waypoint has one.
+///
+/// Photos are kept as `data:image/jpeg;base64,...` strings, so the prefix
+/// has to come off before decoding. Bad or truncated data returns null
+/// rather than throwing inside a build.
+Uint8List? _photoBytes(Waypoint waypoint) {
+  final raw = waypoint.thumbnailPath ??
+      (waypoint.photoPaths?.isNotEmpty == true
+          ? waypoint.photoPaths!.first
+          : null);
+  if (raw == null || raw.isEmpty) return null;
+  final marker = raw.indexOf('base64,');
+  if (marker < 0) return null;
+  try {
+    return base64Decode(raw.substring(marker + 7));
+  } catch (_) {
+    return null;
+  }
+}
+
+/// The photo on its own, big, on a black ground.
+void _showFullPhoto(BuildContext context, Uint8List bytes) {
+  showDialog<void>(
+    context: context,
+    barrierColor: Colors.black87,
+    builder: (ctx) => GestureDetector(
+      onTap: () => Navigator.pop(ctx),
+      child: InteractiveViewer(
+        maxScale: 5,
+        child: Center(child: Image.memory(bytes)),
+      ),
+    ),
+  );
+}
 
 class WaypointMarker extends StatelessWidget {
   final Waypoint waypoint;
@@ -154,33 +234,16 @@ class WaypointMarker extends StatelessWidget {
     );
   }
 
-  void _showMenu(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (ctx) => _WaypointMenuSheet(
+  void _showMenu(BuildContext context) => showWaypointMenu(
+        context,
         waypoint: waypoint,
         distanceInfo: distanceInfo,
-        onEdit: () {
-          Navigator.pop(ctx);
-          onEdit();
-        },
-        onDelete: () {
-          Navigator.pop(ctx);
-          onDelete();
-        },
-        onNavigate: onNavigate == null
-            ? null
-            : () {
-                Navigator.pop(ctx);
-                onNavigate!();
-              },
+        onEdit: onEdit,
+        onDelete: onDelete,
         onColorChanged: onColorChanged,
         onIconChanged: onIconChanged,
-      ),
-    );
-  }
+        onNavigate: onNavigate,
+      );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -233,6 +296,27 @@ class _WaypointMenuSheet extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
+          // The photo, when there is one.
+          //
+          // A photo pin showed its name and distance but not the picture —
+          // which is the whole reason for taking it. Tap to see it full size.
+          if (_photoBytes(waypoint) != null) ...[
+            GestureDetector(
+              onTap: () => _showFullPhoto(context, _photoBytes(waypoint)!),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.memory(
+                  _photoBytes(waypoint)!,
+                  height: 160,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+
           // Header — icon + name + coords
           Row(children: [
             Container(
@@ -283,6 +367,35 @@ class _WaypointMenuSheet extends StatelessWidget {
                             color: Color(0xFF00E5FF),
                             fontSize: 12,
                             fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  // How good the fix was when this pin was made, so you know
+                  // how hard to trust it when you come back looking.
+                  if (waypoint.accuracy != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 3),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            waypoint.accuracy! <= 10
+                                ? Icons.gps_fixed
+                                : Icons.gps_not_fixed,
+                            size: 12,
+                            color: waypoint.accuracy! <= 10
+                                ? const Color(0xFF00E676)
+                                : waypoint.accuracy! <= 30
+                                    ? const Color(0xFFFFEB3B)
+                                    : const Color(0xFFEF5350),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Recorded to ±${waypoint.accuracy!.round()} m'
+                            '${waypoint.altitude != null ? '  ·  ${waypoint.altitude!.round()} m elevation' : ''}',
+                            style: const TextStyle(
+                                color: Colors.white54, fontSize: 11),
+                          ),
+                        ],
                       ),
                     ),
                 ],

@@ -26,6 +26,11 @@ class MeshState {
   /// True while this phone is broadcasting its own SOS.
   final bool sosActive;
 
+  /// Why the mesh is not running, when it is not. Empty when all is well.
+  /// Usually "permissions denied" — which otherwise looks identical to
+  /// "nobody else is nearby".
+  final String meshError;
+
   MeshState({
     this.isAdvertising = false,
     this.isDiscovering = false,
@@ -34,6 +39,7 @@ class MeshState {
     this.peerLocations = const {},
     this.lastIncomingSos,
     this.sosActive = false,
+    this.meshError = '',
   });
 
   MeshState copyWith({
@@ -44,6 +50,7 @@ class MeshState {
     Map<String, MeshPacket>? peerLocations,
     MeshPacket? lastIncomingSos,
     bool? sosActive,
+    String? meshError,
   }) {
     return MeshState(
       isAdvertising: isAdvertising ?? this.isAdvertising,
@@ -53,6 +60,7 @@ class MeshState {
       peerLocations: peerLocations ?? this.peerLocations,
       lastIncomingSos: lastIncomingSos ?? this.lastIncomingSos,
       sosActive: sosActive ?? this.sosActive,
+      meshError: meshError ?? this.meshError,
     );
   }
 }
@@ -70,7 +78,33 @@ class MeshNotifier extends StateNotifier<MeshState> {
   MeshPacket? _activeSos;
   Timer? _sosRebroadcast;
 
-  MeshNotifier() : super(MeshState());
+  MeshNotifier() : super(MeshState()) {
+    // Join the mesh as soon as the app opens.
+    //
+    // Nothing used to start it except pressing SOS, which meant the SENDER
+    // began advertising at the moment of the emergency while every other
+    // phone was still deaf. A mesh only works if everyone is already on it —
+    // you cannot ask someone to switch it on after they are in trouble.
+    if (!kIsWeb) {
+      _startWhenPermissionsAreFree();
+    }
+  }
+
+  /// Join the mesh once the launch permission prompts are out of the way.
+  ///
+  /// Android grants one set of permissions at a time. Asking for the mesh's
+  /// bluetooth permissions while the location prompt was still open made
+  /// Android cancel one of them — the log said "Can request only one set of
+  /// permissions at a time", and Geolocator came back with an empty result.
+  /// So one of GPS or the mesh lost, silently, depending on timing.
+  Future<void> _startWhenPermissionsAreFree() async {
+    for (var attempt = 0; attempt < 4; attempt++) {
+      await Future<void>.delayed(const Duration(seconds: 6));
+      if (!mounted) return;
+      await startMesh();
+      if (state.isAdvertising) return;
+    }
+  }
 
   @override
   void dispose() {
@@ -119,9 +153,21 @@ class MeshNotifier extends StateNotifier<MeshState> {
         },
         onBytesReceived: (_, bytes) => _handleIncomingBytes(bytes),
       );
-      state = state.copyWith(isAdvertising: true, isDiscovering: true);
+      if (!mounted) return;
+      state = state.copyWith(
+          isAdvertising: true, isDiscovering: true, meshError: '');
     } catch (e) {
       debugPrint('MeshNotifier.startMesh error: $e');
+      if (!mounted) return;
+      // Say why. A silent failure here reads as "no one else around", which
+      // is exactly the wrong thing to believe about a safety net.
+      state = state.copyWith(
+        isAdvertising: false,
+        isDiscovering: false,
+        meshError: e.toString().contains('permission')
+            ? 'Mesh needs location and nearby-device permissions'
+            : 'Mesh could not start: $e',
+      );
     }
   }
 

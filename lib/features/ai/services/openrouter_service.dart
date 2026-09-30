@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'dart:math';
 import 'package:bush_track/core/config/api_config.dart';
 import 'package:bush_track/features/ai/services/google_ai_service.dart';
+import 'package:bush_track/features/ai/services/offline_knowledge.dart';
 
 /// Multi-Provider AI Service with 4-Tier Fallback
 class OpenRouterService {
@@ -30,7 +31,8 @@ class OpenRouterService {
 
   static const Map<String, List<Map<String, String>>> availableModels = {
     'claude': [
-      {'id': 'claude-sonnet-4-6',    'name': 'Claude Sonnet 4.6',  'desc': 'Anthropic — smartest, best reasoning'},
+      {'id': 'claude-sonnet-5', 'name': 'Claude Sonnet 5', 'desc': 'Anthropic — best all-round for conversation'},
+      {'id': 'claude-opus-5',   'name': 'Claude Opus 5',   'desc': 'Anthropic — smartest, slower'},
       {'id': 'claude-haiku-4-5-20251001', 'name': 'Claude Haiku 4.5', 'desc': 'Anthropic — fastest, lightest'},
     ],
     'groq': [
@@ -46,7 +48,13 @@ class OpenRouterService {
     ],
   };
 
-  static String selectedClaudeModel = 'claude-sonnet-4-6';
+  static String selectedClaudeModel = 'claude-sonnet-5';
+
+  /// Gemini is off: it bills to a Google Cloud account that is not funded
+  /// right now, and an unpaid call is worse than no call. Claude and Groq
+  /// both cover the chain. Flip this back to true to re-enable it — nothing
+  /// else needs changing.
+  static const bool geminiEnabled = false;
 
   Future<String> getAiResponse(String prompt,
       {Map<String, dynamic>? context,
@@ -66,25 +74,8 @@ class OpenRouterService {
     if (kIsWeb) {
       final tryClaude = selectedProvider == 'auto' || selectedProvider == 'claude';
       final tryGroq   = selectedProvider == 'auto' || selectedProvider == 'groq';
-      final tryGemini = selectedProvider == 'auto' || selectedProvider == 'gemini';
-
-      // 0. MiniMax FIRST — proven reliable, fastest fallback
-      try {
-        debugPrint('🌐 WEB AI: Trying MiniMax...');
-        final response = await _tryMinimax(prompt, context,
-            systemPrompt: systemPrompt ?? _systemPrompt,
-            conversationHistory: conversationHistory);
-        if (response != null) {
-          _isOnDeviceMode = false;
-          _lastUsedTier = 'Cloud (MiniMax)';
-          _lastError = '';
-          _lastOnlineTime = DateTime.now();
-          return response;
-        }
-      } catch (e) {
-        debugPrint('⚠️ MiniMax failed: $e');
-        _lastError = e.toString();
-      }
+      final tryGemini = geminiEnabled &&
+          (selectedProvider == 'auto' || selectedProvider == 'gemini');
 
       // 1. Claude via /api/claude proxy
       if (tryClaude) {
@@ -134,6 +125,7 @@ class OpenRouterService {
             prompt,
             context: context,
             systemPrompt: systemPrompt ?? _systemPrompt,
+            conversationHistory: conversationHistory,
           );
           if (response != null) {
             _isOnDeviceMode = false;
@@ -145,6 +137,27 @@ class OpenRouterService {
         } catch (e) {
           debugPrint('⚠️ Gemini failed: $e');
         }
+      }
+
+      // 4. MiniMax — last cloud resort. It used to run FIRST, which is
+      //    why chat felt flat: Claude never got a look in unless MiniMax
+      //    happened to fail, and the comment above always said MiniMax
+      //    was meant to be last.
+      try {
+        debugPrint('🌐 WEB AI: Trying MiniMax...');
+        final response = await _tryMinimax(prompt, context,
+            systemPrompt: systemPrompt ?? _systemPrompt,
+            conversationHistory: conversationHistory);
+        if (response != null) {
+          _isOnDeviceMode = false;
+          _lastUsedTier = 'Cloud (MiniMax)';
+          _lastError = '';
+          _lastOnlineTime = DateTime.now();
+          return response;
+        }
+      } catch (e) {
+        debugPrint('⚠️ MiniMax failed: $e');
+        _lastError = e.toString();
       }
 
       _isOfflineMode = true;
@@ -177,19 +190,23 @@ class OpenRouterService {
     }
 
     // Mobile fallback: Google Gemini
-    try {
-      debugPrint('🌐 FUTURE GEN AI: Attempting Google Cloud AI...');
-      final response = await _googleAI.getResponse(prompt,
-          context: context, systemPrompt: systemPrompt ?? _systemPrompt);
-      if (response != null) {
-        _isOfflineMode = false;
-        _isOnDeviceMode = false;
-        _lastUsedTier = 'Cloud (Google ${ApiConfig.googleModelName})';
-        _lastError = '';
-        return _cleanResponse(response);
+    if (geminiEnabled) {
+      try {
+        debugPrint('🌐 FUTURE GEN AI: Attempting Google Cloud AI...');
+        final response = await _googleAI.getResponse(prompt,
+          context: context,
+          systemPrompt: systemPrompt ?? _systemPrompt,
+            conversationHistory: conversationHistory);
+        if (response != null) {
+          _isOfflineMode = false;
+          _isOnDeviceMode = false;
+          _lastUsedTier = 'Cloud (Google ${ApiConfig.googleModelName})';
+          _lastError = '';
+          return _cleanResponse(response);
+        }
+      } catch (e) {
+        debugPrint('⚠️ Google AI failed: $e');
       }
-    } catch (e) {
-      debugPrint('⚠️ Google AI failed: $e');
     }
 
     _isOfflineMode = true;
@@ -283,10 +300,27 @@ class OpenRouterService {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final text = data['content']?[0]?['text'] as String?;
+        // Take the first TEXT block, not blindly content[0]: a thinking model
+        // puts a "thinking" block first, and reading [0]['text'] came back
+        // null, so the answer was thrown away and the chain fell through.
+        final blocks = data['content'];
+        String? text;
+        if (blocks is List) {
+          for (final block in blocks) {
+            if (block is Map && block['type'] == 'text') {
+              final candidate = block['text'];
+              if (candidate is String && candidate.isNotEmpty) {
+                text = candidate;
+                break;
+              }
+            }
+          }
+        }
         if (text != null && text.isNotEmpty) {
           return _cleanResponse(text);
         }
+        _lastError = data['error']?['message']?.toString() ?? 'Claude: no text';
+        debugPrint('⚠️ Claude returned no text block: $_lastError');
       } else {
         _lastError = 'Claude ${response.statusCode}';
         debugPrint('⚠️ Claude error: ${response.statusCode} ${response.body.substring(0, response.body.length.clamp(0, 200))}');
@@ -550,7 +584,7 @@ class OpenRouterService {
 
   String _generateOfflineResponse(
       String prompt, Map<String, dynamic>? context) {
-    return _OfflineAI.generateResponse(prompt, context);
+    return buildOfflineAnswer(prompt, context);
   }
 
   DateTime? _lastOnlineTime;

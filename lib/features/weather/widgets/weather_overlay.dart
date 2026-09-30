@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
@@ -42,18 +44,19 @@ class WeatherOverlay extends ConsumerWidget {
     return Positioned(
       top: MediaQuery.of(context).padding.top + 76,
       left: 14,
-      child: Container(
+      // Semi-transparent so the map reads through it, with a blur behind so
+      // the text stays legible over busy satellite imagery — a flat 65% panel
+      // over scrub is hard to read.
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+          child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: AppColors.panelMatte,
+          color: AppColors.panelMatte.withValues(alpha: 0.65),
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.3),
-              blurRadius: 10,
-              spreadRadius: 2,
-            )
-          ],
+          border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -133,6 +136,8 @@ class WeatherOverlay extends ConsumerWidget {
                 ),
               ),
           ],
+        ),
+          ),
         ),
       ),
     );

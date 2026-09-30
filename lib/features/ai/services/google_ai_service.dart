@@ -5,14 +5,20 @@ import 'package:flutter/foundation.dart';
 
 /// Google Gemini via REST — avoids SDK CORS issues on Flutter web
 class GoogleAIService {
-  static String selectedModel = 'gemini-2.5-flash-preview-04-17';
+  // The dated preview id 404s — preview models are withdrawn once the stable
+  // release lands. Use the stable name.
+  static String selectedModel = 'gemini-2.5-flash';
 
   String get currentModel => selectedModel;
-  bool get isReady => ApiConfig.geminiKey.isNotEmpty;
+  bool get isReady => kIsWeb || ApiConfig.geminiKey.isNotEmpty;
 
   Future<String?> getResponse(String prompt,
-      {Map<String, dynamic>? context, String? systemPrompt}) async {
-    if (ApiConfig.geminiKey.isEmpty) {
+      {Map<String, dynamic>? context,
+      String? systemPrompt,
+      List<Map<String, String>>? conversationHistory}) async {
+    // On web the key lives server-side in the proxy, so an empty client key
+    // is expected and must not stop the attempt.
+    if (!kIsWeb && ApiConfig.geminiKey.isEmpty) {
       debugPrint('⚠️ GoogleAIService: GEMINI_KEY not configured');
       return null;
     }
@@ -24,17 +30,55 @@ class GoogleAIService {
             '\n\nContext: ${context.entries.map((e) => '${e.key}: ${e.value}').join(', ')}';
       }
 
-      final url =
-          'https://generativelanguage.googleapis.com/v1beta/models/$selectedModel:generateContent?key=${ApiConfig.geminiKey}';
+      // On web the key goes through our own proxy. It used to be pasted into
+      // the query string of a request made from the browser, which put a live
+      // Google API key in the page's network log for anyone to lift.
+      final url = kIsWeb
+          ? '/api/gemini?model=$selectedModel'
+          : 'https://generativelanguage.googleapis.com/v1beta/models/$selectedModel:generateContent?key=${ApiConfig.geminiKey}';
+
+      // Every earlier turn, not just the latest message. Gemini was the only
+      // tier not given the history, and it is the tier that actually answers
+      // — so the assistant forgot the previous question every single time.
+      final contents = <Map<String, dynamic>>[];
+      if (conversationHistory != null && conversationHistory.isNotEmpty) {
+        for (final m in conversationHistory) {
+          final text = m['content'] ?? '';
+          if (text.isEmpty) continue;
+          contents.add({
+            // Gemini calls the assistant side "model".
+            'role': m['role'] == 'assistant' ? 'model' : 'user',
+            'parts': [
+              {'text': text}
+            ],
+          });
+        }
+        // A conversation has to start with the user.
+        while (contents.isNotEmpty && contents.first['role'] == 'model') {
+          contents.removeAt(0);
+        }
+      }
+
+      if (contents.isEmpty) {
+        contents.add({
+          'role': 'user',
+          'parts': [
+            {'text': prompt + contextString}
+          ],
+        });
+      } else if (contextString.isNotEmpty) {
+        // Keep the live context (position, time, waypoints) attached to the
+        // most recent user message.
+        final last = contents.last;
+        if (last['role'] == 'user') {
+          final parts = last['parts'] as List;
+          final text = (parts.first as Map)['text'] as String;
+          parts[0] = {'text': text + contextString};
+        }
+      }
 
       final body = <String, dynamic>{
-        'contents': [
-          {
-            'parts': [
-              {'text': prompt + contextString}
-            ]
-          }
-        ],
+        'contents': contents,
         'generationConfig': {
           'maxOutputTokens': 1024,
           'temperature': 0.7,

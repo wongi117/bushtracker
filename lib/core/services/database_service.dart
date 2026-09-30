@@ -2,14 +2,43 @@ import 'dart:async';
 import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:sqflite_common/sqflite.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart' show sqfliteFfiInit, databaseFactoryFfi;
 import 'package:path/path.dart';
 
-/// Database service that works on both mobile and web
-/// On web, uses in-memory storage since SQLite isn't natively supported
+import 'native_db_factory_stub.dart'
+    if (dart.library.io) 'native_db_factory_io.dart';
+import 'web_db_factory_stub.dart'
+    if (dart.library.js_interop) 'web_db_factory_web.dart';
+
+/// Database service that works on both mobile and web.
+///
+/// Web used to keep everything in memory, so every pin, trail, zone and note
+/// vanished on refresh. It now opens real SQLite in the browser (the same
+/// schema and queries as the phone). The in-memory store is kept only as a
+/// fallback for browsers where that cannot open — private windows, or storage
+/// blocked — so the app still runs, just without saving.
 class DatabaseService {
   Database? _db;
   bool _initialized = false;
+
+  /// False when the app fell back to memory — nothing survives a refresh.
+  /// Surfaced in the menu, because release web builds print nothing.
+  bool get isPersistent => _db != null;
+
+  /// Why the browser database could not open, when it could not.
+  String? storageFailure;
+
+  /// What storage actually did this boot, e.g. "boot 3 · 7 pins".
+  ///
+  /// Opening a database is not proof that it saves: the browser stack falls
+  /// back to an in-memory filesystem silently, so every boot looks healthy
+  /// while nothing survives a refresh. The counter below is written on one
+  /// boot and read on the next, which is the only thing that actually
+  /// distinguishes the two.
+  String storageReport = 'not checked';
+
+  /// True once a previous boot's counter has been read back — i.e. storage is
+  /// genuinely surviving reloads, not merely open.
+  bool provenAcrossReloads = false;
   bool get _isWeb => kIsWeb;
   
   // In-memory storage for web
@@ -19,89 +48,215 @@ class DatabaseService {
   Future<void> initialize() async {
     if (_initialized) return;
     
+    // Platform check — NOT "_db == null". Getting that wrong sends native
+    // down the web path and leaves the phone app in memory too.
     if (_isWeb) {
-      // For web, initialize in-memory storage
+      for (final factory in webDatabaseFactories) {
+        try {
+          databaseFactory = factory;
+          _db = await factory.openDatabase(
+            'bush_track.db',
+            options: OpenDatabaseOptions(
+              version: 1,
+              onCreate: (db, version) async => _createTables(db),
+              onOpen: _onOpen,
+            ),
+          );
+          _initialized = true;
+          await _runStorageSelfTest();
+          debugPrint('Web SQLite initialized: $storageReport');
+          return;
+        } catch (e) {
+          // Private windows, blocked storage, or a browser that refuses the
+          // shared worker. Keep the reason: release web builds do not print
+          // to the console, so this is the only way to see it.
+          storageFailure = '$e';
+          debugPrint('Web SQLite factory failed: $e');
+          _db = null;
+        }
+      }
       _initialized = true;
-      debugPrint('Web in-memory database initialized');
+      debugPrint('Web in-memory database (data will NOT persist)');
       return;
     }
-    
-    // For mobile/desktop, use FFI (file-based SQLite)
-    sqfliteFfiInit();
-    databaseFactory = databaseFactoryFfi;
-    
-    final databasesPath = await getDatabasesPath();
+
+    // The phone uses the sqflite plugin; only desktop uses FFI. Forcing FFI
+    // here meant the database never opened on Android.
+    final factory = nativeDatabaseFactory();
+    if (factory == null) {
+      _initialized = true;
+      storageFailure = 'No database available on this platform';
+      return;
+    }
+    databaseFactory = factory;
+
+    final databasesPath = await factory.getDatabasesPath();
     final path = join(databasesPath, 'bush_track.db');
-    
-    _db = await openDatabase(
+
+    _db = await factory.openDatabase(
       path,
-      onCreate: (db, version) async {
-        await _createTables(db);
-      },
-      onOpen: (db) async {
-        // Verify tables exist
-        try {
-          await db.query('waypoints', limit: 1);
-        } catch (e) {
-          await _createTables(db);
-        }
-        // Migrate: add columns introduced after initial schema
-        final waypointCols = (await db.rawQuery('PRAGMA table_info(waypoints)'))
-            .map((c) => c['name'] as String)
-            .toSet();
-        if (!waypointCols.contains('rating')) {
-          await db.execute('ALTER TABLE waypoints ADD COLUMN rating INTEGER');
-        }
-        if (!waypointCols.contains('weather_conditions')) {
-          await db.execute(
-              'ALTER TABLE waypoints ADD COLUMN weather_conditions TEXT');
-        }
-        // Migrate: create geofences table if missing
-        try {
-          await db.query('geofences', limit: 1);
-        } catch (_) {
-          await db.execute('''
-            CREATE TABLE IF NOT EXISTS geofences(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              name TEXT,
-              latitude REAL,
-              longitude REAL,
-              radius_meters REAL,
-              is_active INTEGER DEFAULT 1,
-              created_at INTEGER
-            )
-          ''');
-        }
-        // Migrate: create artifacts table if missing
-        try {
-          await db.query('artifacts', limit: 1);
-        } catch (_) {
-          await db.execute('''
-            CREATE TABLE IF NOT EXISTS artifacts(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              label TEXT,
-              material_type TEXT,
-              dimensions TEXT,
-              condition TEXT,
-              field_notes TEXT,
-              latitude REAL,
-              longitude REAL,
-              altitude REAL,
-              photo_paths TEXT,
-              geologist TEXT,
-              signed_off INTEGER DEFAULT 0,
-              created_at INTEGER
-            )
-          ''');
-        }
-      },
-      version: 1,
+      options: OpenDatabaseOptions(
+        version: 1,
+        onCreate: (db, version) async => _createTables(db),
+        onOpen: _onOpen,
+      ),
     );
     
     _initialized = true;
-    debugPrint('Native SQLite database initialized at: $path');
+    await _runStorageSelfTest();
+    debugPrint('Native SQLite initialized at $path: $storageReport');
   }
   
+  /// Count this boot, and report whether previous boots were remembered.
+  Future<void> _runStorageSelfTest() async {
+    try {
+      await _db!.execute(
+          'CREATE TABLE IF NOT EXISTS app_meta(key TEXT PRIMARY KEY, value TEXT)');
+      final rows = await _db!
+          .query('app_meta', where: 'key = ?', whereArgs: ['boot_count']);
+      final previous =
+          rows.isEmpty ? 0 : int.tryParse('${rows.first['value']}') ?? 0;
+      final boot = previous + 1;
+      await _db!.insert(
+        'app_meta',
+        {'key': 'boot_count', 'value': '$boot'},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      final counted =
+          await _db!.rawQuery('SELECT COUNT(*) AS c FROM waypoints');
+      final pins = (counted.first['c'] as int?) ?? 0;
+      provenAcrossReloads = previous > 0;
+      storageReport = 'boot $boot · $pins saved';
+    } catch (e) {
+      storageReport = 'self-test failed: $e';
+    }
+    publishStorageReport(storageReport);
+  }
+
+  Future<void> _onOpen(Database db) async {
+    // Verify tables exist
+    try {
+      await db.query('waypoints', limit: 1);
+    } catch (e) {
+      await _createTables(db);
+    }
+    // Migrate: add columns introduced after initial schema
+    final waypointCols = (await db.rawQuery('PRAGMA table_info(waypoints)'))
+        .map((c) => c['name'] as String)
+        .toSet();
+    if (!waypointCols.contains('rating')) {
+      await db.execute('ALTER TABLE waypoints ADD COLUMN rating INTEGER');
+    }
+    if (!waypointCols.contains('weather_conditions')) {
+      await db.execute(
+          'ALTER TABLE waypoints ADD COLUMN weather_conditions TEXT');
+    }
+    // Migrate: create geofences table if missing
+    try {
+      await db.query('geofences', limit: 1);
+    } catch (_) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS geofences(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT,
+          latitude REAL,
+          longitude REAL,
+          radius_meters REAL,
+          is_active INTEGER DEFAULT 1,
+          created_at INTEGER,
+          shape TEXT DEFAULT 'circle',
+          points_json TEXT,
+          category TEXT,
+          notes TEXT,
+          file_id INTEGER
+        )
+      ''');
+    }
+    // Migrate: zones gained shapes, categories and notes after launch, so a
+    // database created before that has the table but not the columns.
+    final zoneCols = (await db.rawQuery('PRAGMA table_info(geofences)'))
+        .map((c) => c['name'] as String)
+        .toSet();
+    if (!zoneCols.contains('shape')) {
+      await db.execute(
+          "ALTER TABLE geofences ADD COLUMN shape TEXT DEFAULT 'circle'");
+    }
+    if (!zoneCols.contains('points_json')) {
+      await db.execute('ALTER TABLE geofences ADD COLUMN points_json TEXT');
+    }
+    if (!zoneCols.contains('category')) {
+      await db.execute('ALTER TABLE geofences ADD COLUMN category TEXT');
+    }
+    if (!zoneCols.contains('notes')) {
+      await db.execute('ALTER TABLE geofences ADD COLUMN notes TEXT');
+    }
+
+    // Migrate: files arrived after launch, so an existing database has
+    // neither the tables nor the file_id links on what they collect.
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS field_files(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        description TEXT,
+        latitude REAL,
+        longitude REAL,
+        created_at INTEGER,
+        updated_at INTEGER
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS file_notes(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_id INTEGER,
+        body TEXT,
+        latitude REAL,
+        longitude REAL,
+        created_at INTEGER
+      )
+    ''');
+    if (!waypointCols.contains('file_id')) {
+      await db.execute('ALTER TABLE waypoints ADD COLUMN file_id INTEGER');
+    }
+    if (!zoneCols.contains('file_id')) {
+      await db.execute('ALTER TABLE geofences ADD COLUMN file_id INTEGER');
+    }
+    final trailCols = (await db.rawQuery('PRAGMA table_info(trails)'))
+        .map((c) => c['name'] as String)
+        .toSet();
+    if (!trailCols.contains('file_id')) {
+      await db.execute('ALTER TABLE trails ADD COLUMN file_id INTEGER');
+    }
+
+    // Migrate: create artifacts table if missing
+    try {
+      await db.query('artifacts', limit: 1);
+    } catch (_) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS artifacts(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          label TEXT,
+          material_type TEXT,
+          dimensions TEXT,
+          condition TEXT,
+          field_notes TEXT,
+          latitude REAL,
+          longitude REAL,
+          altitude REAL,
+          photo_paths TEXT,
+          geologist TEXT,
+          signed_off INTEGER DEFAULT 0,
+          created_at INTEGER
+        )
+      ''');
+    }
+  }
+
+  /// The real schema, for tests that check every model's toMap() against it.
+  /// A column name that does not match is otherwise invisible until a save
+  /// fails on a device.
+  @visibleForTesting
+  Future<void> createTablesForTest(Database db) => _createTables(db);
+
   Future<void> _createTables(Database db) async {
     // Waypoints table
     await db.execute('''
@@ -123,7 +278,8 @@ class DatabaseService {
         order_index INTEGER,
         is_pin INTEGER DEFAULT 0,
         rating INTEGER,
-        weather_conditions TEXT
+        weather_conditions TEXT,
+        file_id INTEGER
       )
     ''');
     
@@ -144,7 +300,8 @@ class DatabaseService {
         color TEXT DEFAULT '#7B2FFF',
         line_style TEXT DEFAULT 'solid',
         show_direction INTEGER DEFAULT 1,
-        is_active INTEGER DEFAULT 0
+        is_active INTEGER DEFAULT 0,
+        file_id INTEGER
       )
     ''');
     
@@ -199,6 +356,31 @@ class DatabaseService {
       )
     ''');
 
+    // Field files: a folder per job, site or trip.
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS field_files(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        description TEXT,
+        latitude REAL,
+        longitude REAL,
+        created_at INTEGER,
+        updated_at INTEGER
+      )
+    ''');
+
+    // Notes written inside a file, each stamped with where it was written.
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS file_notes(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_id INTEGER,
+        body TEXT,
+        latitude REAL,
+        longitude REAL,
+        created_at INTEGER
+      )
+    ''');
+
     // Geofences table
     await db.execute('''
       CREATE TABLE IF NOT EXISTS geofences(
@@ -208,7 +390,12 @@ class DatabaseService {
         longitude REAL,
         radius_meters REAL,
         is_active INTEGER DEFAULT 1,
-        created_at INTEGER
+        created_at INTEGER,
+        shape TEXT DEFAULT 'circle',
+        points_json TEXT,
+        category TEXT,
+        notes TEXT,
+        file_id INTEGER
       )
     ''');
 
@@ -239,7 +426,7 @@ class DatabaseService {
   
   // Waypoint operations
   Future<int> insertWaypoint(Map<String, dynamic> waypoint) async {
-    if (_isWeb) {
+    if (_db == null) {
       final data = Map<String, dynamic>.from(waypoint);
       data['id'] = _webIdCounter++;
       data['timestamp'] ??= DateTime.now().millisecondsSinceEpoch;
@@ -250,7 +437,7 @@ class DatabaseService {
   }
   
   Future<List<Map<String, dynamic>>> getWaypoints() async {
-    if (_isWeb) {
+    if (_db == null) {
       final list = _getTable('waypoints');
       list.sort((a, b) => (b['timestamp'] ?? 0).compareTo(a['timestamp'] ?? 0));
       return list.map((e) => Map<String, dynamic>.from(e)).toList();
@@ -259,7 +446,7 @@ class DatabaseService {
   }
   
   Future<int> deleteWaypoint(int id) async {
-    if (_isWeb) {
+    if (_db == null) {
       _getTable('waypoints').removeWhere((item) => item['id'] == id);
       return 1;
     }
@@ -270,7 +457,7 @@ class DatabaseService {
     final id = waypoint['id'];
     if (id == null) return 0;
     
-    if (_isWeb) {
+    if (_db == null) {
       final table = _getTable('waypoints');
       final index = table.indexWhere((item) => item['id'] == id);
       if (index >= 0) {
@@ -288,7 +475,7 @@ class DatabaseService {
   }
   
   Future<int> deleteAllWaypoints() async {
-    if (_isWeb) {
+    if (_db == null) {
       final count = _getTable('waypoints').length;
       _getTable('waypoints').clear();
       return count;
@@ -298,7 +485,7 @@ class DatabaseService {
    
   // Trail operations
   Future<int> insertTrail(Map<String, dynamic> trail) async {
-    if (_isWeb) {
+    if (_db == null) {
       final data = Map<String, dynamic>.from(trail);
       data['id'] = _webIdCounter++;
       data['created_at'] ??= DateTime.now().millisecondsSinceEpoch;
@@ -310,7 +497,7 @@ class DatabaseService {
   }
   
   Future<List<Map<String, dynamic>>> getTrails() async {
-    if (_isWeb) {
+    if (_db == null) {
       final list = _getTable('trails');
       list.sort((a, b) => (b['updated_at'] ?? 0).compareTo(a['updated_at'] ?? 0));
       return list.map((e) => Map<String, dynamic>.from(e)).toList();
@@ -322,7 +509,7 @@ class DatabaseService {
     final id = trail['id'];
     if (id == null) return 0;
     
-    if (_isWeb) {
+    if (_db == null) {
       final table = _getTable('trails');
       final index = table.indexWhere((item) => item['id'] == id);
       if (index >= 0) {
@@ -340,7 +527,7 @@ class DatabaseService {
   }
   
   Future<int> deleteTrail(int id) async {
-    if (_isWeb) {
+    if (_db == null) {
       _getTable('trails').removeWhere((item) => item['id'] == id);
       return 1;
     }
@@ -349,7 +536,7 @@ class DatabaseService {
    
   // Breadcrumb operations
   Future<int> insertBreadcrumb(Map<String, dynamic> breadcrumb) async {
-    if (_isWeb) {
+    if (_db == null) {
       final data = Map<String, dynamic>.from(breadcrumb);
       data['id'] = _webIdCounter++;
       data['timestamp'] ??= DateTime.now().millisecondsSinceEpoch;
@@ -360,7 +547,7 @@ class DatabaseService {
   }
   
   Future<List<Map<String, dynamic>>> getBreadcrumbs(String sessionId) async {
-    if (_isWeb) {
+    if (_db == null) {
       final list = _getTable('breadcrumbs')
           .where((item) => item['session_id'] == sessionId)
           .toList();
@@ -376,7 +563,7 @@ class DatabaseService {
   }
   
   Future<void> clearBreadcrumbs(String sessionId) async {
-    if (_isWeb) {
+    if (_db == null) {
       _getTable('breadcrumbs').removeWhere((item) => item['session_id'] == sessionId);
       return;
     }
@@ -385,7 +572,7 @@ class DatabaseService {
 
   // Map region operations
   Future<int> insertMapRegion(Map<String, dynamic> region) async {
-    if (_isWeb) {
+    if (_db == null) {
       final data = Map<String, dynamic>.from(region);
       data['id'] = _webIdCounter++;
       _getTable('map_regions').add(data);
@@ -395,7 +582,7 @@ class DatabaseService {
   }
   
   Future<List<Map<String, dynamic>>> getMapRegions() async {
-    if (_isWeb) {
+    if (_db == null) {
       return _getTable('map_regions').map((e) => Map<String, dynamic>.from(e)).toList();
     }
     return await _db!.query('map_regions');
@@ -403,7 +590,7 @@ class DatabaseService {
   
   // Mesh peer operations
   Future<int> insertMeshPeer(Map<String, dynamic> peer) async {
-    if (_isWeb) {
+    if (_db == null) {
       final data = Map<String, dynamic>.from(peer);
       data['id'] = _webIdCounter++;
       data['last_seen'] ??= DateTime.now().millisecondsSinceEpoch;
@@ -417,7 +604,7 @@ class DatabaseService {
   }
   
   Future<List<Map<String, dynamic>>> getMeshPeers() async {
-    if (_isWeb) {
+    if (_db == null) {
       final list = _getTable('mesh_peers');
       list.sort((a, b) => (b['last_seen'] ?? 0).compareTo(a['last_seen'] ?? 0));
       return list.map((e) => Map<String, dynamic>.from(e)).toList();
@@ -425,9 +612,96 @@ class DatabaseService {
     return await _db!.query('mesh_peers', orderBy: 'last_seen DESC');
   }
   
+  // Field file operations
+  Future<int> insertFieldFile(Map<String, dynamic> file) async {
+    if (_db == null) {
+      final data = Map<String, dynamic>.from(file);
+      data['id'] = _webIdCounter++;
+      _getTable('field_files').add(data);
+      return data['id'];
+    }
+    return await _db!.insert('field_files', file);
+  }
+
+  Future<List<Map<String, dynamic>>> getFieldFiles() async {
+    if (_db == null) {
+      final list = _getTable('field_files');
+      list.sort((a, b) =>
+          (b['updated_at'] ?? 0).compareTo(a['updated_at'] ?? 0));
+      return list.map((e) => Map<String, dynamic>.from(e)).toList();
+    }
+    return await _db!.query('field_files', orderBy: 'updated_at DESC');
+  }
+
+  Future<int> updateFieldFile(Map<String, dynamic> file) async {
+    final id = file['id'] as int;
+    if (_db == null) {
+      final list = _getTable('field_files');
+      final idx = list.indexWhere((e) => e['id'] == id);
+      if (idx >= 0) list[idx] = Map<String, dynamic>.from(file);
+      return idx >= 0 ? 1 : 0;
+    }
+    return await _db!
+        .update('field_files', file, where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Deleting a file takes its notes with it, but leaves the pins, zones and
+  /// trails alone - they are records of the ground, not paperwork. They just
+  /// stop being filed under anything.
+  Future<int> deleteFieldFile(int id) async {
+    if (_db == null) {
+      _getTable('field_files').removeWhere((e) => e['id'] == id);
+      _getTable('file_notes').removeWhere((e) => e['file_id'] == id);
+      for (final table in ['waypoints', 'geofences', 'trails']) {
+        for (final row in _getTable(table)) {
+          if (row['file_id'] == id) row['file_id'] = null;
+        }
+      }
+      return 1;
+    }
+    await _db!.delete('file_notes', where: 'file_id = ?', whereArgs: [id]);
+    for (final table in ['waypoints', 'geofences', 'trails']) {
+      await _db!.update(table, {'file_id': null},
+          where: 'file_id = ?', whereArgs: [id]);
+    }
+    return await _db!.delete('field_files', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<int> insertFileNote(Map<String, dynamic> note) async {
+    if (_db == null) {
+      final data = Map<String, dynamic>.from(note);
+      data['id'] = _webIdCounter++;
+      _getTable('file_notes').add(data);
+      return data['id'];
+    }
+    return await _db!.insert('file_notes', note);
+  }
+
+  Future<List<Map<String, dynamic>>> getFileNotes(int fileId) async {
+    if (_db == null) {
+      final list = _getTable('file_notes')
+          .where((e) => e['file_id'] == fileId)
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      list.sort((a, b) =>
+          (b['created_at'] ?? 0).compareTo(a['created_at'] ?? 0));
+      return list;
+    }
+    return await _db!.query('file_notes',
+        where: 'file_id = ?', whereArgs: [fileId], orderBy: 'created_at DESC');
+  }
+
+  Future<int> deleteFileNote(int id) async {
+    if (_db == null) {
+      _getTable('file_notes').removeWhere((e) => e['id'] == id);
+      return 1;
+    }
+    return await _db!.delete('file_notes', where: 'id = ?', whereArgs: [id]);
+  }
+
   // Geofence operations
   Future<int> insertGeofence(Map<String, dynamic> geofence) async {
-    if (_isWeb) {
+    if (_db == null) {
       final data = Map<String, dynamic>.from(geofence);
       data['id'] = _webIdCounter++;
       data['created_at'] ??= DateTime.now().millisecondsSinceEpoch;
@@ -438,7 +712,7 @@ class DatabaseService {
   }
 
   Future<List<Map<String, dynamic>>> getGeofences() async {
-    if (_isWeb) {
+    if (_db == null) {
       return _getTable('geofences').map((e) => Map<String, dynamic>.from(e)).toList();
     }
     return await _db!.query('geofences', orderBy: 'created_at DESC');
@@ -446,7 +720,7 @@ class DatabaseService {
 
   Future<int> updateGeofence(Map<String, dynamic> geofence) async {
     final id = geofence['id'] as int;
-    if (_isWeb) {
+    if (_db == null) {
       final list = _getTable('geofences');
       final idx = list.indexWhere((e) => e['id'] == id);
       if (idx >= 0) list[idx] = Map<String, dynamic>.from(geofence);
@@ -456,7 +730,7 @@ class DatabaseService {
   }
 
   Future<int> deleteGeofence(int id) async {
-    if (_isWeb) {
+    if (_db == null) {
       _getTable('geofences').removeWhere((e) => e['id'] == id);
       return 1;
     }
@@ -466,7 +740,7 @@ class DatabaseService {
   // ─── Artifact operations ────────────────────────────────────────────────────
 
   Future<int> insertArtifact(Map<String, dynamic> artifact) async {
-    if (_isWeb) {
+    if (_db == null) {
       final data = Map<String, dynamic>.from(artifact);
       data['id'] = _webIdCounter++;
       data['created_at'] ??= DateTime.now().millisecondsSinceEpoch;
@@ -477,7 +751,7 @@ class DatabaseService {
   }
 
   Future<List<Map<String, dynamic>>> getArtifacts() async {
-    if (_isWeb) {
+    if (_db == null) {
       final list = _getTable('artifacts');
       list.sort((a, b) => (b['created_at'] ?? 0).compareTo(a['created_at'] ?? 0));
       return list.map((e) => Map<String, dynamic>.from(e)).toList();
@@ -487,7 +761,7 @@ class DatabaseService {
 
   Future<int> updateArtifact(Map<String, dynamic> artifact) async {
     final id = artifact['id'] as int;
-    if (_isWeb) {
+    if (_db == null) {
       final list = _getTable('artifacts');
       final idx = list.indexWhere((e) => e['id'] == id);
       if (idx >= 0) list[idx] = Map<String, dynamic>.from(artifact);
@@ -497,7 +771,7 @@ class DatabaseService {
   }
 
   Future<int> deleteArtifact(int id) async {
-    if (_isWeb) {
+    if (_db == null) {
       _getTable('artifacts').removeWhere((e) => e['id'] == id);
       return 1;
     }
@@ -505,7 +779,7 @@ class DatabaseService {
   }
 
   Future<void> close() async {
-    if (_isWeb) {
+    if (_db == null) {
       _webStorage.clear();
     } else {
       await _db?.close();
