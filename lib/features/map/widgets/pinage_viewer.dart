@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:bush_track/core/models/photo_paths_codec.dart';
 import 'package:bush_track/core/models/waypoint.dart';
 import 'package:bush_track/core/services/waypoint_share_service.dart';
 
@@ -399,18 +400,16 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
   }
 
   Widget _imageWidget(String src) {
+    if (!PhotoPathsCodec.looksLikeImage(src)) return const _BrokenImage();
     try {
-      if (src.startsWith('data:')) {
-        final b64 = src.split(',').last;
-        return Image.memory(
-          base64Decode(b64),
-          fit: BoxFit.cover,
-          width: double.infinity,
-          errorBuilder: (_, __, ___) => const _BrokenImage(),
-        );
-      }
-      return const _BrokenImage();
+      return Image.memory(
+        base64Decode(src.substring(src.indexOf(',') + 1)),
+        fit: BoxFit.cover,
+        width: double.infinity,
+        errorBuilder: (_, __, ___) => const _BrokenImage(),
+      );
     } catch (_) {
+      // Malformed base64 throws here rather than reaching errorBuilder.
       return const _BrokenImage();
     }
   }
@@ -485,11 +484,32 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
   }
 }
 
+/// A photo that is on the pin but cannot be drawn.
+///
+/// Says so in words. It used to be a mute icon, indistinguishable at a glance
+/// from a pin with no photos on it — so a real bug in how photos were stored
+/// looked like nothing being there, and went unnoticed far longer than it
+/// should have.
 class _BrokenImage extends StatelessWidget {
   const _BrokenImage();
+
   @override
   Widget build(BuildContext context) => Container(
-    color: Colors.white.withValues(alpha: 0.05),
-    child: const Icon(Icons.broken_image_outlined, color: Colors.white24, size: 32),
-  );
+        color: Colors.white.withValues(alpha: 0.05),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.broken_image_outlined,
+                color: Colors.white24, size: 28),
+            const SizedBox(height: 6),
+            Text('Photo unavailable',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.45),
+                    fontSize: 10)),
+          ],
+        ),
+      );
 }

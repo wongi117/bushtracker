@@ -423,7 +423,7 @@ class _PinageEditorSheetState extends ConsumerState<PinageEditorSheet> {
   Widget _buildImageThumbnail(String src) {
     try {
       if (src.startsWith('data:')) {
-        final b64 = src.split(',').last;
+        final b64 = src.substring(src.indexOf(',') + 1);
         return Image.memory(
           base64Decode(b64),
           fit: BoxFit.cover,

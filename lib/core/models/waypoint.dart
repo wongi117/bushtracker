@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import 'photo_paths_codec.dart';
 import 'package:isar/isar.dart';
 
 part 'waypoint.g.dart';
@@ -27,6 +29,9 @@ class Waypoint {
   int? order; // For trail numbering
   bool? isPin; // Whether this is a pinned waypoint (not just a track point)
 
+  /// The field file this was collected under, if one was open at the time.
+  int? fileId;
+
   // Advanced fields
   int? rating; // 1–5 star rating
   String? weatherConditions; // e.g. "Sunny, 24°C, light wind"
@@ -48,9 +53,65 @@ class Waypoint {
     this.icon,
     this.order,
     this.isPin,
+    this.fileId,
     this.rating,
     this.weatherConditions,
   });
+
+  /// A copy with some fields changed.
+  ///
+  /// Worth having rather than rebuilding a Waypoint by hand at each call site,
+  /// which is what the update methods used to do: they listed the fields they
+  /// knew about, so when fileId, rating and weatherConditions were added later
+  /// those three were silently dropped. Changing a pin's colour un-filed it
+  /// from its project and threw away its rating and its weather note. A copy
+  /// that starts from the original cannot forget a field.
+  ///
+  /// [clearFile] takes a pin out of its project, which a null [fileId] cannot
+  /// express — null means "leave it where it is".
+  Waypoint copyWith({
+    Id? id,
+    double? latitude,
+    double? longitude,
+    double? altitude,
+    double? accuracy,
+    double? speed,
+    String? label,
+    String? notes,
+    DateTime? timestamp,
+    String? type,
+    List<String>? photoPaths,
+    String? thumbnailPath,
+    String? color,
+    String? icon,
+    int? order,
+    bool? isPin,
+    int? fileId,
+    int? rating,
+    String? weatherConditions,
+    bool clearFile = false,
+  }) =>
+      Waypoint(
+        id: id ?? this.id,
+        latitude: latitude ?? this.latitude,
+        longitude: longitude ?? this.longitude,
+        altitude: altitude ?? this.altitude,
+        accuracy: accuracy ?? this.accuracy,
+        speed: speed ?? this.speed,
+        label: label ?? this.label,
+        notes: notes ?? this.notes,
+        timestamp: timestamp ?? this.timestamp,
+        type: type ?? this.type,
+        photoPaths: photoPaths ?? this.photoPaths,
+        thumbnailPath: thumbnailPath ?? this.thumbnailPath,
+        color: color ?? this.color,
+        icon: icon ?? this.icon,
+        order: order ?? this.order,
+        isPin: isPin ?? this.isPin,
+        fileId: clearFile ? null : fileId ?? this.fileId,
+        rating: rating ?? this.rating,
+        weatherConditions: weatherConditions ?? this.weatherConditions,
+      );
 
   // Convert from database map (for backward compatibility)
   factory Waypoint.fromMap(Map<String, dynamic> map) {
@@ -68,13 +129,16 @@ class Waypoint {
           : null,
       type: map['type'],
       photoPaths: map['photo_paths'] != null 
-          ? List<String>.from(map['photo_paths'].split(','))
+          // Was split(','), which cut every base64 data URI in half —
+          // see PhotoPathsCodec. It still reads what that version wrote.
+          ? PhotoPathsCodec.decode(map['photo_paths'])
           : null,
       thumbnailPath: map['thumbnail_path'],
       color: map['color'],
       icon: map['icon'],
-      order: map['order'],
+      order: map['order_index'],
       isPin: map['is_pin'] == 1,
+      fileId: map['file_id'] as int?,
       rating: map['rating'] as int?,
       weatherConditions: map['weather_conditions'] as String?,
     );
@@ -93,12 +157,13 @@ class Waypoint {
       'notes': notes,
       'timestamp': timestamp?.millisecondsSinceEpoch,
       'type': type,
-      'photo_paths': photoPaths?.join(','),
+      'photo_paths': PhotoPathsCodec.encode(photoPaths),
       'thumbnail_path': thumbnailPath,
       'color': color,
       'icon': icon,
-      'order': order,
+      'order_index': order,
       'is_pin': isPin == true ? 1 : 0,
+      'file_id': fileId,
       'rating': rating,
       'weather_conditions': weatherConditions,
     };
