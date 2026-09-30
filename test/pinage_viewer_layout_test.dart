@@ -9,19 +9,27 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  Waypoint pin() => Waypoint(
+  // A data URI whose payload is valid base64, so Image.memory gets as far as
+  // trying to decode it. These render as "Photo unavailable", which is the
+  // right outcome for bytes that are not a JPEG and is not what is under test
+  // here — the layout around them is.
+  String jpeg(String payload) => 'data:image/jpeg;base64,$payload';
+
+  Waypoint pin({List<String>? photos}) => Waypoint(
         id: 1,
         latitude: -28.8833,
         longitude: 121.3333,
         label: 'Old shaft',
         timestamp: DateTime.utc(2026, 3, 4, 8, 30),
         isPin: true,
+        photoPaths: photos,
       );
 
   Future<void> pumpSheet(
     WidgetTester tester, {
     required Size size,
     bool withJumpToMap = true,
+    List<String>? photos,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
@@ -33,7 +41,7 @@ void main() {
         child: MaterialApp(
           home: Scaffold(
             body: PinageViewerSheet(
-              waypoint: pin(),
+              waypoint: pin(photos: photos),
               onEdit: () {},
               onDelete: () {},
               onJumpToMap: withJumpToMap ? () {} : null,
@@ -146,6 +154,83 @@ void main() {
       expect(tester.getSize(deleteButton).width,
           greaterThan(tester.getSize(editButton).width * 1.8),
           reason: 'a lone button should fill its row');
+    });
+  });
+
+  group('adding photos from inside the pin', () {
+    testWidgets('a pin with no photos offers a big Add photo button',
+        (tester) async {
+      await pumpSheet(tester, size: const Size(360, 780));
+      expect(find.text('Add photo'), findsOneWidget);
+      expect(find.text('Camera or gallery'), findsOneWidget);
+    });
+
+    testWidgets('a pin with photos offers Add on the viewer', (tester) async {
+      await pumpSheet(tester,
+          size: const Size(360, 780), photos: [jpeg('AAAA')]);
+      // The overlay button, mirroring the counter on the other side.
+      expect(find.text('Add'), findsOneWidget);
+      expect(find.text('Add photo'), findsNothing);
+    });
+
+    testWidgets('the thumbnail strip appears from the very first photo',
+        (tester) async {
+      // It used to appear only from the second, which would have left the +
+      // tile out of reach on a pin with exactly one photo.
+      await pumpSheet(tester,
+          size: const Size(360, 780), photos: [jpeg('AAAA')]);
+      expect(find.byIcon(Icons.add), findsOneWidget);
+      expect(find.text('Long-press a photo to remove it'), findsOneWidget);
+    });
+
+    testWidgets('the counter reflects the number of photos', (tester) async {
+      await pumpSheet(tester,
+          size: const Size(360, 780),
+          photos: [jpeg('AAAA'), jpeg('BBBB'), jpeg('CCCC')]);
+      expect(find.text('1 / 3'), findsOneWidget);
+      expect(find.text('3 photos'), findsOneWidget);
+    });
+
+    testWidgets('one photo is not pluralised', (tester) async {
+      await pumpSheet(tester,
+          size: const Size(360, 780), photos: [jpeg('AAAA')]);
+      expect(find.text('1 photo'), findsOneWidget);
+    });
+
+    testWidgets('picking a source does not overflow the sheet',
+        (tester) async {
+      await pumpSheet(tester, size: const Size(360, 780));
+      await tester.tap(find.text('Add photo'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Take photos'), findsOneWidget);
+      expect(find.text('Choose from gallery'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('long-pressing a thumbnail asks before removing it',
+        (tester) async {
+      await pumpSheet(tester,
+          size: const Size(360, 780), photos: [jpeg('AAAA'), jpeg('BBBB')]);
+
+      await tester.longPress(find.byKey(const ValueKey('pin-thumb-0')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Remove this photo?'), findsOneWidget);
+      expect(find.text('REMOVE'), findsOneWidget);
+      expect(find.text('CANCEL'), findsOneWidget);
+    });
+
+    testWidgets('cancelling the removal keeps the photo', (tester) async {
+      await pumpSheet(tester,
+          size: const Size(360, 780), photos: [jpeg('AAAA'), jpeg('BBBB')]);
+
+      await tester.longPress(find.byKey(const ValueKey('pin-thumb-0')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('CANCEL'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('2 photos'), findsOneWidget);
     });
   });
 

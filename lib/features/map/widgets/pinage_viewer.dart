@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bush_track/core/models/photo_paths_codec.dart';
 import 'package:bush_track/core/models/waypoint.dart';
+import 'package:bush_track/core/services/photo_capture_service.dart';
 import 'package:bush_track/core/services/waypoint_share_service.dart';
+import 'package:bush_track/features/tracking/providers/location_provider.dart';
 
 /// Opens the Pinage viewer as a bottom sheet.
 void showPinageViewer(
@@ -59,7 +61,21 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
   int _currentImageIndex = 0;
   bool _showFullscreen = false;
 
-  List<String> get _media => widget.waypoint.photoPaths ?? [];
+  /// Held here as well as in the database so the strip, the count and the
+  /// counter all move the moment a photo is added or removed, rather than on
+  /// the next time the sheet is opened.
+  late List<String> _photos;
+
+  /// True while the camera or the compressor is busy.
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _photos = List<String>.from(widget.waypoint.photoPaths ?? const []);
+  }
+
+  List<String> get _media => _photos;
 
   @override
   Widget build(BuildContext context) {
@@ -141,6 +157,7 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // ── Photo gallery ────────────────────────────────────
+                    if (!hasMedia) _emptyViewer(),
                     if (hasMedia) ...[
                       // Main image
                       GestureDetector(
@@ -184,20 +201,65 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
                                     ),
                                   ),
                                 ),
+                              // Add more, mirroring the counter on the right.
+                              Positioned(
+                                bottom: 10,
+                                left: 10,
+                                child: GestureDetector(
+                                  onTap: _busy ? null : _addPhotos,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color:
+                                          Colors.black.withValues(alpha: 0.6),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                          color: const Color(0xFFFFB300)
+                                              .withValues(alpha: 0.7)),
+                                    ),
+                                    child: Row(children: [
+                                      if (_busy)
+                                        const SizedBox(
+                                          width: 13,
+                                          height: 13,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Color(0xFFFFB300)),
+                                        )
+                                      else
+                                        const Icon(Icons.add_a_photo_outlined,
+                                            color: Color(0xFFFFB300), size: 14),
+                                      const SizedBox(width: 6),
+                                      Text(_busy ? 'Saving' : 'Add',
+                                          style: const TextStyle(
+                                              color: Color(0xFFFFB300),
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.bold)),
+                                    ]),
+                                  ),
+                                ),
+                              ),
                             ],
                           ),
                         ),
                       ),
-                      if (_media.length > 1) ...[
-                        const SizedBox(height: 10),
-                        // Thumbnail strip
-                        SizedBox(
-                          height: 58,
-                          child: ListView.builder(
-                            scrollDirection: Axis.horizontal,
-                            itemCount: _media.length,
-                            itemBuilder: (_, i) => GestureDetector(
-                              onTap: () => setState(() => _currentImageIndex = i),
+                      // Shown from the very first photo, not just from the
+                      // second, because the strip is where the + tile lives.
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        height: 58,
+                        child: ListView.builder(
+                          scrollDirection: Axis.horizontal,
+                          // One past the end, for the + tile.
+                          itemCount: _media.length + 1,
+                          itemBuilder: (_, i) {
+                            if (i == _media.length) return _addTile();
+                            return GestureDetector(
+                              key: ValueKey('pin-thumb-$i'),
+                              onTap: () =>
+                                  setState(() => _currentImageIndex = i),
+                              onLongPress: () => _confirmRemovePhoto(i),
                               child: Container(
                                 width: 56,
                                 margin: const EdgeInsets.only(right: 8),
@@ -213,10 +275,17 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
                                 clipBehavior: Clip.antiAlias,
                                 child: _imageWidget(_media[i]),
                               ),
-                            ),
-                          ),
+                            );
+                          },
                         ),
-                      ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Long-press a photo to remove it',
+                        style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.25),
+                            fontSize: 10),
+                      ),
                       const SizedBox(height: 20),
                     ],
 
@@ -243,20 +312,15 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
                       const SizedBox(height: 20),
                     ],
 
-                    if (!hasMedia && !hasStory) ...[
-                      const SizedBox(height: 20),
-                      Center(
-                        child: Column(children: [
-                          const Icon(Icons.photo_camera_outlined, color: Colors.white12, size: 48),
-                          const SizedBox(height: 12),
-                          Text(
-                            'No photos or story yet.\nTap Edit to add them.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 13, height: 1.5),
-                          ),
-                        ]),
+                    if (!hasStory) ...[
+                      const SizedBox(height: 14),
+                      Text(
+                        'No story yet. Tap Edit to write one.',
+                        style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.3),
+                            fontSize: 12),
                       ),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 14),
                     ],
 
                     // ── Metadata ─────────────────────────────────────────
@@ -415,6 +479,204 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
     }
   }
 
+  /// The viewer when the pin has no photos at all.
+  Widget _emptyViewer() => GestureDetector(
+        onTap: _busy ? null : _addPhotos,
+        child: Container(
+          height: 160,
+          width: double.infinity,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            color: Colors.white.withValues(alpha: 0.04),
+            border: Border.all(
+                color: const Color(0xFFFFB300).withValues(alpha: 0.35)),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (_busy)
+                const CircularProgressIndicator(
+                    strokeWidth: 2.5, color: Color(0xFFFFB300))
+              else
+                const Icon(Icons.add_a_photo_outlined,
+                    color: Color(0xFFFFB300), size: 34),
+              const SizedBox(height: 10),
+              Text(_busy ? 'Saving photos…' : 'Add photo',
+                  style: const TextStyle(
+                      color: Color(0xFFFFB300),
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold)),
+              if (!_busy) ...[
+                const SizedBox(height: 4),
+                Text('Camera or gallery',
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.3),
+                        fontSize: 11)),
+              ],
+            ],
+          ),
+        ),
+      );
+
+  /// The + at the end of the thumbnail strip.
+  Widget _addTile() => GestureDetector(
+        onTap: _busy ? null : _addPhotos,
+        child: Container(
+          width: 56,
+          margin: const EdgeInsets.only(right: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            color: Colors.white.withValues(alpha: 0.04),
+            border: Border.all(
+                color: const Color(0xFFFFB300).withValues(alpha: 0.5)),
+          ),
+          child: Center(
+            child: _busy
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Color(0xFFFFB300)),
+                  )
+                : const Icon(Icons.add, color: Color(0xFFFFB300), size: 22),
+          ),
+        ),
+      );
+
+  /// Ask camera or gallery, then append whatever comes back.
+  Future<void> _addPhotos() async {
+    final source = await showModalBottomSheet<_PhotoSource>(
+      context: context,
+      backgroundColor: const Color(0xFF13162A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheet) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_rounded,
+                  color: Color(0xFFFFB300)),
+              title: const Text('Take photos',
+                  style: TextStyle(color: Colors.white, fontSize: 14)),
+              subtitle: const Text(
+                  'The camera reopens after each shot — take as many as you '
+                  'need, then dismiss it',
+                  style: TextStyle(color: Colors.white38, fontSize: 11)),
+              onTap: () => Navigator.pop(sheet, _PhotoSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_rounded,
+                  color: Color(0xFF00E5FF)),
+              title: const Text('Choose from gallery',
+                  style: TextStyle(color: Colors.white, fontSize: 14)),
+              subtitle: const Text('Pick one or several',
+                  style: TextStyle(color: Colors.white38, fontSize: 11)),
+              onTap: () => Navigator.pop(sheet, _PhotoSource.gallery),
+            ),
+            const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
+    if (source == null || !mounted) return;
+
+    setState(() => _busy = true);
+    try {
+      final added = source == _PhotoSource.camera
+          ? await PhotoCaptureService.fromCamera()
+          : await PhotoCaptureService.fromGallery();
+
+      if (!mounted) return;
+      if (added.isEmpty) {
+        setState(() => _busy = false);
+        return;
+      }
+
+      final next = [..._photos, ...added];
+      await _persist(next);
+      if (!mounted) return;
+      setState(() {
+        _photos = next;
+        // Land on the first of the new ones, which is what you just took.
+        _currentImageIndex = next.length - added.length;
+        _busy = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(
+            '${added.length} photo${added.length == 1 ? '' : 's'} added'),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Could not add photos: $e'),
+      ));
+    }
+  }
+
+  Future<void> _confirmRemovePhoto(int index) async {
+    if (index < 0 || index >= _photos.length) return;
+
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        backgroundColor: const Color(0xFF0D0F1E),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Colors.red.withValues(alpha: 0.3)),
+        ),
+        title: const Text('Remove this photo?',
+            style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: Text(
+          'Photo ${index + 1} of ${_photos.length} comes off this pin. The pin '
+          'itself stays.',
+          style: const TextStyle(
+              color: Colors.white60, fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('CANCEL',
+                style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, true),
+            child: const Text('REMOVE',
+                style: TextStyle(
+                    color: Colors.red, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+    if (yes != true || !mounted) return;
+
+    final next = [..._photos]..removeAt(index);
+    await _persist(next);
+    if (!mounted) return;
+    setState(() {
+      _photos = next;
+      // The index has to come back inside the list, or the main viewer reads
+      // off the end of it.
+      if (_currentImageIndex >= next.length) {
+        _currentImageIndex = next.isEmpty ? 0 : next.length - 1;
+      }
+      if (next.isEmpty) _showFullscreen = false;
+    });
+  }
+
+  Future<void> _persist(List<String> photos) async {
+    final id = widget.waypoint.id;
+    if (id == null) return;
+    await ref.read(locationProvider.notifier).setWaypointPhotos(id, photos);
+    // Keep the object this sheet was handed in step with what was written, so
+    // anything reading it later sees the same photos.
+    widget.waypoint.photoPaths = photos;
+  }
+
   Widget _metaRow(IconData icon, String label, String? value) {
     // The value gets whatever room is left and shortens if it has to. It used
     // to be a plain Text after a Spacer, so a long one — a coordinate pair at
@@ -532,6 +794,8 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
   }
 }
 
+enum _PhotoSource { camera, gallery }
+
 /// One button in the action grid.
 class _ActionSpec {
   const _ActionSpec(this.icon, this.label, this.color, this.onTap);
@@ -555,19 +819,35 @@ class _BrokenImage extends StatelessWidget {
   Widget build(BuildContext context) => Container(
         color: Colors.white.withValues(alpha: 0.05),
         alignment: Alignment.center,
-        padding: const EdgeInsets.all(8),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.broken_image_outlined,
-                color: Colors.white24, size: 28),
-            const SizedBox(height: 6),
-            Text('Photo unavailable',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.45),
-                    fontSize: 10)),
-          ],
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // The same widget fills a 220 px viewer and a 56 px thumbnail. The
+            // words only go in where they fit; in a thumbnail they would
+            // overflow the tile, and the icon alone carries the meaning next to
+            // the viewer that spells it out.
+            final roomForWords =
+                constraints.maxHeight >= 90 && constraints.maxWidth >= 90;
+            if (!roomForWords) {
+              return const Icon(Icons.broken_image_outlined,
+                  color: Colors.white24, size: 22);
+            }
+            return Padding(
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.broken_image_outlined,
+                      color: Colors.white24, size: 28),
+                  const SizedBox(height: 6),
+                  Text('Photo unavailable',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.45),
+                          fontSize: 10)),
+                ],
+              ),
+            );
+          },
         ),
       );
 }

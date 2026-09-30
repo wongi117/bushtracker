@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
@@ -7,6 +9,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/models/breadcrumb.dart';
 import '../../../core/models/waypoint.dart';
 import '../../../core/services/database_service.dart';
+import '../../../core/utils/startup_trace.dart';
+import '../../files/providers/files_provider.dart';
 import '../../map/services/offline_map_manager.dart';
 import '../../../main.dart';
 
@@ -138,7 +142,11 @@ class LocationNotifier extends StateNotifier<LocationState> {
   final String _sessionId = DateTime.now().millisecondsSinceEpoch.toString();
   bool _autoRegionTriggered = false;
 
-  LocationNotifier(this.databaseService) : super(const LocationState()) {
+  /// Reading the open field file needs the container, so a pin dropped while
+  /// a file is open is filed under it without every caller having to know.
+  final Ref ref;
+
+  LocationNotifier(this.databaseService, this.ref) : super(const LocationState()) {
     _loadWaypoints();
     _loadBreadcrumbs();
     _startGpsTracking();
@@ -172,7 +180,37 @@ class LocationNotifier extends StateNotifier<LocationState> {
     }
   }
 
+  /// Seed from the position the OS already has, before waiting on a fix.
+  ///
+  /// A cold GPS fix takes tens of seconds, and the map was opening zoomed out
+  /// on the whole country in the meantime. The last known position is
+  /// returned instantly and is almost always right to within a street, which
+  /// is enough to open the map where you actually are and refine from there.
+  Future<void> _seedFromLastKnown() async {
+    try {
+      final last = await Geolocator.getLastKnownPosition();
+      if (last == null || !mounted) return;
+      // Never overwrite a real fix that beat us to it.
+      if (state.stats.currentLat != null) return;
+      StartupTrace.mark('last_known_position');
+      _recentPositions.add(last);
+      state = state.copyWith(
+        stats: state.stats.copyWith(
+          currentLat: last.latitude,
+          currentLon: last.longitude,
+          currentAccuracyM: last.accuracy,
+        ),
+      );
+    } catch (e) {
+      debugPrint('No last known position: $e');
+    }
+  }
+
   Future<void> _startGpsTracking() async {
+    // Kick this off without waiting: it either helps immediately or not
+    // at all, and the live fix carries on regardless.
+    unawaited(_seedFromLastKnown());
+
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       _scheduleGpsRetry();
@@ -191,6 +229,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
     _gpsRetryTimer?.cancel();
     _gpsRetryTimer = null;
 
+    StartupTrace.mark('gps_permission_ok');
     _trackStart = DateTime.now();
     _listenToPosition();
   }
@@ -229,6 +268,18 @@ class LocationNotifier extends StateNotifier<LocationState> {
   }
 
   void _onNewPosition(Position position) async {
+    // A junk fix should not even enter the buffer while we still hold good
+    // ones — better to keep showing the last real position than to leap
+    // across town and come back.
+    if (position.accuracy > maxUsableAccuracyMetres &&
+        _recentPositions
+            .any((p) => p.accuracy <= maxUsableAccuracyMetres)) {
+      debugPrint('Ignoring ${position.accuracy.round()} m fix '
+          '(worse than ${maxUsableAccuracyMetres.round()} m)');
+      return;
+    }
+
+    StartupTrace.mark('first_gps_fix');
     _recentPositions.add(position);
     if (_recentPositions.length > 5) {
       _recentPositions.removeAt(0);
@@ -348,8 +399,26 @@ class LocationNotifier extends StateNotifier<LocationState> {
   /// accuracy) are averaged: jitter while standing still gets smoothed, and
   /// as soon as you've really moved the older fixes drop out.
   @visibleForTesting
+  /// Worse than this and a fix did not come from GPS. Real satellite fixes
+  /// are a few metres to a few tens of metres; hundreds means the phone fell
+  /// back to wifi or a phone tower, which puts you on the wrong street.
+  static const double maxUsableAccuracyMetres = 100;
+
   static Position smoothFixes(List<Position> recent) {
-    final newest = recent.last;
+    // Throw out fixes far worse than the best we have before averaging
+    // anything. There was no accuracy check at all: a tower fix reporting
+    // hundreds of metres was averaged in like any other, which is what
+    // dragged the marker onto a different street and made it jump about.
+    final best = recent.map((p) => p.accuracy).reduce(math.min);
+    final limit = math.min(math.max(best * 3, 15.0), maxUsableAccuracyMetres);
+    final usable = recent.where((p) => p.accuracy <= limit).toList();
+
+    final newest = usable.isEmpty ? recent.last : usable.last;
+    if (usable.isEmpty) {
+      // Nothing trustworthy — return the latest rather than inventing one.
+      return newest;
+    }
+    recent = usable;
     final radius = (newest.accuracy * 2).clamp(10.0, 60.0);
     const distance = Distance();
     final here = LatLng(newest.latitude, newest.longitude);
@@ -473,10 +542,38 @@ class LocationNotifier extends StateNotifier<LocationState> {
   }
 
   Future<void> addManualWaypoint(double lat, double lon, String label,
-      {String? notes, String? color, String? icon, int? order}) async {
+      {String? notes,
+      String? color,
+      String? icon,
+      int? order,
+      double? accuracy,
+      double? altitude}) async {
+    // How good the fix was when this pin was made.
+    //
+    // Nothing recorded accuracy before, so every pin looked equally precise
+    // whether it came from a ±4 m fix or a ±80 m one — and you could not
+    // tell which when you came back to find it.
+    //
+    // A pin dropped where you are standing inherits the live fix. One placed
+    // by tapping the map is an exact chosen coordinate with no GPS error at
+    // all, so it keeps a null accuracy rather than borrowing yours.
+    var recordedAccuracy = accuracy;
+    var recordedAltitude = altitude;
+    final stats = state.stats;
+    if (recordedAccuracy == null && stats.currentLat != null) {
+      final standing = const Distance()(
+          LatLng(stats.currentLat!, stats.currentLon!), LatLng(lat, lon));
+      if (standing <= 10) {
+        recordedAccuracy = stats.currentAccuracyM;
+        recordedAltitude ??= stats.currentAltitude;
+      }
+    }
+
     final waypoint = Waypoint(
       latitude: lat,
       longitude: lon,
+      accuracy: recordedAccuracy,
+      altitude: recordedAltitude,
       timestamp: DateTime.now(),
       label: label,
       notes: notes,
@@ -485,6 +582,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
       icon: icon ?? WaypointIcon.pin,
       order: order,
       isPin: true,
+      fileId: ref.read(filesProvider).activeFileId,
     );
 
     await databaseService.insertWaypoint(waypoint.toMap());
@@ -500,20 +598,44 @@ class LocationNotifier extends StateNotifier<LocationState> {
     String? label,
     String? notes,
     double? altitude,
+    double? accuracy,
+    String? type,
+    String? color,
+    String? icon,
+    // Which file to file it under. Defaults to whichever is open, but the
+    // camera lets you pick a different one as you save.
+    int? fileId,
+    bool useOpenFile = true,
   }) async {
+    // Same rule as a dropped pin: a photo taken where you are standing
+    // inherits how good the fix was, so you can judge it later.
+    var recordedAccuracy = accuracy;
+    var recordedAltitude = altitude;
+    final stats = state.stats;
+    if (recordedAccuracy == null && stats.currentLat != null) {
+      final standing = const Distance()(
+          LatLng(stats.currentLat!, stats.currentLon!), LatLng(lat, lon));
+      if (standing <= 10) {
+        recordedAccuracy = stats.currentAccuracyM;
+        recordedAltitude ??= stats.currentAltitude;
+      }
+    }
+
     final waypoint = Waypoint(
       latitude: lat,
       longitude: lon,
-      altitude: altitude,
+      altitude: recordedAltitude,
+      accuracy: recordedAccuracy,
       timestamp: DateTime.now(),
       label: label ?? 'Photo Pin',
       notes: notes,
-      type: WaypointType.manual,
-      color: WaypointColors.neonCyan,
-      icon: WaypointIcon.pin,
+      type: type ?? WaypointType.manual,
+      color: color ?? WaypointColors.neonCyan,
+      icon: icon ?? WaypointIcon.pin,
       isPin: true,
       photoPaths: [photoPath],
       thumbnailPath: thumbnailPath,
+      fileId: fileId ?? (useOpenFile ? ref.read(filesProvider).activeFileId : null),
     );
 
     await databaseService.insertWaypoint(waypoint.toMap());
@@ -538,92 +660,43 @@ class LocationNotifier extends StateNotifier<LocationState> {
 
   /// Update waypoint position (for drag and drop)
   Future<void> updateWaypointPosition(int id, double lat, double lon) async {
-    final waypoints = state.waypoints;
-    final waypoint = waypoints.firstWhere(
-      (w) => w.id == id,
-      orElse: () => throw Exception('Waypoint not found'),
-    );
-
-    final updated = Waypoint(
-      id: waypoint.id,
-      latitude: lat,
-      longitude: lon,
-      altitude: waypoint.altitude,
-      accuracy: waypoint.accuracy,
-      speed: waypoint.speed,
-      label: waypoint.label,
-      notes: waypoint.notes,
-      timestamp: waypoint.timestamp,
-      type: waypoint.type,
-      photoPaths: waypoint.photoPaths,
-      thumbnailPath: waypoint.thumbnailPath,
-      color: waypoint.color,
-      icon: waypoint.icon,
-      order: waypoint.order,
-      isPin: waypoint.isPin,
-    );
-
-    await updateWaypoint(updated);
+    await updateWaypoint(
+        _find(id).copyWith(latitude: lat, longitude: lon));
   }
+
+  Waypoint _find(int id) => state.waypoints.firstWhere(
+        (w) => w.id == id,
+        orElse: () => throw Exception('Waypoint not found'),
+      );
 
   /// Update waypoint color
   Future<void> updateWaypointColor(int id, String color) async {
-    final waypoints = state.waypoints;
-    final waypoint = waypoints.firstWhere(
-      (w) => w.id == id,
-      orElse: () => throw Exception('Waypoint not found'),
-    );
+    await updateWaypoint(_find(id).copyWith(color: color));
+  }
 
-    final updated = Waypoint(
-      id: waypoint.id,
-      latitude: waypoint.latitude,
-      longitude: waypoint.longitude,
-      altitude: waypoint.altitude,
-      accuracy: waypoint.accuracy,
-      speed: waypoint.speed,
-      label: waypoint.label,
-      notes: waypoint.notes,
-      timestamp: waypoint.timestamp,
-      type: waypoint.type,
-      photoPaths: waypoint.photoPaths,
-      thumbnailPath: waypoint.thumbnailPath,
-      color: color,
-      icon: waypoint.icon,
-      order: waypoint.order,
-      isPin: waypoint.isPin,
-    );
+  /// Replace a pin's photos.
+  ///
+  /// Takes the whole list rather than an add and a remove, because the sheet
+  /// holds the order on screen and one write keeps the stored list and the one
+  /// being looked at from drifting apart. An empty list is a pin with no
+  /// photos, not "leave them alone".
+  Future<void> setWaypointPhotos(int id, List<String> photos) async {
+    await updateWaypoint(_find(id).copyWith(photoPaths: photos));
+  }
 
-    await updateWaypoint(updated);
+  /// Move a pin into a project, or out of every project with a null [fileId].
+  ///
+  /// The counterpart of filing a zone, which zones have had all along. Without
+  /// it, work collected before a project existed could never be gathered into
+  /// it, and "add the pins to it" meant dropping them again.
+  Future<void> setWaypointFile(int id, int? fileId) async {
+    await updateWaypoint(
+        _find(id).copyWith(fileId: fileId, clearFile: fileId == null));
   }
 
   /// Update waypoint icon
   Future<void> updateWaypointIcon(int id, String icon) async {
-    final waypoints = state.waypoints;
-    final waypoint = waypoints.firstWhere(
-      (w) => w.id == id,
-      orElse: () => throw Exception('Waypoint not found'),
-    );
-
-    final updated = Waypoint(
-      id: waypoint.id,
-      latitude: waypoint.latitude,
-      longitude: waypoint.longitude,
-      altitude: waypoint.altitude,
-      accuracy: waypoint.accuracy,
-      speed: waypoint.speed,
-      label: waypoint.label,
-      notes: waypoint.notes,
-      timestamp: waypoint.timestamp,
-      type: waypoint.type,
-      photoPaths: waypoint.photoPaths,
-      thumbnailPath: waypoint.thumbnailPath,
-      color: waypoint.color,
-      icon: icon,
-      order: waypoint.order,
-      isPin: waypoint.isPin,
-    );
-
-    await updateWaypoint(updated);
+    await updateWaypoint(_find(id).copyWith(icon: icon));
   }
 
   /// Set battery saver mode - reduce GPS update frequency
@@ -654,5 +727,5 @@ class LocationNotifier extends StateNotifier<LocationState> {
 final locationProvider =
     StateNotifierProvider<LocationNotifier, LocationState>((ref) {
   final databaseService = ref.watch(databaseServiceProvider);
-  return LocationNotifier(databaseService);
+  return LocationNotifier(databaseService, ref);
 });
