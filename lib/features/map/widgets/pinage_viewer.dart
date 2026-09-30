@@ -281,65 +281,66 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
                     if (widget.onTrack != null) ...[
                       SizedBox(
                         width: double.infinity,
-                        child: _actionBtn(
-                          Icons.navigation_outlined, 'TRACK TO THIS PIN',
+                        child: _actionBtn(_ActionSpec(
+                          Icons.navigation_outlined,
+                          'TRACK TO THIS PIN',
                           const Color(0xFF4CAF50),
                           () {
                             Navigator.pop(context);
                             widget.onTrack!();
                           },
-                        ),
+                        )),
                       ),
                       const SizedBox(height: 10),
                     ],
 
-                    // ── Action buttons ────────────────────────────────────
-                    Row(children: [
-                      Expanded(
-                        child: _actionBtn(
-                          Icons.edit_outlined, 'Edit',
-                          const Color(0xFFFFB300),
+                    // ── Action buttons, two to a row ──────────────────────
+                    //
+                    // All four used to share one row. On a 360 px phone that
+                    // left about 72 px a button, and "Show on Map" needs over a
+                    // hundred, so it ran into Share. Two to a row gives each
+                    // one 155 px, which fits with room to spare.
+                    ..._actionGrid([
+                      _ActionSpec(
+                        Icons.edit_outlined,
+                        'Edit',
+                        const Color(0xFFFFB300),
+                        () {
+                          Navigator.pop(context);
+                          widget.onEdit();
+                        },
+                      ),
+                      if (widget.onJumpToMap != null)
+                        _ActionSpec(
+                          Icons.location_on,
+                          'Show on Map',
+                          const Color(0xFF00E5FF),
                           () {
                             Navigator.pop(context);
-                            widget.onEdit();
+                            widget.onJumpToMap!();
                           },
                         ),
+                      _ActionSpec(
+                        Icons.share_outlined,
+                        'Share',
+                        const Color(0xFF7B2FFF),
+                        () async {
+                          final ok = await WaypointShareService.shareWaypoint(
+                              widget.waypoint);
+                          if (!ok && context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content: Text(
+                                      'Nothing to share — pin has no location.')),
+                            );
+                          }
+                        },
                       ),
-                      const SizedBox(width: 10),
-                      if (widget.onJumpToMap != null) ...[
-                        Expanded(
-                          child: _actionBtn(
-                            Icons.location_on, 'Show on Map',
-                            const Color(0xFF00E5FF),
-                            () {
-                              Navigator.pop(context);
-                              widget.onJumpToMap!();
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                      ],
-                      Expanded(
-                        child: _actionBtn(
-                          Icons.share_outlined, 'Share',
-                          const Color(0xFF7B2FFF),
-                          () async {
-                            final ok = await WaypointShareService.shareWaypoint(widget.waypoint);
-                            if (!ok && context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Nothing to share — pin has no location.')),
-                              );
-                            }
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _actionBtn(
-                          Icons.delete_outline, 'Delete',
-                          const Color(0xFFFF3B30),
-                          () => _confirmDelete(context),
-                        ),
+                      _ActionSpec(
+                        Icons.delete_outline,
+                        'Delete',
+                        const Color(0xFFFF3B30),
+                        () => _confirmDelete(context),
                       ),
                     ]),
                   ],
@@ -415,29 +416,76 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
   }
 
   Widget _metaRow(IconData icon, String label, String? value) {
+    // The value gets whatever room is left and shortens if it has to. It used
+    // to be a plain Text after a Spacer, so a long one — a coordinate pair at
+    // five decimal places, a date and time — had nowhere to go and pushed the
+    // row past the edge of the sheet.
     return Row(children: [
       Icon(icon, color: Colors.white24, size: 14),
       const SizedBox(width: 8),
       Text(label, style: const TextStyle(color: Colors.white38, fontSize: 12)),
-      const Spacer(),
-      Text(value ?? '—', style: const TextStyle(color: Colors.white60, fontSize: 12)),
+      const SizedBox(width: 12),
+      Expanded(
+        child: Text(
+          value ?? '—',
+          textAlign: TextAlign.right,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: Colors.white60, fontSize: 12),
+        ),
+      ),
     ]);
   }
 
-  Widget _actionBtn(IconData icon, String label, Color color, VoidCallback onTap) {
+  /// Lay the actions out two to a row.
+  ///
+  /// Built from a list rather than written out, because "Show on Map" is only
+  /// there when the caller can jump the map — so the grid has to read the same
+  /// whether there are three buttons or four, and an odd one out should fill
+  /// its row rather than sit at half width next to a gap.
+  List<Widget> _actionGrid(List<_ActionSpec> actions) {
+    final rows = <Widget>[];
+    for (var i = 0; i < actions.length; i += 2) {
+      final left = actions[i];
+      final right = i + 1 < actions.length ? actions[i + 1] : null;
+      if (rows.isNotEmpty) rows.add(const SizedBox(height: 10));
+      rows.add(Row(children: [
+        Expanded(child: _actionBtn(left)),
+        if (right != null) ...[
+          const SizedBox(width: 10),
+          Expanded(child: _actionBtn(right)),
+        ],
+      ]));
+    }
+    return rows;
+  }
+
+  Widget _actionBtn(_ActionSpec a) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: a.onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 13),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 13),
         decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.12),
+          color: a.color.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: color.withValues(alpha: 0.35)),
+          border: Border.all(color: a.color.withValues(alpha: 0.35)),
         ),
         child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(icon, color: color, size: 18),
-          const SizedBox(width: 8),
-          Text(label, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 13)),
+          Icon(a.icon, color: a.color, size: 18),
+          const SizedBox(width: 7),
+          // Never wrapped and never clipped mid-word: a label that cannot fit
+          // shortens at the end instead of breaking across two lines and
+          // changing the button's height.
+          Flexible(
+            child: Text(
+              a.label,
+              maxLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: a.color, fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+          ),
         ]),
       ),
     );
@@ -482,6 +530,16 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
     final ampm = dt.hour >= 12 ? 'PM' : 'AM';
     return '${months[dt.month - 1]} ${dt.day}, ${dt.year}  $h:${dt.minute.toString().padLeft(2, '0')} $ampm';
   }
+}
+
+/// One button in the action grid.
+class _ActionSpec {
+  const _ActionSpec(this.icon, this.label, this.color, this.onTap);
+
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
 }
 
 /// A photo that is on the pin but cannot be drawn.
