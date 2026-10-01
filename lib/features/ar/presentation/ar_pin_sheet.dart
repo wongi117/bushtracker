@@ -9,6 +9,8 @@ import 'package:bush_track/core/models/photo_paths_codec.dart';
 import 'package:bush_track/core/models/waypoint.dart';
 import 'package:bush_track/core/services/heading/heading_reading.dart';
 import 'package:bush_track/features/ar/services/ar_targets.dart';
+import 'package:bush_track/features/map/services/pin_photo_editing.dart';
+import 'package:bush_track/features/map/widgets/pin_photo_viewer.dart';
 import 'package:bush_track/features/map/widgets/waypoint_editor.dart';
 import 'package:bush_track/features/tracking/providers/track_target_provider.dart';
 import 'package:bush_track/theme/app_colors.dart';
@@ -27,18 +29,53 @@ Future<void> showArPinSheet(
     context: context,
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
-    builder: (_) => _ArPinSheet(target: target, onShowOnMap: onShowOnMap),
+    // Draggable so the photo strip has somewhere to live: the sheet opens at
+    // the size of the summary and its actions, and pulling it up brings the
+    // photos into view without covering the camera when they are not wanted.
+    builder: (_) => DraggableScrollableSheet(
+      initialChildSize: 0.42,
+      minChildSize: 0.3,
+      maxChildSize: 0.88,
+      expand: false,
+      builder: (_, controller) => _ArPinSheet(
+        target: target,
+        onShowOnMap: onShowOnMap,
+        scrollController: controller,
+      ),
+    ),
   );
 }
 
-class _ArPinSheet extends ConsumerWidget {
-  const _ArPinSheet({required this.target, required this.onShowOnMap});
+class _ArPinSheet extends ConsumerStatefulWidget {
+  const _ArPinSheet({
+    required this.target,
+    required this.onShowOnMap,
+    required this.scrollController,
+  });
 
   final ArTarget target;
   final VoidCallback onShowOnMap;
+  final ScrollController scrollController;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_ArPinSheet> createState() => _ArPinSheetState();
+}
+
+class _ArPinSheetState extends ConsumerState<_ArPinSheet> {
+  /// Held here so the badge, the strip and the thumbnail all move the moment a
+  /// photo is added or removed, rather than on the next time the sheet opens.
+  late List<String> _photos;
+
+  @override
+  void initState() {
+    super.initState();
+    _photos = List<String>.from(widget.target.waypoint.photoPaths ?? const []);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final target = widget.target;
+    final onShowOnMap = widget.onShowOnMap;
     final wp = target.waypoint;
     final colour = WaypointColors.fromHex(wp.color);
     final tracked = ref.watch(trackTargetProvider);
@@ -56,7 +93,7 @@ class _ArPinSheet extends ConsumerWidget {
       source: HeadingSourceKind.sensors,
     ).cardinal;
 
-    final photo = _firstPhoto(wp);
+    final photo = _firstPhotoOf(_photos);
 
     return Container(
       decoration: const BoxDecoration(
@@ -64,10 +101,10 @@ class _ArPinSheet extends ConsumerWidget {
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
       padding: EdgeInsets.fromLTRB(
-          18, 10, 18, MediaQuery.of(context).padding.bottom + 18),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
+          18, 10, 18, MediaQuery.of(context).viewPadding.bottom + 18),
+      child: ListView(
+        controller: widget.scrollController,
+        padding: EdgeInsets.zero,
         children: [
           Center(
             child: Container(
@@ -82,22 +119,8 @@ class _ArPinSheet extends ConsumerWidget {
           const SizedBox(height: 16),
 
           Row(children: [
-            if (photo != null) ...[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: Image.memory(
-                  photo,
-                  width: 56,
-                  height: 56,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => _noPhoto(colour),
-                ),
-              ),
-              const SizedBox(width: 12),
-            ] else ...[
-              _noPhoto(colour),
-              const SizedBox(width: 12),
-            ],
+            _thumbnail(photo, colour),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -179,9 +202,213 @@ class _ArPinSheet extends ConsumerWidget {
             child: _action(Icons.map_outlined, 'SHOW ON MAP',
                 const Color(0xFF00E5FF), onShowOnMap),
           ),
+
+          // ── Photos, revealed by pulling the sheet up ──────────────────────
+          if (_photos.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            Row(children: [
+              const Text('PHOTOS',
+                  style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.2)),
+              const SizedBox(width: 8),
+              Text('${_photos.length}',
+                  style: const TextStyle(
+                      color: AppColors.accentLight, fontSize: 10)),
+              const Spacer(),
+              GestureDetector(
+                onTap: () => _openViewer(0),
+                child: const Text('VIEW ALL',
+                    style: TextStyle(
+                        color: AppColors.accent,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800)),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 64,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: _photos.length + 1,
+                itemBuilder: (_, i) {
+                  if (i == _photos.length) return _addTile();
+                  return GestureDetector(
+                    key: ValueKey('ar-thumb-$i'),
+                    onTap: () => _openViewer(i),
+                    onLongPress: () => _removeAt(i),
+                    child: Container(
+                      width: 62,
+                      margin: const EdgeInsets.only(right: 8),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(9),
+                        border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.12)),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: _small(_photos[i]),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text('Tap to view · long-press to remove',
+                style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.25),
+                    fontSize: 9.5)),
+          ] else ...[
+            const SizedBox(height: 14),
+            GestureDetector(
+              onTap: _addPhotos,
+              child: Row(children: [
+                const Icon(Icons.add_a_photo_outlined,
+                    color: AppColors.accent, size: 16),
+                const SizedBox(width: 8),
+                const Text('Add a photo to this pin',
+                    style: TextStyle(color: AppColors.accent, fontSize: 12)),
+              ]),
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  /// The pin's first photo, tappable, with how many there are.
+  Widget _thumbnail(Uint8List? photo, Color colour) {
+    final count = _photos.length;
+
+    return GestureDetector(
+      onTap: count == 0 ? _addPhotos : () => _openViewer(0),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          if (photo != null)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Image.memory(
+                photo,
+                width: 56,
+                height: 56,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _noPhoto(colour),
+              ),
+            )
+          else
+            _noPhoto(colour),
+
+          // Only worth saying when there is more than one; a badge reading "1"
+          // tells nobody anything.
+          if (count > 1)
+            Positioned(
+              right: -4,
+              top: -4,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppColors.accent,
+                  borderRadius: BorderRadius.circular(9),
+                  border: Border.all(color: AppColors.panelMatte, width: 1.5),
+                ),
+                child: Text('$count',
+                    style: const TextStyle(
+                        color: Colors.black,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900)),
+              ),
+            ),
+
+          if (photo != null)
+            Positioned(
+              left: 3,
+              bottom: 3,
+              child: Container(
+                padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.55),
+                  borderRadius: BorderRadius.circular(5),
+                ),
+                child: const Icon(Icons.zoom_out_map,
+                    color: Colors.white70, size: 11),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _addTile() => GestureDetector(
+        onTap: _addPhotos,
+        child: Container(
+          width: 62,
+          margin: const EdgeInsets.only(right: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(9),
+            color: Colors.white.withValues(alpha: 0.04),
+            border: Border.all(color: AppColors.accent.withValues(alpha: 0.5)),
+          ),
+          child: const Center(
+              child: Icon(Icons.add, color: AppColors.accent, size: 20)),
+        ),
+      );
+
+  Widget _small(String src) {
+    if (!PhotoPathsCodec.looksLikeImage(src)) {
+      return Container(
+        color: Colors.white.withValues(alpha: 0.05),
+        child: const Icon(Icons.broken_image_outlined,
+            color: Colors.white24, size: 18),
+      );
+    }
+    try {
+      return Image.memory(
+        base64Decode(src.substring(src.indexOf(',') + 1)),
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Container(
+          color: Colors.white.withValues(alpha: 0.05),
+          child: const Icon(Icons.broken_image_outlined,
+              color: Colors.white24, size: 18),
+        ),
+      );
+    } catch (_) {
+      return Container(color: Colors.white.withValues(alpha: 0.05));
+    }
+  }
+
+  /// The same viewer the pin detail sheet uses, with the same add and remove.
+  ///
+  /// Pushed as a route over this sheet, so closing it comes straight back here
+  /// with the pin still selected and the camera still behind.
+  Future<void> _openViewer(int index) async {
+    final wp = widget.target.waypoint;
+    final next = await openPinPhotoViewer(
+      context,
+      photos: _photos,
+      initialIndex: index,
+      title: wp.label ?? 'Pin',
+      notes: wp.notes,
+      takenAt: wp.timestamp,
+      onAdd: () => PinPhotoEditing.addPhotos(context, ref,
+          waypoint: wp, current: _photos),
+      onDelete: (i) => PinPhotoEditing.confirmRemove(context, ref,
+          waypoint: wp, current: _photos, index: i),
+    );
+    if (next != null && mounted) setState(() => _photos = next);
+  }
+
+  Future<void> _addPhotos() async {
+    final next = await PinPhotoEditing.addPhotos(context, ref,
+        waypoint: widget.target.waypoint, current: _photos);
+    if (next != null && mounted) setState(() => _photos = next);
+  }
+
+  Future<void> _removeAt(int index) async {
+    final next = await PinPhotoEditing.confirmRemove(context, ref,
+        waypoint: widget.target.waypoint, current: _photos, index: index);
+    if (next != null && mounted) setState(() => _photos = next);
   }
 
   Widget _noPhoto(Color colour) => Container(
@@ -192,7 +419,7 @@ class _ArPinSheet extends ConsumerWidget {
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: colour.withValues(alpha: 0.4)),
         ),
-        child: Icon(WaypointIcon.getIconData(target.waypoint.icon),
+        child: Icon(WaypointIcon.getIconData(widget.target.waypoint.icon),
             color: colour, size: 24),
       );
 
@@ -225,10 +452,9 @@ class _ArPinSheet extends ConsumerWidget {
       );
 }
 
-/// The pin's first photo, decoded, or null if it has none that can be read.
-Uint8List? _firstPhoto(Waypoint wp) {
-  final photos = wp.photoPaths;
-  if (photos == null || photos.isEmpty) return null;
+/// The first photo, decoded, or null if there is none that can be read.
+Uint8List? _firstPhotoOf(List<String> photos) {
+  if (photos.isEmpty) return null;
   final first = photos.first;
   if (!PhotoPathsCodec.looksLikeImage(first)) return null;
   try {

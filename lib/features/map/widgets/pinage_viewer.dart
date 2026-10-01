@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bush_track/core/models/photo_paths_codec.dart';
 import 'package:bush_track/core/models/waypoint.dart';
-import 'package:bush_track/core/services/photo_capture_service.dart';
+import 'package:bush_track/features/map/services/pin_photo_editing.dart';
+import 'package:bush_track/features/map/widgets/pin_photo_viewer.dart';
 import 'package:bush_track/core/services/waypoint_share_service.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
 
@@ -59,7 +60,6 @@ class PinageViewerSheet extends ConsumerStatefulWidget {
 
 class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
   int _currentImageIndex = 0;
-  bool _showFullscreen = false;
 
   /// Held here as well as in the database so the strip, the count and the
   /// counter all move the moment a photo is added or removed, rather than on
@@ -182,7 +182,7 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
                     if (hasMedia) ...[
                       // Main image
                       GestureDetector(
-                        onTap: () => setState(() => _showFullscreen = true),
+                        onTap: () => _openViewer(_currentImageIndex),
                         child: Container(
                           height: 220,
                           decoration: BoxDecoration(
@@ -447,62 +447,36 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
             ),
           ],
         ),
-
-        // ── Fullscreen image overlay ──────────────────────────────────────
-        if (_showFullscreen)
-          Positioned.fill(
-            child: GestureDetector(
-              onTap: () => setState(() => _showFullscreen = false),
-              child: Container(
-                color: Colors.black.withValues(alpha: 0.92),
-                child: Stack(
-                  children: [
-                    PageView.builder(
-                      itemCount: _media.length,
-                      controller:
-                          PageController(initialPage: _currentImageIndex),
-                      onPageChanged: (i) =>
-                          setState(() => _currentImageIndex = i),
-                      itemBuilder: (_, i) => InteractiveViewer(
-                        child: Center(child: _imageWidget(_media[i])),
-                      ),
-                    ),
-                    Positioned(
-                      top: 16,
-                      right: 16,
-                      child: GestureDetector(
-                        onTap: () => setState(() => _showFullscreen = false),
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.6),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(Icons.close,
-                              color: Colors.white, size: 20),
-                        ),
-                      ),
-                    ),
-                    if (_media.length > 1)
-                      Positioned(
-                        bottom: 20,
-                        left: 0,
-                        right: 0,
-                        child: Center(
-                          child: Text(
-                            '${_currentImageIndex + 1} / ${_media.length}',
-                            style: const TextStyle(
-                                color: Colors.white60, fontSize: 13),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ),
       ],
     );
+  }
+
+  /// The shared full-screen viewer, pushed as a route.
+  ///
+  /// Was an overlay drawn inside this sheet, with its own PageView, its own
+  /// counter and no caption — and the AR sheet had no viewer at all. One
+  /// component now serves both, so the add button and long-press delete work
+  /// in the camera too, and closing it lands back on whichever sheet opened it.
+  Future<void> _openViewer(int index) async {
+    final next = await openPinPhotoViewer(
+      context,
+      photos: _photos,
+      initialIndex: index,
+      title: widget.waypoint.label ?? 'Pin',
+      notes: widget.waypoint.notes,
+      takenAt: widget.waypoint.timestamp,
+      onAdd: () => PinPhotoEditing.addPhotos(context, ref,
+          waypoint: widget.waypoint, current: _photos),
+      onDelete: (i) => PinPhotoEditing.confirmRemove(context, ref,
+          waypoint: widget.waypoint, current: _photos, index: i),
+    );
+    if (next == null || !mounted) return;
+    setState(() {
+      _photos = next;
+      if (_currentImageIndex >= _photos.length) {
+        _currentImageIndex = _photos.isEmpty ? 0 : _photos.length - 1;
+      }
+    });
   }
 
   Widget _imageWidget(String src) {
@@ -586,118 +560,32 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
 
   /// Ask camera or gallery, then append whatever comes back.
   Future<void> _addPhotos() async {
-    final source = await showModalBottomSheet<_PhotoSource>(
-      context: context,
-      backgroundColor: const Color(0xFF13162A),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (sheet) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            ListTile(
-              leading: const Icon(Icons.photo_camera_rounded,
-                  color: Color(0xFFFFB300)),
-              title: const Text('Take photos',
-                  style: TextStyle(color: Colors.white, fontSize: 14)),
-              subtitle: const Text(
-                  'The camera reopens after each shot — take as many as you '
-                  'need, then dismiss it',
-                  style: TextStyle(color: Colors.white38, fontSize: 11)),
-              onTap: () => Navigator.pop(sheet, _PhotoSource.camera),
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_rounded,
-                  color: Color(0xFF00E5FF)),
-              title: const Text('Choose from gallery',
-                  style: TextStyle(color: Colors.white, fontSize: 14)),
-              subtitle: const Text('Pick one or several',
-                  style: TextStyle(color: Colors.white38, fontSize: 11)),
-              onTap: () => Navigator.pop(sheet, _PhotoSource.gallery),
-            ),
-            const SizedBox(height: 6),
-          ],
-        ),
-      ),
+    // The spinner belongs to the capture, not to the question: it used to come
+    // on while the camera-or-gallery sheet was still open, which read as
+    // "saving" before anything had been chosen.
+    final next = await PinPhotoEditing.addPhotos(
+      context,
+      ref,
+      waypoint: widget.waypoint,
+      current: _photos,
+      onBusy: (b) {
+        if (mounted) setState(() => _busy = b);
+      },
     );
-    if (source == null || !mounted) return;
-
-    setState(() => _busy = true);
-    try {
-      final added = source == _PhotoSource.camera
-          ? await PhotoCaptureService.fromCamera()
-          : await PhotoCaptureService.fromGallery();
-
-      if (!mounted) return;
-      if (added.isEmpty) {
-        setState(() => _busy = false);
-        return;
-      }
-
-      final next = [..._photos, ...added];
-      await _persist(next);
-      if (!mounted) return;
-      setState(() {
+    if (!mounted) return;
+    setState(() {
+      if (next != null) {
         _photos = next;
-        // Land on the first of the new ones, which is what you just took.
-        _currentImageIndex = next.length - added.length;
-        _busy = false;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content:
-            Text('${added.length} photo${added.length == 1 ? '' : 's'} added'),
-      ));
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Could not add photos: $e'),
-      ));
-    }
+        // Land on the first of the new ones, which is what was just taken.
+        _currentImageIndex = _photos.length - 1;
+      }
+    });
   }
 
   Future<void> _confirmRemovePhoto(int index) async {
-    if (index < 0 || index >= _photos.length) return;
-
-    final yes = await showDialog<bool>(
-      context: context,
-      builder: (dialog) => AlertDialog(
-        backgroundColor: const Color(0xFF0D0F1E),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: Colors.red.withValues(alpha: 0.3)),
-        ),
-        title: const Text('Remove this photo?',
-            style: TextStyle(color: Colors.white, fontSize: 16)),
-        content: Text(
-          'Photo ${index + 1} of ${_photos.length} comes off this pin. The pin '
-          'itself stays.',
-          style:
-              const TextStyle(color: Colors.white60, fontSize: 13, height: 1.5),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialog, false),
-            child:
-                const Text('CANCEL', style: TextStyle(color: Colors.white54)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialog, true),
-            child: const Text('REMOVE',
-                style:
-                    TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-    );
-    if (yes != true || !mounted) return;
-
-    final next = [..._photos]..removeAt(index);
-    await _persist(next);
-    if (!mounted) return;
+    final next = await PinPhotoEditing.confirmRemove(context, ref,
+        waypoint: widget.waypoint, current: _photos, index: index);
+    if (next == null || !mounted) return;
     setState(() {
       _photos = next;
       // The index has to come back inside the list, or the main viewer reads
@@ -705,17 +593,7 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
       if (_currentImageIndex >= next.length) {
         _currentImageIndex = next.isEmpty ? 0 : next.length - 1;
       }
-      if (next.isEmpty) _showFullscreen = false;
     });
-  }
-
-  Future<void> _persist(List<String> photos) async {
-    final id = widget.waypoint.id;
-    if (id == null) return;
-    await ref.read(locationProvider.notifier).setWaypointPhotos(id, photos);
-    // Keep the object this sheet was handed in step with what was written, so
-    // anything reading it later sees the same photos.
-    widget.waypoint.photoPaths = photos;
   }
 
   Widget _metaRow(IconData icon, String label, String? value) {
