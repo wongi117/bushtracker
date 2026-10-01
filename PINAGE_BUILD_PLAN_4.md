@@ -2,7 +2,8 @@
 
 Projects, drawing tools, accounts and sharing, AR boundaries, street navigation.
 
-**Status: awaiting approval. No Phase 4 code has been written.**
+**Status: approved 1 Oct 2026. Building 4.0 → 4.1 → 4.2 → 4.3 → 4.5.**
+4.4 (accounts and sharing) and 4.6 (street navigation) are **not** in the approved set.
 
 ---
 
@@ -19,19 +20,20 @@ Step 0 asked me to read four things. Three of them do not exist in this repo:
 
 Two of those change the shape of this plan materially.
 
-### 0.1 There is no social brief, so accounts cannot be merged with it yet
+### 0.1 The social brief is still not in the repo
 
-The brief says accounts/profiles overlap with the social brief and to merge them into one
-plan rather than building two account systems. I agree with the instruction, but the social
-brief is not in the repo, so I cannot see what it specifies — what a "crew/group" is, what
-the public feed rules are, what the age gate requires, or what profile fields it assumes.
+Dennis reports having added `CLAUDE_CODE_BRIEF_SOCIAL.md` to the repo root. As of 1 Oct it is
+not there, and not anywhere on the machine: I searched `C:\Projects`, Desktop, Downloads,
+`NativeTitleOS` and Documents for `*BRIEF_SOCIAL*` and found nothing. The only recently
+modified markdown in the repo is this plan. It may not have saved, or it may have landed in
+one of the stale copies.
 
-**Guessing at it is the one thing that would cause exactly the duplication the instruction
-is trying to prevent.** Section 4 below sets out the account model I would build, deliberately
-limited to what this brief states, with the extension points the social brief will need
-marked. I need the social brief before building any of it.
+**Nothing approved is blocked by this.** The social brief only bears on 4.4, which is not in
+the approved set. §4 below sets out the account model limited to what *this* brief states,
+with the extension points the social brief will need marked, and 4.4 stays unstarted until
+the brief arrives.
 
-### 0.2 There is no backend at all
+### 0.2 There was no backend; now there is a project (not yet integrated)
 
 The brief asks for RLS policies, which assumes Postgres and Supabase. Today Pinage Maps is
 a **local-only Flutter app**: one SQLite database on the handset, no server, no accounts, no
@@ -43,7 +45,10 @@ So accounts and sharing are not a feature to add to a backend — they are the d
 matters a great deal for heritage data, and an operational burden. It is also the single
 largest item in this brief by effort, and everything in §3 (sharing) depends on it.
 
-**This needs your decision before I write any of it.** See §2.
+**Decided.** Supabase project `pinage-maps`, ap-southeast-2 (Sydney). Config is in
+`lib/core/config/api_config.dart` behind `String.fromEnvironment`. The `supabase_flutter`
+dependency is deliberately **not** added yet: it arrives with 4.4, and an unused dependency
+is weight in a 113 MB APK. See §2 for what this settles and what it does not.
 
 ---
 
@@ -108,37 +113,50 @@ Worth knowing before planning work that is already done:
 
 ---
 
-## 2. Decisions I need from you
+## 2. Decisions — answered, and still open
 
-Numbered so you can answer briefly.
+### Answered 1 Oct
 
-**D1 — Backend.** Supabase as the brief assumes, or something else? Supabase is the fastest
-route to accounts + RLS + storage and is what the brief names. It has a free tier and paid
-tiers above it; **confirm current pricing at decision time rather than relying on this
-document.** Alternatives: self-hosted Postgres (more control, more ops), or PocketBase (single
-binary, cheap, no RLS as such). Everything in §3 and the sharing parts of §1 wait on this.
+| | Decision |
+|---|---|
+| **D1 Backend** | Supabase, project `pinage-maps`, ref `wmdfykxwwhulbrjysusi`, **ap-southeast-2 (Sydney)**. Only ever this project — never `autoplexity-ai`. All server schema through Supabase migrations, RLS on every table. |
+| **D2 Heritage data** | Stays on the device, syncs only to the Sydney project. Never public, never a third party. |
+| **D3 Social brief** | Said to be added; not present. See §0.1. Does not block the approved work. |
+| **D4 Routing** | **Valhalla**, offline and on-device. |
 
-**D2 — Where does heritage data live?** Protected and heritage zones are the most sensitive
-data in this app. A hosted US-region database may be unacceptable for it. Options: Supabase
-with an Australian region, heritage items pinned local-only and never synced, or self-hosting.
-This is a governance question, not a technical one, and I would rather ask than assume.
+Keys: the **publishable** key lives in the client, which is what it is for, and is safe
+*only because RLS is on every table*. With RLS off it is a straight read of everyone's data.
+The **service-role** key must never be in the app, in any file or any build flag — it bypasses
+RLS entirely, and this app has no server of its own to hold it.
 
-**D3 — The social brief.** Send it, or confirm you want accounts built to this brief alone and
-reconciled later.
+### Still open
 
-**D4 — Routing engine.** See §8. Offline routing is a hard requirement, which rules out
-Google Directions as the core. My recommendation is Valhalla. Needs your sign-off because it
-affects app size and possibly hosting.
+**D5 — Bulk tile download licensing.** The existing offline map downloader pulls MapTiler
+tiles in bulk, and most commercial tile providers restrict or forbid that outside a specific
+offline plan. This is already shipping, so it is not a new risk introduced by Phase 4, but
+expanding offline maps makes it bigger.
+*Recommendation:* check your MapTiler plan's terms for offline/bulk caching before 4.1's
+export and offline-map work grows. If the terms do not allow it, the fallback is an
+OSM-derived raster source we are licensed to cache, with satellite imagery from a provider
+that sells an offline tier. I will not change tile providers without asking.
 
-**D5 — Tile licensing for bulk download.** The existing downloader pulls MapTiler tiles in
-bulk. Most commercial tile providers restrict or forbid bulk caching outside a specific
-offline plan. Before expanding offline maps I should check MapTiler's current terms for your
-account tier. Flagging rather than acting: you may already have a plan that permits it.
+**D6 — Further paid services.** Supabase and Valhalla are approved. Nothing else is needed for
+4.0–4.3 or 4.5. Two things would need your approval if we reach them:
+*Recommendation:* (a) **Valhalla tile hosting** — the WA routing pack has to be built from OSM
+data and served from somewhere for the phone to download it. Cheapest is static object storage
+(Supabase Storage, or a plain bucket) with the pack built offline on a desktop; no routing
+server, no per-request cost. (b) **Geocoding for address search** — currently Nominatim, whose
+public endpoint has a usage policy that a shipped app technically breaches at volume. Offline
+address search within downloaded regions avoids it entirely, which is the direction the brief
+already wants.
 
-**D6 — Any paid service or API key**, per your standing rule: I will not add one without
-asking. This affects D1, D4 and D5.
-
----
+**D7 — New, found while testing.** On the phone, `Overpass error: Invalid argument(s): No host
+specified in URI /api/overpass`. A relative proxy URL is being used on mobile, which has no
+origin — the same class of bug `proxyBase` exists to fix, just missed for this one endpoint.
+Small, unrelated to Phase 4, and currently making the Overpass lookup fail silently on the
+handset.
+*Recommendation:* fold it into the next pass rather than interrupting 4.0. Say the word if you
+want it sooner.
 
 ## 3. Offline-first matrix
 
@@ -354,8 +372,10 @@ Build order as given. Each task is a commit; each phase ends with an airplane-mo
 the phone.
 
 ### Phase 4.0 — Foundations (blocking)
-- [ ] Migration runner, versioned schema, test that a v1 database with rows survives
-- [ ] UUIDs, `updated_at`, `deleted_at` on all syncable tables
+- [x] Migration runner, versioned schema, test that a v1 database with rows survives
+      — verified on the phone: `DB migrate 1 -> 2`, then 516 waypoints loaded, no
+      exceptions, and with no network at the time so also a cold start offline
+- [x] UUIDs, `updated_at`, `deleted_at` on all syncable tables, backfilled
 - [ ] Photos out of table rows and onto disk, with migration of existing base64
 - [ ] Connectivity indicator
 - [ ] Outbox table and a queue runner with a pending badge
