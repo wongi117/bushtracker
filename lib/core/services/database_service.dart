@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:sqflite_common/sqflite.dart';
 import 'package:path/path.dart';
+import 'db_migrations.dart';
 
 import 'native_db_factory_stub.dart'
     if (dart.library.io) 'native_db_factory_io.dart';
@@ -57,8 +58,13 @@ class DatabaseService {
           _db = await factory.openDatabase(
             'bush_track.db',
             options: OpenDatabaseOptions(
-              version: 1,
-              onCreate: (db, version) async => _createTables(db),
+              version: DbMigrations.currentVersion,
+              onCreate: (db, version) async {
+                await _createTables(db);
+                await DbMigrations.markFresh(db);
+              },
+              onUpgrade: (db, from, to) =>
+                  DbMigrations.upgrade(db, from: from, to: to),
               onOpen: _onOpen,
             ),
           );
@@ -96,8 +102,17 @@ class DatabaseService {
     _db = await factory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 1,
-        onCreate: (db, version) async => _createTables(db),
+        version: DbMigrations.currentVersion,
+        onCreate: (db, version) async {
+          await _createTables(db);
+          await DbMigrations.markFresh(db);
+        },
+        // There was no upgrade path at all. CREATE TABLE IF NOT EXISTS makes
+        // what is missing and silently leaves a table whose columns have
+        // changed, so the first added column would have started dropping
+        // inserts on every phone that already had data.
+        onUpgrade: (db, from, to) =>
+            DbMigrations.upgrade(db, from: from, to: to),
         onOpen: _onOpen,
       ),
     );

@@ -25,6 +25,35 @@ class ApiConfig {
   static const String openCageKey = String.fromEnvironment('OPENCAGE_KEY');
   static const String what3WordsKey = String.fromEnvironment('W3W_KEY');
 
+  // ── Supabase ──────────────────────────────────────────────────────────────
+  //
+  // Project "pinage-maps", ap-southeast-2 (Sydney). Only ever this project:
+  // autoplexity-ai is a different product that happens to share an owner, and
+  // pointing this app at it would put field data in the wrong database.
+  //
+  // The publishable key belongs in the client — that is what it is for. It is
+  // only safe because RLS is on every table: with RLS off it is a straight
+  // read of everyone's data. Overridable by dart-define so a staging project
+  // can be pointed at without a code change.
+  //
+  // The service-role key must NEVER appear in this file, this app, or any
+  // build flag. It bypasses RLS entirely. Server-side only, and this app has
+  // no server of its own.
+  static const String supabaseUrl = String.fromEnvironment(
+    'SUPABASE_URL',
+    defaultValue: 'https://wmdfykxwwhulbrjysusi.supabase.co',
+  );
+
+  static const String supabasePublishableKey = String.fromEnvironment(
+    'SUPABASE_PUBLISHABLE_KEY',
+    defaultValue: 'sb_publishable_ak6I3r0StL8jhq6AXD_lXw_P-CirTCt',
+  );
+
+  /// False when the app has not been pointed at a project, so sign-in can say
+  /// so instead of failing with a network error.
+  static bool get hasSupabase =>
+      supabaseUrl.isNotEmpty && supabasePublishableKey.isNotEmpty;
+
   /// Where our own serverless proxies live.
   ///
   /// On web these are same-origin (/api/...). The phone app has no origin of
