@@ -48,6 +48,8 @@ import 'package:bush_track/features/navigation/providers/navigation_provider.dar
 import 'package:bush_track/features/map/presentation/marker_picker_screen.dart';
 import 'package:bush_track/features/map/providers/map_action_provider.dart';
 import 'package:bush_track/features/map/providers/marker_visibility_provider.dart';
+import 'package:bush_track/features/map/services/locate_mode.dart';
+import 'package:bush_track/features/map/services/travel_heading.dart';
 import 'package:bush_track/features/ar/presentation/ar_compass_screen.dart';
 import 'package:bush_track/features/ar/presentation/ar_camera_screen.dart';
 import 'package:bush_track/features/settings/presentation/settings_screen.dart';
@@ -93,6 +95,15 @@ class DashboardScreen extends ConsumerStatefulWidget {
 class _DashboardScreenState extends ConsumerState<DashboardScreen>
     with TickerProviderStateMixin {
   final MapController _mapController = MapController();
+
+  /// What the locate button is doing. See locate_mode.dart for the cycle.
+  LocateMode _locateMode = LocateMode.off;
+
+  /// Which way to point the arrow: GPS course while moving, compass while
+  /// stopped. See travel_heading.dart.
+  final TravelHeading _travel = TravelHeading();
+  double? _travelHeadingDeg;
+  DateTime? _lastTravelSample;
   final GlobalKey _screenshotKey = GlobalKey();
 
   // Map style: 0=Street, 1=Satellite, 2=Dark, 3=Topo
@@ -334,6 +345,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     // Auto-center map on first real GPS fix
     ref.listen<LocationState>(locationProvider, (_, next) {
       _checkTrackingArrival(next);
+      _updateTravelHeading(next);
       if (!_hasAutocentered &&
           next.stats.currentLat != null &&
           next.stats.currentLon != null) {
@@ -343,6 +355,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
           15.0,
         );
       }
+      _followIfAsked(next);
     });
 
     // Execute pending AI map actions
@@ -443,6 +456,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                         onPositionChanged: (position, hasGesture) {
                           setState(() {
                             _currentZoom = position.zoom ?? 13.0;
+                            // Reaching for the map means "stop pulling me
+                            // back". Only a real gesture counts: following
+                            // moves the map itself, and that must not cancel
+                            // itself on the next frame.
+                            if (hasGesture && _locateMode.isFollowing) {
+                              _locateMode = _locateMode.afterPan;
+                            }
                           });
                         },
                       ),
@@ -538,27 +558,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                                     locationState.stats.currentLon!),
                                 width: 60,
                                 height: 60,
-                                child: Stack(
-                                  alignment: Alignment.center,
-                                  children: [
-                                    Container(
-                                      width: 20,
-                                      height: 20,
-                                      decoration: BoxDecoration(
-                                        color: AppColors.statusBlue,
-                                        shape: BoxShape.circle,
-                                        boxShadow: [
-                                          BoxShadow(
-                                              color: AppColors.statusBlue.withValues(alpha: 0.6),
-                                              blurRadius: 10,
-                                              spreadRadius: 5)
-                                        ],
-                                      ),
-                                    ),
-                                    const Icon(Icons.navigation,
-                                        color: Colors.white, size: 20),
-                                  ],
-                                ),
+                                // Left to rotate with the map on purpose. The
+                                // marker's own space is already turned by the
+                                // map's rotation, so rotating the arrow by the
+                                // true bearing puts it at bearing + rotation on
+                                // screen — correct in north-up, and pointing
+                                // straight up in heading-up, with no second
+                                // correction to keep in step.
+                                child: _userArrow(),
                               ),
                             // Pin Waypoints with interaction + live distance
                             ...pinWaypoints.map((w) {
@@ -966,6 +973,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
           // Compass Rose — bottom right, out of the way of the top-of-screen
           // panels (pin tracking, navigation) and clear of the scale bar,
           // coordinates and breadcrumb buttons, which all sit left/centre.
+          // Locate button, directly above the compass rose. The rose is 60
+          // high at bottom 150, so this clears it with a gap.
+          Positioned(
+            bottom: 218,
+            right: 18,
+            child: _locateButton(locationState),
+          ),
+
           Positioned(
             bottom: 150,
             right: 14,
@@ -3272,6 +3287,166 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
         ]),
       ),
     );
+  }
+
+  /// Where you are, and which way you are going.
+  ///
+  /// The arrow used to be `const Icon(Icons.navigation)` with no rotation
+  /// anywhere, so it could only ever point up the map: driving ENE at 61 km/h
+  /// it still showed north. It now turns to the GPS course while moving and the
+  /// compass while stopped — see travel_heading.dart for which and why.
+  ///
+  /// With no heading from either sensor it draws the dot alone rather than an
+  /// arrow pointing north, because an arrow is a claim about direction and
+  /// there is nothing to base one on.
+  Widget _userArrow() {
+    final heading = _travelHeadingDeg;
+
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Container(
+          width: 20,
+          height: 20,
+          decoration: BoxDecoration(
+            color: AppColors.statusBlue,
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                  color: AppColors.statusBlue.withValues(alpha: 0.6),
+                  blurRadius: 10,
+                  spreadRadius: 5)
+            ],
+          ),
+        ),
+        if (heading != null)
+          Transform.rotate(
+            angle: heading * math.pi / 180,
+            child: const Icon(Icons.navigation, color: Colors.white, size: 20),
+          ),
+      ],
+    );
+  }
+
+  /// Round button matching the compass rose and the other map controls.
+  Widget _locateButton(LocationState locationState) {
+    final mode = _locateMode;
+    final live = mode != LocateMode.off;
+    final hasFix = locationState.stats.currentLat != null;
+
+    return GestureDetector(
+      onTap: () => _cycleLocateMode(locationState),
+      child: Container(
+        width: 52,
+        height: 52,
+        decoration: BoxDecoration(
+          color: AppColors.panelMatte.withValues(alpha: 0.92),
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: live
+                ? AppColors.accent.withValues(alpha: 0.9)
+                : Colors.white.withValues(alpha: 0.12),
+            width: live ? 2 : 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withValues(alpha: 0.4),
+                blurRadius: 8,
+                offset: const Offset(0, 2)),
+          ],
+        ),
+        child: Center(
+          child: Icon(
+            mode.icon,
+            size: 24,
+            color: !hasFix
+                ? AppColors.textMuted
+                : live
+                    ? AppColors.accent
+                    : Colors.white70,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _cycleLocateMode(LocationState locationState) {
+    final lat = locationState.stats.currentLat;
+    final lon = locationState.stats.currentLon;
+    if (lat == null || lon == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('No GPS fix yet — nothing to centre on.'),
+        backgroundColor: AppColors.statusRed,
+      ));
+      return;
+    }
+
+    final next = _locateMode.next;
+    setState(() => _locateMode = next);
+
+    // Every mode puts you back in the middle; only the follow modes keep you
+    // there.
+    _mapController.move(
+        LatLng(lat, lon), math.max(_mapController.camera.zoom, 16.0));
+
+    if (next.rotatesMap) {
+      final heading = _travelHeadingDeg;
+      if (heading != null) _mapController.rotate(-heading);
+    } else {
+      _mapController.rotate(0);
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(next.label),
+      duration: const Duration(milliseconds: 1200),
+      backgroundColor: AppColors.panelMatte,
+    ));
+  }
+
+  /// Work out which way the arrow and, in heading-up, the map should point.
+  void _updateTravelHeading(LocationState next) {
+    final now = DateTime.now();
+    final dt = _lastTravelSample == null
+        ? 0.2
+        : (now.difference(_lastTravelSample!).inMilliseconds / 1000)
+            .clamp(0.02, 2.0);
+    _lastTravelSample = now;
+
+    final stats = next.stats;
+    final compass = ref.read(headingProvider).valueOrNull;
+    final declination = (stats.currentLat != null && stats.currentLon != null)
+        ? MagneticDeclination.forPosition(
+            stats.currentLat!, stats.currentLon!)
+        : 0.0;
+
+    final out = _travel.update(
+      speedMs: stats.currentSpeedMs,
+      dt: dt,
+      gpsCourseDeg: stats.currentCourseDeg,
+      compassDeg: compass != null && compass.isLive ? compass.degrees : null,
+      declinationDeg: declination,
+    );
+
+    if (out == null || !mounted) return;
+    // A tenth of a degree is a third of a pixel on the arrow; redrawing the
+    // whole map for that is wasted work.
+    if (_travelHeadingDeg != null && (out - _travelHeadingDeg!).abs() < 0.5) {
+      return;
+    }
+    setState(() => _travelHeadingDeg = out);
+  }
+
+  /// Pull the map back to the user, and turn it if asked.
+  void _followIfAsked(LocationState next) {
+    if (!_locateMode.isFollowing) return;
+    final lat = next.stats.currentLat;
+    final lon = next.stats.currentLon;
+    if (lat == null || lon == null) return;
+
+    _mapController.move(LatLng(lat, lon), _mapController.camera.zoom);
+    if (_locateMode.rotatesMap && _travelHeadingDeg != null) {
+      _mapController.rotate(-_travelHeadingDeg!);
+    }
   }
 
   Widget _noGpsFixChip() {

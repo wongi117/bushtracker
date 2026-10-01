@@ -19,6 +19,14 @@ import '../../../main.dart';
 class TrackStats {
   final double distanceMeters;
   final double currentSpeedMs;
+
+  /// Course over ground in degrees, clockwise from TRUE north, or null when the
+  /// fix carries no usable bearing.
+  ///
+  /// Not the same thing as the compass: this is where you are going, which is
+  /// what the arrow on the map should show while you are moving. A phone in a
+  /// cradle points at the windscreen regardless.
+  final double? currentCourseDeg;
   final double currentAccuracyM;
   final Duration elapsed;
   final double? currentLat;
@@ -28,6 +36,7 @@ class TrackStats {
   const TrackStats({
     this.distanceMeters = 0,
     this.currentSpeedMs = 0,
+    this.currentCourseDeg,
     this.currentAccuracyM = 0,
     this.elapsed = Duration.zero,
     this.currentLat,
@@ -81,6 +90,7 @@ class TrackStats {
   TrackStats copyWith({
     double? distanceMeters,
     double? currentSpeedMs,
+    double? currentCourseDeg,
     double? currentAccuracyM,
     Duration? elapsed,
     double? currentLat,
@@ -90,6 +100,7 @@ class TrackStats {
     return TrackStats(
       distanceMeters: distanceMeters ?? this.distanceMeters,
       currentSpeedMs: currentSpeedMs ?? this.currentSpeedMs,
+      currentCourseDeg: currentCourseDeg ?? this.currentCourseDeg,
       currentAccuracyM: currentAccuracyM ?? this.currentAccuracyM,
       elapsed: elapsed ?? this.elapsed,
       currentLat: currentLat ?? this.currentLat,
@@ -337,6 +348,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
       stats: state.stats.copyWith(
         distanceMeters: _totalDistance,
         currentSpeedMs: averaged.speed < 0 ? 0 : averaged.speed,
+        currentCourseDeg: averaged.heading,
         currentAccuracyM: averaged.accuracy,
         elapsed: elapsed,
         currentLat: averaged.latitude,
@@ -432,8 +444,13 @@ class LocationNotifier extends StateNotifier<LocationState> {
     double acc = 0;
     double speed = 0;
     double speedAccuracy = 0;
-    double heading = 0;
     double headingAccuracy = 0;
+    // A bearing cannot be averaged as a plain number: 350 and 10 average to
+    // 180, which points south while you drive north. Summing the unit vectors
+    // and taking the angle of the total is the circular mean, and it has no
+    // such seam.
+    double headingX = 0;
+    double headingY = 0;
     for (final p in samples) {
       lat += p.latitude;
       lon += p.longitude;
@@ -441,10 +458,14 @@ class LocationNotifier extends StateNotifier<LocationState> {
       acc += p.accuracy;
       speed += p.speed < 0 ? 0 : p.speed;
       speedAccuracy += p.speedAccuracy;
-      heading += p.heading;
+      final rad = p.heading * math.pi / 180;
+      headingX += math.cos(rad);
+      headingY += math.sin(rad);
       headingAccuracy += p.headingAccuracy;
     }
     final count = samples.length;
+    final heading =
+        (math.atan2(headingY, headingX) * 180 / math.pi + 360) % 360;
     return Position(
       latitude: lat / count,
       longitude: lon / count,
@@ -452,7 +473,7 @@ class LocationNotifier extends StateNotifier<LocationState> {
       accuracy: acc / count,
       altitude: alt / count,
       altitudeAccuracy: 0,
-      heading: heading / count,
+      heading: heading,
       headingAccuracy: headingAccuracy / count,
       speed: speed / count,
       speedAccuracy: speedAccuracy / count,
