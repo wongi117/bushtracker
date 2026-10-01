@@ -10,6 +10,7 @@ import 'package:bush_track/core/utils/geo_geometry.dart';
 import 'package:bush_track/core/utils/web_helpers.dart';
 import 'package:bush_track/features/files/providers/files_provider.dart';
 import 'package:bush_track/features/geofence/providers/geofence_provider.dart';
+import 'package:bush_track/features/files/presentation/files_search_view.dart';
 import 'package:bush_track/features/map/providers/marker_visibility_provider.dart';
 import 'package:bush_track/features/map/providers/trail_provider.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
@@ -45,14 +46,21 @@ class FilesScreen extends ConsumerWidget {
             style: TextStyle(fontWeight: FontWeight.w900)),
         onPressed: () => _createFile(context, ref),
       ),
-      body: state.files.isEmpty
-          ? _buildEmpty()
-          : ListView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
-              itemCount: state.files.length,
-              itemBuilder: (_, i) =>
-                  _FileTile(file: state.files[i], isOpen: state.files[i].id == state.activeFileId),
-            ),
+      // The search bar is always there; it takes over the body as soon as
+      // there is something to search for, and gets out of the way again when
+      // the field is cleared.
+      body: FilesSearchView(
+        onShowOnMap: (at) => Navigator.pop(context, at),
+        idle: state.files.isEmpty
+            ? _buildEmpty()
+            : ListView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+                itemCount: state.files.length,
+                itemBuilder: (_, i) => _FileTile(
+                    file: state.files[i],
+                    isOpen: state.files[i].id == state.activeFileId),
+              ),
+      ),
     );
   }
 
