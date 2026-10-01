@@ -1,0 +1,113 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'package:bush_track/core/config/api_config.dart';
+
+/// Which satellite imagery the map draws.
+///
+/// Two providers, chosen in the field rather than argued about at a desk: what
+/// matters is which one actually shows the track you are standing on, and that
+/// differs by region. Over Leonora, ESRI serves a grey "map data not yet
+/// available" tile past zoom 17 while Mapbox returns real imagery to 20 — but
+/// whether that imagery is *useful* at 20, or just upscaled, is a question for
+/// eyes on a phone.
+enum SatelliteSource {
+  /// ESRI World Imagery. Free, no key, the same source Avenza and Gaia use.
+  /// What this app has always used.
+  esri,
+
+  /// Mapbox Satellite. Needs a public token; falls back to ESRI without one.
+  mapbox;
+
+  String get label => switch (this) {
+        SatelliteSource.esri => 'ESRI World Imagery',
+        SatelliteSource.mapbox => 'Mapbox Satellite',
+      };
+
+  String get shortLabel => switch (this) {
+        SatelliteSource.esri => 'ESRI',
+        SatelliteSource.mapbox => 'Mapbox',
+      };
+
+  /// Tile template for flutter_map.
+  String get urlTemplate => switch (this) {
+        SatelliteSource.esri =>
+          'https://server.arcgisonline.com/ArcGIS/rest/services/'
+              'World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        // @2x for a retina-density tile, jpg90 because satellite imagery is
+        // photographic and PNG would triple the bytes for no visible gain.
+        SatelliteSource.mapbox =>
+          'https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}@2x.jpg90'
+              '?access_token=${ApiConfig.mapboxPublicToken}',
+      };
+
+  /// Highest zoom the source has real imagery for around remote WA.
+  ///
+  /// Past this, flutter_map enlarges the last real tile instead of asking for
+  /// one that does not exist. ESRI's 17 was measured across Leonora, the
+  /// Gibson, the Nullarbor, the Pilbara and the Kimberley. Mapbox's 20 was
+  /// measured over Leonora only — it returns 45 KB at z18 and 20 KB at z20
+  /// where ESRI returns a 2 KB grey placeholder, so there is something there,
+  /// but it is capped conservatively until it has been looked at in the field.
+  int get maxNativeZoom => switch (this) {
+        SatelliteSource.esri => 17,
+        SatelliteSource.mapbox => 20,
+      };
+
+  /// Required by both providers' terms, and absent from this app until now.
+  String get attribution => switch (this) {
+        SatelliteSource.esri => 'Imagery © Esri, Maxar, Earthstar Geographics',
+        SatelliteSource.mapbox => '© Mapbox © OpenStreetMap',
+      };
+
+  /// Whether this source can actually be used right now.
+  bool get isAvailable => switch (this) {
+        SatelliteSource.esri => true,
+        SatelliteSource.mapbox => ApiConfig.hasMapbox,
+      };
+}
+
+class SatelliteSourceNotifier extends StateNotifier<SatelliteSource> {
+  SatelliteSourceNotifier() : super(SatelliteSource.esri) {
+    _load();
+  }
+
+  static const _key = 'satellite_source';
+
+  Future<void> _load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      final saved = prefs.getString(_key);
+      final match = SatelliteSource.values.where((s) => s.name == saved);
+      if (match.isEmpty) return;
+      // A remembered choice that is no longer usable — the token was removed
+      // from the build — must not leave the map on a source that cannot load.
+      if (!match.first.isAvailable) return;
+      state = match.first;
+    } catch (e) {
+      debugPrint('SatelliteSource load error: $e');
+    }
+  }
+
+  Future<void> use(SatelliteSource source) async {
+    if (!source.isAvailable) return;
+    state = source;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_key, source.name);
+    } catch (e) {
+      debugPrint('SatelliteSource save error: $e');
+    }
+  }
+
+  /// Flip to the other one, for a single button in the field.
+  Future<void> toggle() => use(state == SatelliteSource.esri
+      ? SatelliteSource.mapbox
+      : SatelliteSource.esri);
+}
+
+final satelliteSourceProvider =
+    StateNotifierProvider<SatelliteSourceNotifier, SatelliteSource>(
+        (ref) => SatelliteSourceNotifier());

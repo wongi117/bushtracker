@@ -48,6 +48,9 @@ import 'package:bush_track/features/navigation/providers/navigation_provider.dar
 import 'package:bush_track/features/map/presentation/marker_picker_screen.dart';
 import 'package:bush_track/features/map/providers/map_action_provider.dart';
 import 'package:bush_track/features/map/providers/marker_visibility_provider.dart';
+import 'package:bush_track/features/map/providers/satellite_source_provider.dart';
+import 'package:bush_track/features/streetview/presentation/street_photo_viewer.dart';
+import 'package:bush_track/features/streetview/providers/mapillary_provider.dart';
 import 'package:bush_track/features/map/services/locate_mode.dart';
 import 'package:bush_track/features/map/services/travel_heading.dart';
 import 'package:bush_track/features/ar/presentation/ar_compass_screen.dart';
@@ -108,9 +111,17 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
   // Map style: 0=Street, 1=Satellite, 2=Dark, 3=Topo
   int _mapStyleIndex = 0;
+  // Index 0 is whichever satellite source is selected — see
+  // satellite_source_provider. It is a setting rather than a fourth style so
+  // the comparison is like-for-like: the same slot, the same zoom, swapped
+  // underneath while you stand in one place.
+  //
+  // Deliberately NOT wired into the offline downloader. Mapbox imagery may
+  // only be cached through their own SDK, so bulk-downloading it here would
+  // breach their terms; offline regions stay on the existing sources.
   static const _tileUrls = [
-    // 0 — Satellite: ESRI World Imagery — free, best remote-AU coverage, same source as Avenza/Gaia
-    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    // 0 — placeholder, replaced at build time by the selected source
+    '',
     // 1 — Topo: OpenTopoMap — elevation contours, great for bush navigation
     'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
     // 2 — Street: OpenStreetMap — standard, no API key needed
@@ -393,7 +404,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
         .where((w) => visibility.showsPin(id: w.id, fileId: w.fileId))
         .toList();
 
-    final baseTileUrl = _tileUrls[_mapStyleIndex];
+    final streetView = ref.watch(streetViewProvider);
+
+    // The satellite slot is swapped by setting; the other two are fixed.
+    final satellite = ref.watch(satelliteSourceProvider);
+    final baseTileUrl = _mapStyleIndex == 0
+        ? satellite.urlTemplate
+        : _tileUrls[_mapStyleIndex];
+    final maxNativeZoom = _mapStyleIndex == 0
+        ? satellite.maxNativeZoom
+        : _tileMaxNativeZoom[_mapStyleIndex];
 
     return Scaffold(
       body: Stack(
@@ -449,11 +469,20 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                           enableScrollWheel: true,
                           flags: InteractiveFlag.all,
                         ),
-                        onTap: (tapPosition, point) =>
-                            _onMapTap(point, trailState),
+                        onTap: (tapPosition, point) {
+                          // With the layer on, a tap means "show me the
+                          // street here" — otherwise it does what it always
+                          // did.
+                          if (ref.read(streetViewProvider).enabled) {
+                            _openStreetPhoto(point);
+                            return;
+                          }
+                          _onMapTap(point, trailState);
+                        },
                         onLongPress: (tapPosition, point) =>
                             _onMapLongPress(point),
                         onPositionChanged: (position, hasGesture) {
+                          _loadStreetCoverage(position);
                           setState(() {
                             _currentZoom = position.zoom ?? 13.0;
                             // Reaching for the map means "stop pulling me
@@ -484,7 +513,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                           // OpenTopoMap uses {s} subdomain rotation
                           subdomains: _mapStyleIndex == 1 ? const ['a', 'b', 'c'] : const [],
                           maxZoom: 19.0,
-                          maxNativeZoom: _tileMaxNativeZoom[_mapStyleIndex],
+                          maxNativeZoom: maxNativeZoom,
                           minZoom: 3.0,
                           tileSize: 256,
                           retinaMode: RetinaMode.isHighDensity(context),
@@ -548,6 +577,25 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                             ),
                           ]),
                         // Waypoint markers with interaction
+                        // Mapillary coverage, under everything of the
+                        // user's own: it is context, not content.
+                        if (streetView.enabled &&
+                            streetView.photos.isNotEmpty)
+                          CircleLayer(
+                            circles: [
+                              for (final photo in streetView.photos)
+                                CircleMarker(
+                                  point: photo.position,
+                                  radius: 3.5,
+                                  color: const Color(0xFF05CB63)
+                                      .withValues(alpha: 0.85),
+                                  borderColor:
+                                      Colors.white.withValues(alpha: 0.5),
+                                  borderStrokeWidth: 0.5,
+                                ),
+                            ],
+                          ),
+
                         MarkerLayer(
                           markers: [
                             // User Current Position Marker
@@ -1179,6 +1227,37 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               child: _buildTrailDistanceHUD(trailState),
             ),
 
+          // Imagery credit. Required by Esri's and Mapbox's terms alike, and
+          // absent from this app until now — so this fixes a licence gap for
+          // the existing sources as much as it serves the new one.
+          //
+          // Tapping it swaps satellite source, which is the quickest way to
+          // compare two providers over the same patch of ground: no menus, no
+          // losing your place on the map.
+          if (!_drawerOpen)
+            Positioned(
+              bottom: 4,
+              right: 6,
+              child: GestureDetector(
+                onTap: _mapStyleIndex == 0 ? _swapSatelliteSource : null,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 2),
+                  color: Colors.black.withValues(alpha: 0.45),
+                  child: Text(
+                    _mapStyleIndex == 0
+                        ? '${ref.watch(satelliteSourceProvider).attribution}  ·  tap to swap'
+                        : _mapStyleIndex == 1
+                            ? '© OpenTopoMap (CC-BY-SA)'
+                            : '© OpenStreetMap contributors',
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.6),
+                        fontSize: 8.5),
+                  ),
+                ),
+              ),
+            ),
+
           // Says so, on the map, when the map is not showing everything.
           //
           // A project scope can hide a great deal at once, and a filter you
@@ -1441,6 +1520,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                 onMyTrails: _showMyTrails,
                 onFiles: _showFiles,
                 onMarkerPicker: _showMarkerPicker,
+                onStreetView: _toggleStreetView,
+                streetViewOn: streetView.enabled,
+                streetViewReason: streetView.reason,
                 hiddenCount: ref.watch(markerVisibilityProvider).hiddenCount,
                 openFileName: ref.watch(filesProvider).activeFile?.name,
                 onDrawZone: _startZoneDrawing,
@@ -3328,6 +3410,107 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     );
   }
 
+  /// Fetch Mapillary coverage for whatever is on screen.
+  ///
+  /// Driven off the map's own position changes rather than a timer, so it asks
+  /// once the map settles and not while a pan is still moving.
+  void _loadStreetCoverage(MapPosition position) {
+    if (!ref.read(streetViewProvider).enabled) return;
+    final bounds = position.bounds;
+    if (bounds == null) return;
+    ref.read(streetViewProvider.notifier).loadFor(
+          southWest: bounds.southWest,
+          northEast: bounds.northEast,
+          zoom: position.zoom ?? _currentZoom,
+        );
+  }
+
+  /// Turn the street-imagery layer on or off.
+  ///
+  /// Says why when it will not turn on. This is the one online-only feature in
+  /// the app, and a toggle that silently does nothing is worse than one that
+  /// explains itself.
+  Future<void> _toggleStreetView() async {
+    final notifier = ref.read(streetViewProvider.notifier);
+    await notifier.toggle(zoom: _currentZoom);
+    if (!mounted) return;
+
+    final now = ref.read(streetViewProvider);
+    if (!now.enabled) {
+      if (!now.usable) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(now.reason),
+          backgroundColor: AppColors.statusRed,
+        ));
+      }
+      return;
+    }
+
+    // Load straight away rather than waiting for the next pan.
+    try {
+      final camera = _mapController.camera;
+      await ref.read(streetViewProvider.notifier).loadFor(
+            southWest: camera.visibleBounds.southWest,
+            northEast: camera.visibleBounds.northEast,
+            zoom: camera.zoom,
+          );
+    } catch (_) {
+      // The map may not be laid out yet; the next pan will pick it up.
+    }
+
+    if (!mounted) return;
+    final loaded = ref.read(streetViewProvider).photos.length;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(loaded == 0
+          ? 'No street photos here — coverage is thin outside the towns'
+          : 'Street photos on — $loaded nearby, tap one to open'),
+      duration: const Duration(milliseconds: 1800),
+      backgroundColor: AppColors.panelMatte,
+    ));
+  }
+
+  /// Open the street photo nearest where the map was tapped.
+  Future<void> _openStreetPhoto(LatLng point) async {
+    final photo = await ref.read(streetViewProvider.notifier).photoNear(point);
+    if (!mounted) return;
+    if (photo == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('No street photo within about 60 m of there'),
+        duration: Duration(milliseconds: 1500),
+      ));
+      return;
+    }
+    await StreetPhotoViewer.open(context, photo);
+  }
+
+  /// Swap between satellite providers, in place.
+  ///
+  /// Says which one it moved to, because the imagery itself is often the only
+  /// difference and over bare scrub the two can look alike until you zoom in.
+  Future<void> _swapSatelliteSource() async {
+    final before = ref.read(satelliteSourceProvider);
+    await ref.read(satelliteSourceProvider.notifier).toggle();
+    final after = ref.read(satelliteSourceProvider);
+
+    if (!mounted) return;
+    if (after == before) {
+      // Only happens when the other source has no token in this build.
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Mapbox needs a token in config/pinage.json — '
+            'staying on ESRI.'),
+        backgroundColor: AppColors.statusRed,
+      ));
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('Satellite: ${after.label}  ·  to zoom '
+          '${after.maxNativeZoom}'),
+      duration: const Duration(milliseconds: 1600),
+      backgroundColor: AppColors.panelMatte,
+    ));
+  }
+
   /// Round button matching the compass rose and the other map controls.
   Widget _locateButton(LocationState locationState) {
     final mode = _locateMode;
@@ -3934,6 +4117,12 @@ class _HamburgerDrawer extends StatelessWidget {
   final VoidCallback onFiles;
   final VoidCallback onMarkerPicker;
 
+  /// Street-level imagery. Carries its own state and reason because it is the
+  /// one thing in this menu that cannot work offline.
+  final VoidCallback onStreetView;
+  final bool streetViewOn;
+  final String streetViewReason;
+
   /// How many pins and zones are currently hidden from view.
   final int hiddenCount;
 
@@ -3987,6 +4176,9 @@ class _HamburgerDrawer extends StatelessWidget {
     required this.onMyTrails,
     required this.onFiles,
     required this.onMarkerPicker,
+    required this.onStreetView,
+    required this.streetViewOn,
+    required this.streetViewReason,
     required this.hiddenCount,
     required this.openFileName,
     required this.onDrawZone,
@@ -4047,6 +4239,26 @@ class _HamburgerDrawer extends StatelessWidget {
                       _item(context, Icons.folder_rounded, const Color(0xFFFF6B00), 'Files', openFileName == null ? 'Notes and field records' : 'Open: $openFileName', 'A folder per job, site or trip. While a file is open, every note, pin and zone you make is filed under it, so you can come back and see where you worked.', () => _go(onFiles)),
 
                       _item(context, Icons.visibility, const Color(0xFF00BCD4), 'Show & Follow', hiddenCount == 0 ? 'Choose what is drawn' : '$hiddenCount hidden', 'Pick which pins and zones appear on the map and through the camera, and choose one to follow. Hiding never deletes anything.', () => _go(onMarkerPicker)),
+                      // Greyed out rather than hidden when it cannot work: a
+                      // missing row looks like a missing feature, while a
+                      // disabled one with a reason explains itself.
+                      _item(
+                          context,
+                          Icons.streetview,
+                          streetViewReason.isEmpty
+                              ? const Color(0xFF05CB63)
+                              : AppColors.textMuted,
+                          'Street Photos',
+                          streetViewReason.isNotEmpty
+                              ? streetViewReason
+                              : streetViewOn
+                                  ? 'On — tap the map to open one'
+                                  : 'Mapillary street-level imagery',
+                          'Street-level photos contributed to Mapillary. The '
+                          'only part of this app that needs a connection: '
+                          'coverage is thin outside the towns, and nothing is '
+                          'stored on the phone.',
+                          () => _go(onStreetView)),
 
                       _section('ZONES'),
                       _item(context, Icons.draw, const Color(0xFFFF6B00), 'Draw Zone', 'Flag an area', 'Draw a circle, or tap out a boundary corner by corner around a site, hazard or heritage area. You get told when you cross in or out of it.', () => _go(onDrawZone)),
