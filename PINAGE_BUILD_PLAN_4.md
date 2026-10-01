@@ -527,3 +527,211 @@ On your approval:
 
 Phase 4.0's migration runner is the one item I would argue for doing regardless: the schema is
 at version 1 with no upgrade path, and the next schema change without it loses field data.
+
+---
+
+# Phase 5 — Map providers and street-level imagery
+
+**Status: plan and estimate only, as asked. No provider code written.**
+The only thing built so far is token config (§5.1), which was needed either way.
+
+## 5.0 Token audit — the answer to "is there an sk. anywhere?"
+
+**No.** Checked the working tree and **every blob across all 1,699 objects in every commit**,
+for `sk.`, `pk.` and `MLY|` literals. Nothing. `lib/core/config/secrets.dart` exists in
+history but every value in it is `String.fromEnvironment` — no literals, only a Google project
+number, which is not a secret.
+
+**Where the secret token goes:** `C:\Users\User\.gradle\gradle.properties` — the *user-level*
+file, outside the repo:
+
+```properties
+MAPBOX_DOWNLOADS_TOKEN=sk.your-existing-bushtracker-token
+```
+
+**Not** `android/gradle.properties`. That file **is tracked by git** (it currently holds only
+`org.gradle.jvmargs` and `android.useAndroidX`), so a token there would be committed. This is
+the likeliest way an sk. leaks, because most Mapbox setup guides say "add it to
+gradle.properties" without saying which one.
+
+## 5.1 Tokens in config — done
+
+- `config/pinage.json` — **git-ignored**, holds the real values.
+- `config/pinage.example.json` — committed template with placeholders.
+- `ApiConfig.mapboxPublicToken` / `ApiConfig.mapillaryToken`, both `String.fromEnvironment`
+  with **no committed default** — unlike the Supabase publishable key, which is safe by design
+  once RLS is on. A Mapbox token is billable and a Mapillary token has no row-level security
+  behind it, so neither belongs in the repo.
+- Build: `flutter build apk --release --dart-define-from-file=config/pinage.json`
+- `ApiConfig.hasMapbox` / `hasMapillary` gate the features. **Absent is a working state:** no
+  Mapbox token means the map stays on MapTiler; no Mapillary token means the imagery layer
+  hides itself. That is what stops the switch being a flag day.
+
+**Both tokens verified against the live APIs:**
+
+| Check | Result |
+|---|---|
+| Mapbox satellite tile over Leonora | HTTP 200, 83 KB of JPEG |
+| Mapbox styles endpoint | HTTP 200 |
+| Mapillary **client** token (`...5b156e38`) | HTTP 200 but `{"data":[]}` — **not usable** |
+| Mapillary **access** token (`...d65c278e`) | HTTP 200 with real image ids — **this is the one** |
+
+The client token authenticates and returns nothing; a genuinely bad token returns HTTP 401, so
+empty-with-200 means "authenticated, not authorised for this data". Config uses the access
+token.
+
+**"Confirm the map is rendering with the Mapbox token" — not done**, because it cannot be done
+without starting the switch, which this phase is meant to plan. What is confirmed is that the
+token is valid and returns imagery for your area. Rendering follows in stage 1 below, which is
+a one-line change.
+
+## 5.2 What the switch actually costs
+
+The key fact, and it is not obvious: **there are two different Mapbox integrations, and they
+cost wildly different amounts of work.**
+
+### Option A — Mapbox raster tiles through the existing flutter_map (small)
+
+Add a tile URL. `https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}@2x.jpg90?access_token=...`
+slots straight into the `_tileUrls` list beside MapTiler and ArcGIS.
+
+| Area | Change |
+|---|---|
+| Map layer | One URL in a list. **Half a day.** |
+| Pins, boundaries, drawings | **Nothing.** Still flutter_map markers and polygons. |
+| AR | **Nothing.** AR never touches the map — it is GPS plus projection maths. |
+| Offline downloader | **Nothing**, but it keeps the existing bulk-raster licensing question (D5) rather than solving it. |
+| Street map | Unchanged. |
+
+Gets Mapbox imagery on screen next to MapTiler for comparison, with a toggle, and no risk.
+**~0.5 day.**
+
+### Option B — the official Mapbox Maps SDK (large)
+
+`mapbox_maps_flutter` is the official SDK binding. It is **a different map widget**, not a
+layer for flutter_map. This is what the offline TileStore — the official region download you
+actually want — comes with.
+
+| Area | Change | Estimate |
+|---|---|---|
+| Map widget | Replace `FlutterMap` with Mapbox `MapWidget` in `dashboard_screen.dart`, the busiest file in the app | 2–3 d |
+| Pins | Every `Marker` becomes a `PointAnnotation` or style layer: ~6 marker types, photo thumbnails, live distance labels, numbered markers | 3–4 d |
+| Boundaries | Circles and polygons become annotations; drag-to-resize handles re-implemented | 2–3 d |
+| Camera, rotation, locate modes | Rewire `MapController` to the Mapbox camera. **The heading-up maths changes** — the arrow correction assumes flutter_map's rotation convention | 1–2 d |
+| Tap handling | `onTap(point)` becomes queryRenderedFeatures; pin and boundary hit-testing changes shape | 1–2 d |
+| Offline downloader | Replace `offline_map_manager.dart` with TileStore. **This is the win**: official, licensed, resumable, real size estimates | 2–3 d |
+| Drawing tools (4.2) | Freehand and line tools would need rebuilding against the new widget if built first | +2 d if ordered wrongly |
+| Tests | The map-touching tests | 1–2 d |
+
+**Total: 12–19 days**, and it is a rewrite of the busiest screen, with a period where both map
+stacks exist side by side.
+
+**Two things to verify before committing to B** — flagging, not asserting:
+
+1. **Mapbox's terms restrict accessing Mapbox-hosted tiles with a non-Mapbox SDK.** If that
+   reading is right, Option A is fine for evaluation but not as a permanent arrangement, which
+   pushes toward B. It is the mirror of the Google-routes-on-a-non-Google-basemap problem.
+   Worth a direct answer from Mapbox.
+2. **MAU billing.** 25,000 free monthly active users is generous, but the SDK counts an MAU on
+   app open, not on map use. Irrelevant at your scale; worth knowing before a public launch.
+
+### Protomaps / PMTiles for the street map
+
+Street basemaps from PMTiles are **vector** (MVT). flutter_map cannot render vector tiles
+natively — it needs `vector_map_tiles`, or MapLibre, which is already a dependency for the 3D
+view. Supabase Storage serves HTTP range requests, which is what PMTiles needs, so hosting
+works.
+
+| Area | Estimate |
+|---|---|
+| Build the WA PMTiles extract on the desktop | 1 d (plus a long download) |
+| Host in Supabase Storage, verify range requests | 0.5 d |
+| Dart PMTiles reader plus vector renderer wired to the map | 3–5 d |
+| Offline: the PMTiles file **is** the offline pack — download once, no tile-by-tile scraping, and **no bulk-caching licensing problem at all** | 1 d |
+
+**5.5–7.5 days.** Worth noting this **solves D5**: one licensed OSM-derived file replaces bulk
+scraping of someone else's tile server.
+
+### Valhalla (already approved)
+
+Unchanged: on-device, pack built on the desktop, hosted in Supabase Storage. **6–9 days**
+including the Flutter bridge and the pack manager. Independent of the map switch.
+
+### Recommended order
+
+1. **Option A now (0.5 d).** Mapbox imagery beside MapTiler, toggle between them, judge it on
+   your phone in the field. Nothing can break; MapTiler stays the default.
+2. **Get answers on the two verification items** while you are looking at it.
+3. **Protomaps street map (5.5–7.5 d)** next if A looks good, because it is additive and
+   solves the offline licensing question.
+4. **Option B (12–19 d) only if the official offline download is the deciding factor** — and
+   schedule it *before* the 4.2 drawing tools, or those get built twice.
+
+## 5.3 Mapillary street-level imagery
+
+Online-only by design, which is the opposite of everything else in this app, so it has to be
+unmistakable in the UI rather than quietly failing.
+
+**Measured coverage in your area**, which is the case for the upload phase:
+
+| Area | Images in a ~6–10 km box |
+|---|---|
+| Leonora | **5** |
+| Kalgoorlie | 50+ (hit the query limit) |
+| Perth CBD | 45+ |
+
+### Files and packages
+
+No Mapillary Flutter package is needed or worth it — it is two REST calls.
+
+| File | Purpose |
+|---|---|
+| `lib/features/streetview/services/mapillary_service.dart` | new — coverage query by bbox, nearest-image lookup, image URL fetch |
+| `lib/features/streetview/providers/mapillary_provider.dart` | new — layer on/off, cached coverage, connectivity gate |
+| `lib/features/streetview/presentation/street_photo_viewer.dart` | new — the viewer |
+| `lib/features/dashboard/presentation/dashboard_screen.dart` | a coverage layer and a Tools-menu toggle |
+| `lib/core/config/api_config.dart` | done |
+
+Packages: `http` and `flutter_map`, both already present. **Nothing new.**
+
+### Behaviour
+
+- A toggle in the Tools menu. **Greyed out with "needs a connection" when offline**, not
+  hidden — hiding it looks like a missing feature; greying it out explains itself.
+- Active at zoom 13 and above only: a bbox query at low zoom over WA would ask for a continent.
+- Coverage drawn as small dots. Tapping one, or tapping the map with the layer on, opens the
+  nearest image within about 50 m.
+- The viewer reuses `PinPhotoViewer`'s shape — swipe, pinch, counter — but loads over the
+  network, with its own "no connection" state.
+- Results cached in memory for the session only. **Deliberately not cached to disk**:
+  Mapillary's terms on storing imagery need checking first, and the offline promise this app
+  makes about *your* data must not be quietly extended to someone else's photos.
+
+**Estimate: 2–3 days.**
+
+### Future phase — user street-level photo uploads to Mapillary
+
+Lets crews fill the thin regional WA coverage measured above. Needs, in order:
+
+1. **UPLOAD scope** enabled on the Mapillary app (currently READ only).
+2. **A real redirect URL** for OAuth — blocked on the Future Gen AI site being live
+   (`futuregenai.com.au` is a placeholder; likely `fgai.com.au`).
+3. **OAuth login**, replacing the baked-in access token. The current one is a user access
+   token: acceptable for reads in development, not what ships for uploads.
+4. Queue uploads through the **existing outbox** (Phase 4.0) so photos taken with no signal
+   send themselves later — the same machinery as shares and SOS.
+5. A consent step. Uploading someone's photos to a Meta-owned service is a decision the person
+   who took them has to make deliberately, per photo or per project, never a default.
+
+**Estimate: 4–6 days once the website and OAuth redirect exist.** Not startable before that.
+
+## 5.4 Keeping MapTiler working
+
+Non-negotiable per the brief, and the design above gives it for free:
+
+- MapTiler stays the **default** style; Mapbox is added to the same list.
+- `hasMapbox` is false without a token, so any build without `config/pinage.json` behaves
+  exactly as today.
+- No change to the offline downloader until Protomaps replaces it, so existing downloaded
+  regions keep working.
+- Nothing is removed until you have compared them on the phone, in the field.

@@ -61,3 +61,6 @@ deploy.zip
 .agent/
 .autoclaw/
 .netlify/
+
+# Local token config. The example file beside it is the committed template.
+config/pinage.json

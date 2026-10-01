@@ -25,6 +25,36 @@ class ApiConfig {
   static const String openCageKey = String.fromEnvironment('OPENCAGE_KEY');
   static const String what3WordsKey = String.fromEnvironment('W3W_KEY');
 
+  // ── Map and imagery providers ─────────────────────────────────────────────
+  //
+  // No defaults, deliberately. The Supabase publishable key above carries a
+  // committed default because it is safe by design once RLS is on; these are
+  // not in that category — a Mapbox token is billable and a Mapillary token
+  // has no row-level security behind it — so they come from a git-ignored
+  // config/pinage.json via --dart-define-from-file and are absent from the
+  // repository entirely.
+  //
+  // Absent is a working state, not a broken one: with no Mapbox token the map
+  // stays on MapTiler, and with no Mapillary token the street-imagery layer
+  // hides itself. That is what keeps the provider switch from being a flag day.
+  //
+  // A SECRET token (sk.) must never appear here or anywhere in the repo. It is
+  // only for downloading the Mapbox SDK at build time and belongs in the
+  // user-level ~/.gradle/gradle.properties — note that android/gradle.properties
+  // IS tracked, so it is the wrong file.
+  static const String mapboxPublicToken =
+      String.fromEnvironment('MAPBOX_PUBLIC_TOKEN');
+
+  static const String mapillaryToken =
+      String.fromEnvironment('MAPILLARY_TOKEN');
+
+  /// True when Mapbox can be used at all. False falls back to MapTiler.
+  static bool get hasMapbox => mapboxPublicToken.startsWith('pk.');
+
+  /// True when street-level imagery can be fetched. The layer is hidden
+  /// otherwise rather than failing on tap.
+  static bool get hasMapillary => mapillaryToken.startsWith('MLY|');
+
   // ── Supabase ──────────────────────────────────────────────────────────────
   //
   // Project "pinage-maps", ap-southeast-2 (Sydney). Only ever this project:

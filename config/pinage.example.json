@@ -1,0 +1,11 @@
+{
+  "_comment": "Copy to config/pinage.json and fill in. pinage.json is git-ignored and must never be committed.",
+  "_build": "flutter build apk --release --dart-define-from-file=config/pinage.json",
+
+  "MAPBOX_PUBLIC_TOKEN": "pk.your-mapbox-public-token",
+  "MAPILLARY_TOKEN": "MLY|your-client-id|your-client-token",
+
+  "MAPTILER_KEY": "your-maptiler-key",
+  "SUPABASE_URL": "https://your-project.supabase.co",
+  "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_your-key"
+}
