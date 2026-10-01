@@ -92,12 +92,21 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
               padding: const EdgeInsets.fromLTRB(20, 14, 12, 0),
               child: Row(children: [
                 Container(
-                  width: 46, height: 46,
+                  width: 46,
+                  height: 46,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFFB300).withValues(alpha: 0.15),
+                    // The pin's own colour, not a fixed amber. Choosing a
+                    // colour is no use if the screen that shows the pin
+                    // ignores it.
+                    color:
+                        WaypointColors.fromHex(w.color).withValues(alpha: 0.18),
                     borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: WaypointColors.fromHex(w.color)
+                            .withValues(alpha: 0.5)),
                   ),
-                  child: const Icon(Icons.photo_camera_rounded, color: Color(0xFFFFB300), size: 24),
+                  child: Icon(WaypointIcon.getIconData(w.icon),
+                      color: WaypointColors.fromHex(w.color), size: 24),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -106,11 +115,15 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
                     children: [
                       Text(
                         w.label ?? 'Pinage',
-                        style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold),
                       ),
                       Text(
                         _formatDate(w.timestamp),
-                        style: const TextStyle(color: Colors.white38, fontSize: 11),
+                        style: const TextStyle(
+                            color: Colors.white38, fontSize: 11),
                       ),
                     ],
                   ),
@@ -129,18 +142,25 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
                       color: const Color(0xFFFFB300).withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: const Color(0xFFFFB300).withValues(alpha: 0.3)),
+                      border: Border.all(
+                          color:
+                              const Color(0xFFFFB300).withValues(alpha: 0.3)),
                     ),
                     child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      const Icon(Icons.photo_library_outlined, color: Color(0xFFFFB300), size: 12),
+                      const Icon(Icons.photo_library_outlined,
+                          color: Color(0xFFFFB300), size: 12),
                       const SizedBox(width: 5),
                       Text(
                         '${_media.length} photo${_media.length == 1 ? '' : 's'}',
-                        style: const TextStyle(color: Color(0xFFFFB300), fontSize: 11, fontWeight: FontWeight.w600),
+                        style: const TextStyle(
+                            color: Color(0xFFFFB300),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600),
                       ),
                     ]),
                   ),
@@ -152,7 +172,8 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
             // ── Scrollable body ────────────────────────────────────────────
             Expanded(
               child: SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(20, 0, 20, MediaQuery.of(context).padding.bottom + 12),
+                padding: EdgeInsets.fromLTRB(
+                    20, 0, 20, MediaQuery.of(context).padding.bottom + 12),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -175,29 +196,35 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
                               _imageWidget(_media[_currentImageIndex]),
                               // Expand icon hint
                               Positioned(
-                                top: 10, right: 10,
+                                top: 10,
+                                right: 10,
                                 child: Container(
                                   padding: const EdgeInsets.all(6),
                                   decoration: BoxDecoration(
                                     color: Colors.black.withValues(alpha: 0.55),
                                     borderRadius: BorderRadius.circular(8),
                                   ),
-                                  child: const Icon(Icons.open_in_full, color: Colors.white70, size: 14),
+                                  child: const Icon(Icons.open_in_full,
+                                      color: Colors.white70, size: 14),
                                 ),
                               ),
                               // Image counter
                               if (_media.length > 1)
                                 Positioned(
-                                  bottom: 10, right: 10,
+                                  bottom: 10,
+                                  right: 10,
                                   child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8, vertical: 4),
                                     decoration: BoxDecoration(
-                                      color: Colors.black.withValues(alpha: 0.6),
+                                      color:
+                                          Colors.black.withValues(alpha: 0.6),
                                       borderRadius: BorderRadius.circular(10),
                                     ),
                                     child: Text(
                                       '${_currentImageIndex + 1} / ${_media.length}',
-                                      style: const TextStyle(color: Colors.white, fontSize: 11),
+                                      style: const TextStyle(
+                                          color: Colors.white, fontSize: 11),
                                     ),
                                   ),
                                 ),
@@ -293,7 +320,11 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
                     if (hasStory) ...[
                       const Text(
                         'STORY',
-                        style: TextStyle(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.5),
+                        style: TextStyle(
+                            color: Colors.white38,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.5),
                       ),
                       const SizedBox(height: 8),
                       Container(
@@ -302,11 +333,13 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
                         decoration: BoxDecoration(
                           color: Colors.white.withValues(alpha: 0.05),
                           borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                          border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.08)),
                         ),
                         child: Text(
                           w.notes!,
-                          style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.6),
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 14, height: 1.6),
                         ),
                       ),
                       const SizedBox(height: 20),
@@ -335,7 +368,8 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
                             '${w.latitude?.toStringAsFixed(5)}, ${w.longitude?.toStringAsFixed(5)}'),
                         if (w.timestamp != null) ...[
                           const Divider(color: Colors.white10, height: 14),
-                          _metaRow(Icons.calendar_today_outlined, 'Pinned', _formatDate(w.timestamp)),
+                          _metaRow(Icons.calendar_today_outlined, 'Pinned',
+                              _formatDate(w.timestamp)),
                         ],
                       ]),
                     ),
@@ -425,14 +459,17 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
                   children: [
                     PageView.builder(
                       itemCount: _media.length,
-                      controller: PageController(initialPage: _currentImageIndex),
-                      onPageChanged: (i) => setState(() => _currentImageIndex = i),
+                      controller:
+                          PageController(initialPage: _currentImageIndex),
+                      onPageChanged: (i) =>
+                          setState(() => _currentImageIndex = i),
                       itemBuilder: (_, i) => InteractiveViewer(
                         child: Center(child: _imageWidget(_media[i])),
                       ),
                     ),
                     Positioned(
-                      top: 16, right: 16,
+                      top: 16,
+                      right: 16,
                       child: GestureDetector(
                         onTap: () => setState(() => _showFullscreen = false),
                         child: Container(
@@ -441,17 +478,21 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
                             color: Colors.black.withValues(alpha: 0.6),
                             shape: BoxShape.circle,
                           ),
-                          child: const Icon(Icons.close, color: Colors.white, size: 20),
+                          child: const Icon(Icons.close,
+                              color: Colors.white, size: 20),
                         ),
                       ),
                     ),
                     if (_media.length > 1)
                       Positioned(
-                        bottom: 20, left: 0, right: 0,
+                        bottom: 20,
+                        left: 0,
+                        right: 0,
                         child: Center(
                           child: Text(
                             '${_currentImageIndex + 1} / ${_media.length}',
-                            style: const TextStyle(color: Colors.white60, fontSize: 13),
+                            style: const TextStyle(
+                                color: Colors.white60, fontSize: 13),
                           ),
                         ),
                       ),
@@ -606,8 +647,8 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
       });
 
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(
-            '${added.length} photo${added.length == 1 ? '' : 's'} added'),
+        content:
+            Text('${added.length} photo${added.length == 1 ? '' : 's'} added'),
       ));
     } catch (e) {
       if (!mounted) return;
@@ -634,20 +675,20 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
         content: Text(
           'Photo ${index + 1} of ${_photos.length} comes off this pin. The pin '
           'itself stays.',
-          style: const TextStyle(
-              color: Colors.white60, fontSize: 13, height: 1.5),
+          style:
+              const TextStyle(color: Colors.white60, fontSize: 13, height: 1.5),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialog, false),
-            child: const Text('CANCEL',
-                style: TextStyle(color: Colors.white54)),
+            child:
+                const Text('CANCEL', style: TextStyle(color: Colors.white54)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(dialog, true),
             child: const Text('REMOVE',
-                style: TextStyle(
-                    color: Colors.red, fontWeight: FontWeight.bold)),
+                style:
+                    TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -762,15 +803,18 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
           borderRadius: BorderRadius.circular(16),
           side: BorderSide(color: Colors.red.withValues(alpha: 0.3)),
         ),
-        title: const Text('Delete Pinage?', style: TextStyle(color: Colors.white, fontSize: 16)),
+        title: const Text('Delete Pinage?',
+            style: TextStyle(color: Colors.white, fontSize: 16)),
         content: Text(
           'Delete "${widget.waypoint.label ?? 'this pinage'}"?\nThis will also remove all attached photos.',
-          style: const TextStyle(color: Colors.white60, fontSize: 13, height: 1.5),
+          style:
+              const TextStyle(color: Colors.white60, fontSize: 13, height: 1.5),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('CANCEL', style: TextStyle(color: Colors.white54)),
+            child:
+                const Text('CANCEL', style: TextStyle(color: Colors.white54)),
           ),
           TextButton(
             onPressed: () {
@@ -778,7 +822,9 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
               Navigator.pop(context); // close viewer sheet
               widget.onDelete();
             },
-            child: const Text('DELETE', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+            child: const Text('DELETE',
+                style:
+                    TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -787,7 +833,20 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
 
   String _formatDate(DateTime? dt) {
     if (dt == null) return 'Unknown';
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
     final h = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
     final ampm = dt.hour >= 12 ? 'PM' : 'AM';
     return '${months[dt.month - 1]} ${dt.day}, ${dt.year}  $h:${dt.minute.toString().padLeft(2, '0')} $ampm';

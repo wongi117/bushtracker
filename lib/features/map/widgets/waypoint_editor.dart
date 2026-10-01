@@ -11,7 +11,7 @@ class WaypointEditorSheet extends ConsumerStatefulWidget {
   final Waypoint? waypoint;
   final LatLng? position;
   final bool isReadOnly;
-  
+
   const WaypointEditorSheet({
     super.key,
     this.waypoint,
@@ -20,7 +20,8 @@ class WaypointEditorSheet extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<WaypointEditorSheet> createState() => _WaypointEditorSheetState();
+  ConsumerState<WaypointEditorSheet> createState() =>
+      _WaypointEditorSheetState();
 }
 
 class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
@@ -29,7 +30,7 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
   String _selectedCategory = 'custom';
   int _rating = 0;
   bool _isSaving = false;
-  
+
   final List<Map<String, String>> _categories = [
     {'id': 'camp', 'icon': '⛺', 'name': 'Camp'},
     {'id': 'water', 'icon': '💧', 'name': 'Water'},
@@ -38,7 +39,7 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
     {'id': 'road', 'icon': '🛣️', 'name': 'Road'},
     {'id': 'custom', 'icon': '📍', 'name': 'Custom'},
   ];
-  
+
   final Map<String, String> _categoryColors = {
     'camp': '#FF6B35',
     'water': '#00E5FF',
@@ -47,36 +48,40 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
     'road': '#7B2FFF',
     'custom': '#00FF88',
   };
-  
-  final List<String> _colours = [
-    '#7B2FFF', '#00E5FF', '#FF6B35', '#00FF88', '#FF2D55', '#FFFFFF',
-  ];
-  
+
+  // Was a private copy of six hexes. The palette now lives on
+  // WaypointColors, so the map, the camera, Files and search offer and draw
+  // the same set and widening it is one edit rather than five.
+  List<String> get _colours => WaypointColors.allColors;
+
   String _selectedColour = '#00E5FF';
   String _currentWeather = '28°C, Wind: 12km/h NE';
-  
+
   @override
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.waypoint?.label ?? '');
-    _notesController = TextEditingController(text: widget.waypoint?.notes ?? '');
+    _notesController =
+        TextEditingController(text: widget.waypoint?.notes ?? '');
     if (widget.waypoint != null) {
       _selectedCategory = widget.waypoint!.icon ?? 'custom';
-      _selectedColour = widget.waypoint!.color ?? _categoryColors[_selectedCategory] ?? '#00E5FF';
+      _selectedColour = widget.waypoint!.color ??
+          _categoryColors[_selectedCategory] ??
+          '#00E5FF';
       _rating = widget.waypoint!.order ?? 0;
     } else {
       _selectedColour = _categoryColors[_selectedCategory] ?? '#00E5FF';
     }
   }
-  
+
   @override
   void dispose() {
     _nameController.dispose();
     _notesController.dispose();
     super.dispose();
   }
-  
-@override
+
+  @override
   Widget build(BuildContext context) {
     final locationState = ref.watch(locationProvider);
     final isEditing = widget.waypoint != null;
@@ -84,11 +89,11 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
     final lat = widget.waypoint?.latitude ?? widget.position?.latitude ?? 0.0;
     final lon = widget.waypoint?.longitude ?? widget.position?.longitude ?? 0.0;
     final now = DateTime.now();
-    
+
     if (isReadOnly && widget.waypoint != null) {
       return _buildReadOnlyView(context, lat, lon);
     }
-    
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: const BoxDecoration(
@@ -105,7 +110,8 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
               children: [
                 Row(
                   children: [
-                    Text(_getCategoryIcon(_selectedCategory), style: const TextStyle(fontSize: 24)),
+                    Text(_getCategoryIcon(_selectedCategory),
+                        style: const TextStyle(fontSize: 24)),
                     const SizedBox(width: 12),
                     Text(
                       isEditing ? 'Edit Pin' : 'Drop New Pin',
@@ -124,41 +130,50 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
               ],
             ),
             const SizedBox(height: 20),
-            
-            const Text('📍 Pin Name', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+            const Text('📍 Pin Name',
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
             const SizedBox(height: 8),
             TextField(
               controller: _nameController,
               style: const TextStyle(color: Colors.white),
               decoration: InputDecoration(
                 hintText: 'What is this location?',
-                hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
+                hintStyle:
+                    TextStyle(color: Colors.white.withValues(alpha: 0.3)),
                 filled: true,
                 fillColor: AppColors.panelLight,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               ),
             ),
             const SizedBox(height: 20),
-            
-            const Text('📝 Notes', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+            const Text('📝 Notes',
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
             const SizedBox(height: 8),
             TextField(
               controller: _notesController,
               style: const TextStyle(color: Colors.white),
               maxLines: 3,
               decoration: InputDecoration(
-                hintText: 'Add details... water source here,\ntrack condition, hazard description, camp quality...',
-                hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
+                hintText:
+                    'Add details... water source here,\ntrack condition, hazard description, camp quality...',
+                hintStyle:
+                    TextStyle(color: Colors.white.withValues(alpha: 0.3)),
                 filled: true,
                 fillColor: AppColors.panelLight,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               ),
             ),
             const SizedBox(height: 20),
-            
-            const Text('🏷️ Category', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+            const Text('🏷️ Category',
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
             const SizedBox(height: 8),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -174,19 +189,32 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
                     }),
                     child: Container(
                       margin: const EdgeInsets.only(right: 12),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 10),
                       decoration: BoxDecoration(
-                        color: isSelected ? _hexToColor(_categoryColors[cat['id']] ?? '#00E5FF').withValues(alpha: 0.2) : AppColors.panelLight,
+                        color: isSelected
+                            ? _hexToColor(
+                                    _categoryColors[cat['id']] ?? '#00E5FF')
+                                .withValues(alpha: 0.2)
+                            : AppColors.panelLight,
                         borderRadius: BorderRadius.circular(12),
-                        border: isSelected ? Border.all(color: _hexToColor(_categoryColors[cat['id']] ?? '#00E5FF')) : null,
+                        border: isSelected
+                            ? Border.all(
+                                color: _hexToColor(
+                                    _categoryColors[cat['id']] ?? '#00E5FF'))
+                            : null,
                       ),
                       child: Row(
                         children: [
-                          Text(cat['icon']!, style: const TextStyle(fontSize: 16)),
+                          Text(cat['icon']!,
+                              style: const TextStyle(fontSize: 16)),
                           const SizedBox(width: 8),
-                          Text(cat['name']!, style: TextStyle(
-                            color: isSelected ? Colors.white : AppColors.textSecondary,
-                          )),
+                          Text(cat['name']!,
+                              style: TextStyle(
+                                color: isSelected
+                                    ? Colors.white
+                                    : AppColors.textSecondary,
+                              )),
                         ],
                       ),
                     ),
@@ -195,8 +223,8 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
               ),
             ),
             const SizedBox(height: 20),
-            
-            const Text('⭐ Rating', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+            const Text('⭐ Rating',
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
             const SizedBox(height: 8),
             Row(
               children: List.generate(5, (i) {
@@ -216,75 +244,112 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
               }),
             ),
             const SizedBox(height: 20),
-            
-            const Text('🎨 Colour', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+            Row(children: [
+              const Text('🎨 Colour',
+                  style:
+                      TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+              const Spacer(),
+              // Named as well as shown. A colour on its own cannot be read out
+              // over the radio, does not survive a screenshot in bright sun,
+              // and is no help to someone who cannot tell two of them apart.
+              Text(WaypointColors.nameFor(_selectedColour),
+                  style: TextStyle(
+                      color: _hexToColor(_selectedColour),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700)),
+            ]),
             const SizedBox(height: 8),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
-                children: _colours.map((colour) {
-                  final isSelected = _selectedColour == colour;
-                  return GestureDetector(
-                    onTap: () => setState(() => _selectedColour = colour),
-                    child: Container(
-                      margin: const EdgeInsets.only(right: 12),
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: _hexToColor(colour),
-                        shape: BoxShape.circle,
-                        border: isSelected ? Border.all(color: Colors.white, width: 3) : null,
-                        boxShadow: isSelected ? [BoxShadow(color: _hexToColor(colour).withValues(alpha: 0.5), blurRadius: 8)] : null,
+                children: [
+                  ..._colours.map((colour) {
+                    final isSelected = _selectedColour == colour;
+                    return GestureDetector(
+                      onTap: () => setState(() => _selectedColour = colour),
+                      child: Container(
+                        margin: const EdgeInsets.only(right: 12),
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: _hexToColor(colour),
+                          shape: BoxShape.circle,
+                          // Charcoal and white need an outline or they vanish
+                          // into the sheet behind them.
+                          border: isSelected
+                              ? Border.all(color: Colors.white, width: 3)
+                              : Border.all(
+                                  color: Colors.white.withValues(alpha: 0.25)),
+                          boxShadow: isSelected
+                              ? [
+                                  BoxShadow(
+                                      color: _hexToColor(colour)
+                                          .withValues(alpha: 0.5),
+                                      blurRadius: 8)
+                                ]
+                              : null,
+                        ),
+                        child: isSelected
+                            ? Icon(Icons.check,
+                                color: colour == WaypointColors.white
+                                    ? Colors.black
+                                    : Colors.white,
+                                size: 20)
+                            : null,
                       ),
-                      child: isSelected
-                          ? const Icon(Icons.check, color: Colors.white, size: 20)
-                          : null,
-                    ),
-                  );
-                }).toList(),
+                    );
+                  }),
+                  _customSwatch(),
+                ],
               ),
             ),
             const SizedBox(height: 20),
-            
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: AppColors.panelLight,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.primaryOrange.withValues(alpha: 0.3)),
+                border: Border.all(
+                    color: AppColors.primaryOrange.withValues(alpha: 0.3)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.access_time, color: AppColors.textSecondary, size: 14),
+                      const Icon(Icons.access_time,
+                          color: AppColors.textSecondary, size: 14),
                       const SizedBox(width: 8),
                       Text(
                         '📅 Saved: ${_formatDate(now)}',
-                        style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                        style: const TextStyle(
+                            color: AppColors.textSecondary, fontSize: 12),
                       ),
                     ],
                   ),
                   const SizedBox(height: 8),
                   Row(
                     children: [
-                      const Icon(Icons.location_on, color: AppColors.textSecondary, size: 14),
+                      const Icon(Icons.location_on,
+                          color: AppColors.textSecondary, size: 14),
                       const SizedBox(width: 8),
                       Text(
                         'Your coords: ${lat.toStringAsFixed(6)}, ${lon.toStringAsFixed(6)}',
-                        style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                        style: const TextStyle(
+                            color: AppColors.textSecondary, fontSize: 12),
                       ),
                     ],
                   ),
                   const SizedBox(height: 8),
                   Row(
                     children: [
-                      const Icon(Icons.thermostat, color: AppColors.textSecondary, size: 14),
+                      const Icon(Icons.thermostat,
+                          color: AppColors.textSecondary, size: 14),
                       const SizedBox(width: 8),
                       Text(
                         '🌡️ $_currentWeather',
-                        style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                        style: const TextStyle(
+                            color: AppColors.textSecondary, fontSize: 12),
                       ),
                     ],
                   ),
@@ -292,7 +357,6 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
               ),
             ),
             const SizedBox(height: 24),
-            
             Row(
               children: [
                 Expanded(
@@ -305,7 +369,8 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: const Center(
-                        child: Text('Cancel', style: TextStyle(color: Colors.white)),
+                        child: Text('Cancel',
+                            style: TextStyle(color: Colors.white)),
                       ),
                     ),
                   ),
@@ -323,7 +388,8 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
                         borderRadius: BorderRadius.circular(12),
                         boxShadow: [
                           BoxShadow(
-                            color: const Color(0xFFFF5722).withValues(alpha: 0.3),
+                            color:
+                                const Color(0xFFFF5722).withValues(alpha: 0.3),
                             blurRadius: 10,
                             offset: const Offset(0, 4),
                           ),
@@ -336,12 +402,15 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
                                 height: 20,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation(Colors.white),
+                                  valueColor:
+                                      AlwaysStoppedAnimation(Colors.white),
                                 ),
                               )
                             : Text(
                                 isEditing ? 'Update Pin' : 'Save Pin',
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold),
                               ),
                       ),
                     ),
@@ -355,14 +424,14 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
       ),
     );
   }
-  
+
   Widget _buildReadOnlyView(BuildContext context, double lat, double lon) {
     final waypoint = widget.waypoint!;
     final categoryInfo = _categories.firstWhere(
       (c) => c['id'] == waypoint.icon,
       orElse: () => {'id': 'custom', 'icon': '📍', 'name': 'Custom'},
     );
-    
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: const BoxDecoration(
@@ -383,7 +452,8 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
                       width: 50,
                       height: 50,
                       decoration: BoxDecoration(
-                        color: _hexToColor(waypoint.color ?? '#00E5FF').withValues(alpha: 0.2),
+                        color: _hexToColor(waypoint.color ?? '#00E5FF')
+                            .withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Center(
@@ -423,9 +493,10 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
               ],
             ),
             const SizedBox(height: 20),
-            
             if (waypoint.notes != null && waypoint.notes!.isNotEmpty) ...[
-              const Text('📝 Notes', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+              const Text('📝 Notes',
+                  style:
+                      TextStyle(color: AppColors.textSecondary, fontSize: 12)),
               const SizedBox(height: 8),
               Container(
                 width: double.infinity,
@@ -441,9 +512,10 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
               ),
               const SizedBox(height: 16),
             ],
-            
             if (waypoint.order != null && waypoint.order! > 0) ...[
-              const Text('⭐ Rating', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+              const Text('⭐ Rating',
+                  style:
+                      TextStyle(color: AppColors.textSecondary, fontSize: 12)),
               const SizedBox(height: 8),
               Row(
                 children: List.generate(5, (i) {
@@ -451,14 +523,14 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
                     i < waypoint.order! ? '⭐' : '☆',
                     style: TextStyle(
                       fontSize: 24,
-                      color: i < waypoint.order! ? Colors.amber : Colors.white30,
+                      color:
+                          i < waypoint.order! ? Colors.amber : Colors.white30,
                     ),
                   );
                 }),
               ),
               const SizedBox(height: 16),
             ],
-            
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -470,22 +542,26 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.access_time, color: AppColors.textSecondary, size: 14),
+                      const Icon(Icons.access_time,
+                          color: AppColors.textSecondary, size: 14),
                       const SizedBox(width: 8),
                       Text(
                         '📅 Created: ${waypoint.timestamp != null ? _formatDate(waypoint.timestamp!) : 'Unknown'}',
-                        style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                        style: const TextStyle(
+                            color: AppColors.textSecondary, fontSize: 12),
                       ),
                     ],
                   ),
                   const SizedBox(height: 8),
                   Row(
                     children: [
-                      const Icon(Icons.location_on, color: AppColors.textSecondary, size: 14),
+                      const Icon(Icons.location_on,
+                          color: AppColors.textSecondary, size: 14),
                       const SizedBox(width: 8),
                       Text(
                         '📍 ${lat.toStringAsFixed(6)}, ${lon.toStringAsFixed(6)}',
-                        style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                        style: const TextStyle(
+                            color: AppColors.textSecondary, fontSize: 12),
                       ),
                     ],
                   ),
@@ -493,7 +569,6 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
               ),
             ),
             const SizedBox(height: 24),
-            
             Row(
               children: [
                 Expanded(
@@ -513,9 +588,13 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.edit, color: AppColors.primaryOrange, size: 18),
+                            Icon(Icons.edit,
+                                color: AppColors.primaryOrange, size: 18),
                             SizedBox(width: 8),
-                            Text('Edit', style: TextStyle(color: AppColors.primaryOrange, fontWeight: FontWeight.bold)),
+                            Text('Edit',
+                                style: TextStyle(
+                                    color: AppColors.primaryOrange,
+                                    fontWeight: FontWeight.bold)),
                           ],
                         ),
                       ),
@@ -539,7 +618,10 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
                           children: [
                             Icon(Icons.delete, color: Colors.red, size: 18),
                             SizedBox(width: 8),
-                            Text('Delete', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                            Text('Delete',
+                                style: TextStyle(
+                                    color: Colors.red,
+                                    fontWeight: FontWeight.bold)),
                           ],
                         ),
                       ),
@@ -554,7 +636,7 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
       ),
     );
   }
-  
+
   void _confirmDelete(BuildContext context) {
     showDialog(
       context: context,
@@ -568,14 +650,17 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel', style: TextStyle(color: AppColors.textSecondary)),
+            child: const Text('Cancel',
+                style: TextStyle(color: AppColors.textSecondary)),
           ),
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
               Navigator.pop(context);
               if (widget.waypoint?.id != null) {
-                ref.read(locationProvider.notifier).deleteWaypoint(widget.waypoint!.id!);
+                ref
+                    .read(locationProvider.notifier)
+                    .deleteWaypoint(widget.waypoint!.id!);
               }
             },
             child: const Text('Delete', style: TextStyle(color: Colors.red)),
@@ -584,7 +669,7 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
       ),
     );
   }
-  
+
   String _getCategoryIcon(String category) {
     final cat = _categories.firstWhere(
       (c) => c['id'] == category,
@@ -592,15 +677,15 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
     );
     return cat['icon']!;
   }
-  
+
   void _saveWaypoint() async {
     setState(() => _isSaving = true);
-    
+
     final lat = widget.waypoint?.latitude ?? widget.position?.latitude;
     final lon = widget.waypoint?.longitude ?? widget.position?.longitude;
-    
+
     if (lat == null || lon == null) return;
-    
+
     final now = DateTime.now();
     final waypoint = Waypoint(
       id: widget.waypoint?.id ?? DateTime.now().millisecondsSinceEpoch,
@@ -615,27 +700,27 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
       order: _rating,
       isPin: true,
     );
-    
+
     if (widget.waypoint != null) {
       await ref.read(locationProvider.notifier).updateWaypoint(waypoint);
     } else {
       await ref.read(locationProvider.notifier).addManualWaypoint(
-        lat,
-        lon,
-        _nameController.text.isEmpty ? 'Pin' : _nameController.text,
-        notes: _notesController.text,
-        color: _selectedColour,
-        icon: _selectedCategory,
-        order: _rating,
-      );
+            lat,
+            lon,
+            _nameController.text.isEmpty ? 'Pin' : _nameController.text,
+            notes: _notesController.text,
+            color: _selectedColour,
+            icon: _selectedCategory,
+            order: _rating,
+          );
     }
-    
+
     await _saveToLocalStorage(waypoint);
-    
+
     setState(() => _isSaving = false);
     if (mounted) Navigator.pop(context);
   }
-  
+
   Future<void> _saveToLocalStorage(Waypoint waypoint) async {
     try {
       final key = 'bushtrack_waypoints';
@@ -648,26 +733,181 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
         'lat': waypoint.latitude,
         'lon': waypoint.longitude,
         'colour': waypoint.color,
-        'icon': _categories.firstWhere((c) => c['id'] == waypoint.icon, orElse: () => {'icon': '📍'})['icon'],
+        'icon': _categories.firstWhere((c) => c['id'] == waypoint.icon,
+            orElse: () => {'icon': '📍'})['icon'],
         'timestamp': waypoint.timestamp?.toIso8601String(),
         'weather': _currentWeather,
         'savedAt': '${waypoint.latitude}, ${waypoint.longitude}',
       };
-      debugPrint('Saving waypoint to localStorage: ${jsonEncode(waypointData)}');
+      debugPrint(
+          'Saving waypoint to localStorage: ${jsonEncode(waypointData)}');
     } catch (e) {
       debugPrint('Error saving waypoint: $e');
     }
   }
-  
+
+  /// The last swatch: anything not in the palette.
+  ///
+  /// Shows the chosen colour when one has been picked by hand, so it is clear
+  /// that the selection is still there and which it is.
+  Widget _customSwatch() {
+    final isCustom = WaypointColors.isCustom(_selectedColour);
+    return GestureDetector(
+      onTap: _pickCustomColour,
+      child: Container(
+        margin: const EdgeInsets.only(right: 12),
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: isCustom ? _hexToColor(_selectedColour) : AppColors.panelLight,
+          shape: BoxShape.circle,
+          border: isCustom
+              ? Border.all(color: Colors.white, width: 3)
+              : Border.all(color: Colors.white.withValues(alpha: 0.35)),
+          gradient: isCustom
+              ? null
+              : const SweepGradient(colors: [
+                  Color(0xFFFF2D55),
+                  Color(0xFFFFD60A),
+                  Color(0xFF00FF88),
+                  Color(0xFF00E5FF),
+                  Color(0xFF7B2FFF),
+                  Color(0xFFFF2D55),
+                ]),
+        ),
+        child: isCustom
+            ? const Icon(Icons.check, color: Colors.white, size: 20)
+            : const Icon(Icons.colorize, color: Colors.white, size: 17),
+      ),
+    );
+  }
+
+  /// Pick any hue by hand.
+  ///
+  /// A hue slider rather than a full colour wheel: it needs no extra package,
+  /// and saturation and lightness are the two axes that make a pin hard to see
+  /// against the ground, which is the one thing a pin colour has to do.
+  Future<void> _pickCustomColour() async {
+    var hue = HSVColor.fromColor(_hexToColor(_selectedColour)).hue;
+
+    final chosen = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppColors.panelMatte,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheet) => StatefulBuilder(
+        builder: (sheet, setSheetState) {
+          final colour = HSVColor.fromAHSV(1, hue, 0.95, 1).toColor();
+          return Padding(
+            padding: EdgeInsets.fromLTRB(
+                20, 18, 20, 18 + MediaQuery.of(sheet).viewPadding.bottom),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('CUSTOM COLOUR',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 13,
+                        letterSpacing: 0.8)),
+                const SizedBox(height: 14),
+                Row(children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: colour,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.4)),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Text(WaypointColors.toHex(colour),
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 14)),
+                ]),
+                const SizedBox(height: 10),
+                SliderTheme(
+                  data: SliderTheme.of(sheet).copyWith(
+                    activeTrackColor: colour,
+                    thumbColor: colour,
+                    inactiveTrackColor: Colors.white24,
+                  ),
+                  child: Slider(
+                    value: hue,
+                    max: 359.9,
+                    onChanged: (v) => setSheetState(() => hue = v),
+                  ),
+                ),
+                const Text(
+                  'Strong colours show up best. Mid-greens and browns '
+                  'disappear into scrub.',
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 11),
+                ),
+                const SizedBox(height: 16),
+                Row(children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(sheet),
+                      child: const Text('CANCEL',
+                          style: TextStyle(color: AppColors.textSecondary)),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: colour,
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
+                      onPressed: () =>
+                          Navigator.pop(sheet, WaypointColors.toHex(colour)),
+                      child: const Text('USE THIS',
+                          style: TextStyle(fontWeight: FontWeight.w900)),
+                    ),
+                  ),
+                ]),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+
+    if (chosen != null && mounted) {
+      setState(() => _selectedColour = chosen);
+    }
+  }
+
   Color _hexToColor(String hex) {
     final buffer = StringBuffer();
     if (hex.length == 6 || hex.length == 7) buffer.write('ff');
     buffer.write(hex.replaceFirst('#', ''));
     return Color(int.parse(buffer.toString(), radix: 16));
   }
-  
+
   String _formatDate(DateTime dt) {
-    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
     final hour = dt.hour > 12 ? dt.hour - 12 : dt.hour;
     final ampm = dt.hour >= 12 ? 'PM' : 'AM';
     return '${months[dt.month - 1]} ${dt.day}, ${dt.year}, ${hour == 0 ? 12 : hour}:${dt.minute.toString().padLeft(2, '0')} $ampm';
@@ -676,7 +916,8 @@ class _WaypointEditorSheetState extends ConsumerState<WaypointEditorSheet> {
 
 // Helper function to show the waypoint editor.
 // Returns when the sheet closes, so callers can react once the pin is saved.
-Future<void> showWaypointEditor(BuildContext context, {Waypoint? waypoint, LatLng? position}) {
+Future<void> showWaypointEditor(BuildContext context,
+    {Waypoint? waypoint, LatLng? position}) {
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,

@@ -29,6 +29,22 @@ class GPXService {
           buffer.writeln(
               '    <time>${waypoint.timestamp!.toIso8601String()}</time>');
         }
+        // GPX has no colour of its own, so it goes in an extensions block.
+        // Readers that do not know the tag skip it, which is the point of
+        // extensions, and our own import below reads it back — so a pin
+        // exported and re-imported keeps the colour it was given rather than
+        // coming back as the default.
+        //
+        // <sym> as well, because that is the field other GPS software
+        // actually reads, and a named colour is more use to them than a hex.
+        if (waypoint.color != null && waypoint.color!.isNotEmpty) {
+          buffer.writeln(
+              '    <sym>${_escapeXml(WaypointColors.nameFor(waypoint.color))}</sym>');
+          buffer.writeln('    <extensions>');
+          buffer.writeln(
+              '      <bushtrack:color>${_escapeXml(waypoint.color!)}</bushtrack:color>');
+          buffer.writeln('    </extensions>');
+        }
         buffer.writeln('  </wpt>');
       }
     }
@@ -81,6 +97,7 @@ class GPXService {
           String? description;
           double? elevation;
           DateTime? time;
+          String? colour;
 
           final nameMatch = RegExp(r'<name>(.*?)</name>').firstMatch(content);
           if (nameMatch != null) name = _unescapeXml(nameMatch.group(1) ?? '');
@@ -97,6 +114,16 @@ class GPXService {
           if (timeMatch != null)
             time = DateTime.tryParse(timeMatch.group(1) ?? '');
 
+          // Our own extension, so a pin exported from this app and brought
+          // back in keeps its colour. Anything else's file simply has no such
+          // tag and gets the default.
+          final colourMatch =
+              RegExp(r'<bushtrack:color>(.*?)</bushtrack:color>')
+                  .firstMatch(content);
+          if (colourMatch != null) {
+            colour = _unescapeXml(colourMatch.group(1) ?? '');
+          }
+
           waypoints.add(Waypoint(
             latitude: lat,
             longitude: lon,
@@ -105,6 +132,7 @@ class GPXService {
             altitude: elevation,
             timestamp: time ?? DateTime.now(),
             type: WaypointType.manual,
+            color: colour,
             isPin: true,
           ));
         }
@@ -208,10 +236,11 @@ class GPXService {
       for (final pm in placemarkRx.allMatches(kmlContent)) {
         final body = pm.group(1) ?? '';
         final nameM = RegExp(r'<name>(.*?)</name>').firstMatch(body);
-        final descM = RegExp(r'<description>(.*?)</description>').firstMatch(body);
-        final coordM = RegExp(r'<coordinates>\s*(.*?)\s*</coordinates>',
-                dotAll: true)
-            .firstMatch(body);
+        final descM =
+            RegExp(r'<description>(.*?)</description>').firstMatch(body);
+        final coordM =
+            RegExp(r'<coordinates>\s*(.*?)\s*</coordinates>', dotAll: true)
+                .firstMatch(body);
         if (coordM == null) continue;
 
         final coordStr = coordM.group(1)!.trim().split(RegExp(r'\s+')).first;

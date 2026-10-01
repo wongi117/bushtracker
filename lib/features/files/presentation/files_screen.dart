@@ -102,8 +102,8 @@ class FilesScreen extends ConsumerWidget {
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (sheetContext) => Padding(
-        padding:
-            EdgeInsets.only(bottom: MediaQuery.of(sheetContext).viewInsets.bottom),
+        padding: EdgeInsets.only(
+            bottom: MediaQuery.of(sheetContext).viewInsets.bottom),
         child: Container(
           decoration: const BoxDecoration(
             color: AppColors.panelMatte,
@@ -124,7 +124,8 @@ class FilesScreen extends ConsumerWidget {
                 const SizedBox(height: 4),
                 const Text(
                   'Everything you make while it is open gets filed here.',
-                  style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                  style:
+                      TextStyle(color: AppColors.textSecondary, fontSize: 12),
                 ),
                 const SizedBox(height: 16),
                 TextField(
@@ -141,8 +142,8 @@ class FilesScreen extends ConsumerWidget {
                   maxLines: 3,
                   textCapitalization: TextCapitalization.sentences,
                   style: const TextStyle(color: Colors.white),
-                  decoration: fieldDecoration(
-                      'What is it for (optional)', 'Who it is for, what you are looking at'),
+                  decoration: fieldDecoration('What is it for (optional)',
+                      'Who it is for, what you are looking at'),
                 ),
                 const SizedBox(height: 18),
                 Row(
@@ -295,15 +296,13 @@ class _FileTile extends ConsumerWidget {
           children: [
             // Straight to the map, showing this project and nothing else.
             IconButton(
-              tooltip: isOpen ? 'Showing this project' : 'Show only this on the map',
-              icon: Icon(
-                  isOpen ? Icons.visibility : Icons.visibility_outlined,
+              tooltip:
+                  isOpen ? 'Showing this project' : 'Show only this on the map',
+              icon: Icon(isOpen ? Icons.visibility : Icons.visibility_outlined,
                   color: isOpen ? AppColors.accent : AppColors.textMuted,
                   size: 20),
               onPressed: () async {
-                await ref
-                    .read(filesProvider.notifier)
-                    .setActiveFile(file.id);
+                await ref.read(filesProvider.notifier).setActiveFile(file.id);
                 await ref
                     .read(markerVisibilityProvider.notifier)
                     .openProject(file.id!);
@@ -356,7 +355,8 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
     }
     final file = matches.first;
     final isOpen = state.activeFileId == file.id;
-    final notes = state.viewingFileId == file.id ? state.notes : const <FileNote>[];
+    final notes =
+        state.viewingFileId == file.id ? state.notes : const <FileNote>[];
 
     final pins = ref
         .watch(locationProvider)
@@ -387,8 +387,8 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.playlist_add_rounded,
-                color: AppColors.accent),
+            icon:
+                const Icon(Icons.playlist_add_rounded, color: AppColors.accent),
             tooltip: 'Add existing pins and zones',
             onPressed: () => _collectInto(file),
           ),
@@ -450,7 +450,8 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
             const SizedBox(height: 18),
             _sectionLabel('PINS'),
             ...pins.map((p) => _itemTile(
-                  icon: Icons.location_on,
+                  icon: WaypointIcon.getIconData(p.icon),
+                  colour: WaypointColors.fromHex(p.color),
                   title: p.label ?? 'Pin',
                   detail: p.latitude == null
                       ? 'No position'
@@ -576,8 +577,7 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
                       'are showing this project only'
                   : 'New pins and zones are filed here. The map is showing all '
                       'work — narrow it again from Show & Follow.',
-          style: const TextStyle(
-              color: AppColors.textSecondary, fontSize: 11),
+          style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
         ),
         onChanged: (on) => _setOpen(file, on),
       ),
@@ -594,8 +594,8 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
     }
   }
 
-  Widget _counts(List<Waypoint> pins, List<Geofence> zones,
-          List<Trail> trails, int noteCount) =>
+  Widget _counts(List<Waypoint> pins, List<Geofence> zones, List<Trail> trails,
+          int noteCount) =>
       Row(
         children: [
           _countCard(Icons.description_outlined, '$noteCount',
@@ -715,8 +715,8 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
                   maxLines: 6,
                   textCapitalization: TextCapitalization.sentences,
                   style: const TextStyle(color: Colors.white),
-                  decoration: fieldDecoration('Note',
-                      'What you found, what needs doing, who to tell'),
+                  decoration: fieldDecoration(
+                      'Note', 'What you found, what needs doing, who to tell'),
                 ),
                 const SizedBox(height: 18),
                 Row(
@@ -767,8 +767,8 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
         );
   }
 
-  Future<void> _share(FieldFile file, List<FileNote> notes,
-      List<Waypoint> pins, List<Geofence> zones) async {
+  Future<void> _share(FieldFile file, List<FileNote> notes, List<Waypoint> pins,
+      List<Geofence> zones) async {
     final buffer = StringBuffer()
       ..writeln(file.name)
       ..writeln('Started ${_formatDateTime(file.createdAt)}');
@@ -910,8 +910,7 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
                             : pickedPins.remove(p.id)),
                         title: Row(children: [
                           Icon(Icons.location_on,
-                              size: 15,
-                              color: WaypointColors.fromHex(p.color)),
+                              size: 15, color: WaypointColors.fromHex(p.color)),
                           const SizedBox(width: 7),
                           Expanded(
                             child: Text(p.label ?? 'Pin',
@@ -979,10 +978,8 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
                     onPressed: (pickedPins.isEmpty && pickedZones.isEmpty)
                         ? null
                         : () => Navigator.pop(sheetContext, true),
-                    child: Text(
-                        'ADD ${pickedPins.length + pickedZones.length}',
-                        style:
-                            const TextStyle(fontWeight: FontWeight.w900)),
+                    child: Text('ADD ${pickedPins.length + pickedZones.length}',
+                        style: const TextStyle(fontWeight: FontWeight.w900)),
                   ),
                 ),
               ]),
@@ -1016,8 +1013,7 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.panelMatte,
-        title:
-            const Text('Delete file', style: TextStyle(color: Colors.white)),
+        title: const Text('Delete file', style: TextStyle(color: Colors.white)),
         content: Text(
           'Delete "${file.name}" and its notes?\n\n'
           'Pins and zones you collected stay on the map — they just stop '

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'photo_paths_codec.dart';
@@ -18,11 +20,11 @@ class Waypoint {
   String? notes;
   DateTime? timestamp;
   String? type;
-  
+
   // Photo geotagging support
   List<String>? photoPaths; // List of photo file paths
   String? thumbnailPath; // Thumbnail for quick display
-  
+
   // Pin customization
   String? color; // Hex color string (e.g., "#FF5722")
   String? icon; // Icon type: camp, water, hazard, fuel, road, custom
@@ -124,11 +126,11 @@ class Waypoint {
       speed: map['speed']?.toDouble(),
       label: map['label'],
       notes: map['notes'],
-      timestamp: map['timestamp'] != null 
-          ? DateTime.fromMillisecondsSinceEpoch(map['timestamp']) 
+      timestamp: map['timestamp'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(map['timestamp'])
           : null,
       type: map['type'],
-      photoPaths: map['photo_paths'] != null 
+      photoPaths: map['photo_paths'] != null
           // Was split(','), which cut every base64 data URI in half —
           // see PhotoPathsCodec. It still reads what that version wrote.
           ? PhotoPathsCodec.decode(map['photo_paths'])
@@ -233,7 +235,13 @@ class WaypointColors {
   static const String dangerRed = '#FF2D55';
   // White
   static const String white = '#FFFFFF';
-  
+  // Added for the pin palette: strong hues that hold up against satellite
+  // imagery, which is mostly mid-green, brown and grey.
+  static const String sunYellow = '#FFD60A';
+  static const String skyBlue = '#2E7BFF';
+  static const String magenta = '#FF2BD6';
+  static const String charcoal = '#1A1A1A';
+
   static Color fromHex(String? hex) {
     if (hex == null || hex.isEmpty) return const Color(0xFFFF5722);
     try {
@@ -245,13 +253,84 @@ class WaypointColors {
       return const Color(0xFFFF5722);
     }
   }
-  
+
+  /// The pin palette, in the order it is offered.
+  ///
+  /// Ten, and chosen for one job: being seen against satellite imagery, which
+  /// is mostly mid-green, brown and grey. That rules out anything muted or
+  /// earthy however nice it looks on a dark map — a khaki pin over scrub is
+  /// invisible exactly where someone needs to find it. These are high-chroma
+  /// and spread around the wheel, plus white for dark ground and charcoal for
+  /// pale sand and salt lakes, where every bright colour struggles.
   static const List<String> allColors = [
-    electricPurple,
-    neonCyan,
-    emberOrange,
-    neonGreen,
     dangerRed,
+    emberOrange,
+    sunYellow,
+    neonGreen,
+    neonCyan,
+    skyBlue,
+    electricPurple,
+    magenta,
     white,
+    charcoal,
   ];
+
+  /// What to call each one. Colour alone is a poor label: it cannot be read
+  /// out over the radio, it does not survive a screenshot in bright sun, and
+  /// it is no use at all to someone who cannot tell two of these apart.
+  static const Map<String, String> names = {
+    dangerRed: 'Red',
+    emberOrange: 'Orange',
+    sunYellow: 'Yellow',
+    neonGreen: 'Green',
+    neonCyan: 'Cyan',
+    skyBlue: 'Blue',
+    electricPurple: 'Purple',
+    magenta: 'Magenta',
+    white: 'White',
+    charcoal: 'Charcoal',
+  };
+
+  /// A name for any colour, including one picked by hand.
+  ///
+  /// Falls back to the nearest preset rather than printing a hex code at
+  /// someone, so a custom pin can still be described in words.
+  static String nameFor(String? hex) {
+    if (hex == null || hex.isEmpty) return 'Default';
+    final tidy = _normalise(hex);
+    final exact = names[tidy];
+    if (exact != null) return exact;
+
+    final target = fromHex(tidy);
+    String best = allColors.first;
+    var bestGap = double.infinity;
+    for (final candidate in allColors) {
+      final c = fromHex(candidate);
+      // Plain squared distance in RGB. Not perceptually uniform, but this only
+      // has to pick the closest of ten well-separated colours.
+      final gap = math.pow(c.r - target.r, 2) +
+          math.pow(c.g - target.g, 2) +
+          math.pow(c.b - target.b, 2);
+      if (gap < bestGap) {
+        bestGap = gap.toDouble();
+        best = candidate;
+      }
+    }
+    return '${names[best] ?? 'Custom'}-ish';
+  }
+
+  /// True when this is not one of the presets.
+  static bool isCustom(String? hex) =>
+      hex != null && hex.isNotEmpty && !names.containsKey(_normalise(hex));
+
+  /// Upper case, with the leading hash, so map lookups and equality work
+  /// whatever case a colour was stored in.
+  static String _normalise(String hex) {
+    final body = hex.replaceFirst('#', '').toUpperCase();
+    return '#$body';
+  }
+
+  /// A hex string for a colour chosen by hand.
+  static String toHex(Color c) =>
+      '#${((c.r * 255).round() << 16 | (c.g * 255).round() << 8 | (c.b * 255).round()).toRadixString(16).padLeft(6, '0').toUpperCase()}';
 }
