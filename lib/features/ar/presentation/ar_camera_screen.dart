@@ -17,7 +17,9 @@ import 'package:bush_track/features/ai/services/vision_service.dart';
 import 'package:bush_track/features/ar/presentation/distant_pin_sheet.dart';
 import 'package:bush_track/features/ar/presentation/photo_pin_sheet.dart';
 import 'package:bush_track/features/ar/services/ar_compass_service.dart';
+import 'package:bush_track/features/ar/presentation/ar_pin_sheet.dart';
 import 'package:bush_track/features/ar/services/ar_projection.dart';
+import 'package:bush_track/features/ar/services/ar_targets.dart';
 import 'package:bush_track/features/map/providers/marker_visibility_provider.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
 import 'package:bush_track/features/tracking/providers/track_target_provider.dart';
@@ -140,7 +142,14 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
   double _holdPitch = 0;
   double _holdRoll = 0;
 
-  /// The last reading that actually carried a lens bearing.
+  /// Where each pin landed on the last frame.
+  ///
+  /// Worked out once per build and handed to both the painter and the tap
+  /// handler. Working it out twice is how they come to disagree, and a label
+  /// drawn in one place but tappable in another reads as a tap being ignored.
+  List<ArTarget> _targets = const [];
+
+  /// Last lens bearing worth having. Null until one is measured.
   ///
   /// The stream sends `waiting` before the first fix and can drop back to
   /// `unavailable`, and taking zero degrees in those moments drew the entire
@@ -152,6 +161,51 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
 
   void _retake() {
     setState(() => _capturedBytes = null);
+  }
+
+  /// Work out where every pin lands this frame.
+  ///
+  /// Called from build. Stores the result for [_onArTap] as well as handing it
+  /// to the painter, so what is drawn and what is tappable cannot drift apart.
+  List<ArTarget> _buildTargets({
+    required List<Waypoint> waypoints,
+    required LatLng here,
+    required Size size,
+    required double headingDeg,
+    required double pitchRad,
+    required double rollRad,
+  }) {
+    final targets = buildArTargets(
+      waypoints: waypoints,
+      currentLocation: here,
+      projection: ArProjection(
+        size: size,
+        headingDeg: headingDeg,
+        pitchRad: pitchRad,
+        rollRad: rollRad,
+      ),
+      size: size,
+      beamHeightM: _ARCameraPainter.beamHeightM,
+      minBeamPixels: _ARCameraPainter.minBeamPixels,
+    );
+    _targets = targets;
+    return targets;
+  }
+
+  /// A tap through the camera: which pin did that mean?
+  Future<void> _onArTap(Offset at) async {
+    if (_capturedBytes != null) return; // reviewing a photo, not looking live
+    final hit = hitTest(_targets, at);
+    if (hit == null) return;
+
+    HapticFeedback.selectionClick();
+    await showArPinSheet(
+      context,
+      target: hit,
+      onShowOnMap: () => Navigator.of(context)
+        ..pop() // the sheet
+        ..pop(), // the AR screen, back to the map
+    );
   }
 
   /// Start the three-second hold that drops a pin out where you are looking.
@@ -473,6 +527,21 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
     final pitchRad = held?.pitchRad ?? 0.0;
     final rollRad = held?.rollRad ?? 0.0;
 
+    // Where every pin lands this frame, for the painter and for taps alike.
+    final screen = MediaQuery.of(context).size;
+    if (hasHeading && currentLat != null && currentLon != null) {
+      _buildTargets(
+        waypoints: visibleWaypoints,
+        here: LatLng(currentLat, currentLon),
+        size: screen,
+        headingDeg: compassHeading,
+        pitchRad: pitchRad,
+        rollRad: rollRad,
+      );
+    } else {
+      _targets = const [];
+    }
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
@@ -491,6 +560,7 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
             Positioned.fill(
               child: GestureDetector(
                 behavior: HitTestBehavior.translucent,
+                onTapUp: (d) => _onArTap(d.localPosition),
                 onLongPressDown: (d) => _beginHold(
                     d.localPosition, compassHeading, pitchRad, rollRad),
                 onLongPressCancel: _cancelHold,
@@ -538,6 +608,10 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
             ),
 
           // ── AR pin overlays (live mode only)
+          //
+          // The projection and the targets are built here, not in the painter,
+          // so the tap handler above is matching against the same geometry
+          // that gets drawn.
           // Nothing is drawn until there is a real bearing: without one the
           // only choice is to guess north, which puts every marker somewhere
           // it is not and then jumps them all when the compass wakes up.
@@ -553,7 +627,7 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
                   MediaQuery.of(context).size.height,
                 ),
                 painter: _ARCameraPainter(
-                  waypoints: visibleWaypoints,
+                  targets: _targets,
                   currentLocation: LatLng(currentLat, currentLon),
                   compassHeading: compassHeading,
                   arService: _arService,
@@ -915,7 +989,9 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
 // ── AR Painter ──────────────────────────────────────────────────────────────
 
 class _ARCameraPainter extends CustomPainter {
-  final List<Waypoint> waypoints;
+  /// Where each pin landed, worked out by the screen so that what is drawn and
+  /// what can be tapped are the same thing.
+  final List<ArTarget> targets;
   final LatLng currentLocation;
   final double compassHeading;
   final ARCompassService arService;
@@ -936,7 +1012,7 @@ class _ARCameraPainter extends CustomPainter {
   final bool debugGeometry;
 
   _ARCameraPainter({
-    required this.waypoints,
+    required this.targets,
     required this.currentLocation,
     required this.compassHeading,
     required this.arService,
@@ -953,12 +1029,12 @@ class _ARCameraPainter extends CustomPainter {
   /// Real height rather than a screen size, so a beam behaves like an object
   /// in the scene: towering when you are next to it, a sliver on the horizon
   /// from kilometres away.
-  static const double _beamHeightM = 60;
+  static const double beamHeightM = 60;
 
   /// Floors so a distant marker stays findable instead of shrinking to
   /// nothing. Honest geometry, with a minimum you can actually see.
   static const double _minBeamHalfWidth = 5;
-  static const double _minBeamPixels = 80;
+  static const double minBeamPixels = 80;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -978,35 +1054,13 @@ class _ARCameraPainter extends CustomPainter {
     // with its base glued to its own patch of ground.
     _drawGroundTrack(canvas, size, projection);
 
-    // Farthest first so nearer pins render on top.
-    final sorted = List<Waypoint>.from(waypoints)
-      ..sort((a, b) {
-        final dA = arService.calculateDistance(
-            currentLocation, LatLng(a.latitude!, a.longitude!));
-        final dB = arService.calculateDistance(
-            currentLocation, LatLng(b.latitude!, b.longitude!));
-        return dB.compareTo(dA);
-      });
-
-    for (final wp in sorted) {
-      if (wp.latitude == null || wp.longitude == null) continue;
-      final targetPos = LatLng(wp.latitude!, wp.longitude!);
-      final bearing = arService.calculateBearing(currentLocation, targetPos);
-      final distance = arService.calculateDistance(currentLocation, targetPos);
-
-      if (!projection.isInView(bearing)) continue;
-
-      // Where the pin's own square metre of ground lands on the picture the
-      // camera is actually producing, roll included.
-      final base = projection.project(bearing, distance);
-
-      // A rotation does not change lengths, so the beam is as tall after the
-      // roll as before it, and can be drawn straight up from that base.
-      final beamPixels = math.max(
-        projection.screenY(distance) -
-            projection.screenY(distance, metresAboveGround: _beamHeightM),
-        _minBeamPixels,
-      );
+    // Already farthest first, so nearer pins render on top.
+    for (final target in targets) {
+      final wp = target.waypoint;
+      final bearing = target.bearingDeg;
+      final distance = target.distanceM;
+      final base = target.base;
+      final beamPixels = target.beamPixels;
       final colour = WaypointColors.fromHex(wp.color);
 
       if (debugGeometry) {
@@ -1338,6 +1392,7 @@ class _ARCameraPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ARCameraPainter old) =>
+      old.targets.length != targets.length ||
       old.compassHeading != compassHeading ||
       old.pitchRad != pitchRad ||
       old.rollRad != rollRad ||
