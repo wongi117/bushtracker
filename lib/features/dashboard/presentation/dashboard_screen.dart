@@ -49,6 +49,7 @@ import 'package:bush_track/features/map/presentation/marker_picker_screen.dart';
 import 'package:bush_track/features/map/providers/map_action_provider.dart';
 import 'package:bush_track/features/map/providers/marker_visibility_provider.dart';
 import 'package:bush_track/features/map/providers/satellite_source_provider.dart';
+import 'package:bush_track/features/map/widgets/connectivity_pill.dart';
 import 'package:bush_track/features/streetview/presentation/street_photo_viewer.dart';
 import 'package:bush_track/features/streetview/providers/mapillary_provider.dart';
 import 'package:bush_track/features/map/services/locate_mode.dart';
@@ -1226,6 +1227,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               right: 16,
               child: _buildTrailDistanceHUD(trailState),
             ),
+
+          // Always-visible connection status. Top-left, clear of SOS on the
+          // right. In this app "it didn't work" and "it hasn't sent yet" look
+          // the same from outside, and after pressing SOS that is the
+          // difference that matters.
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 12,
+            left: 16,
+            child: const ConnectivityPill(),
+          ),
 
           // Imagery credit. Required by Esri's and Mapbox's terms alike, and
           // absent from this app until now — so this fixes a licence gap for
