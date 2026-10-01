@@ -1,12 +1,10 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:bush_track/core/models/photo_paths_codec.dart';
 import 'package:bush_track/core/models/waypoint.dart';
 import 'package:bush_track/features/map/services/pin_photo_editing.dart';
+import 'package:bush_track/features/map/widgets/pin_photo_image.dart';
 import 'package:bush_track/features/map/widgets/pin_photo_viewer.dart';
 import 'package:bush_track/core/services/waypoint_share_service.dart';
-import 'package:bush_track/features/tracking/providers/location_provider.dart';
 
 /// Opens the Pinage viewer as a bottom sheet.
 void showPinageViewer(
@@ -479,20 +477,10 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
     });
   }
 
-  Widget _imageWidget(String src) {
-    if (!PhotoPathsCodec.looksLikeImage(src)) return const _BrokenImage();
-    try {
-      return Image.memory(
-        base64Decode(src.substring(src.indexOf(',') + 1)),
-        fit: BoxFit.cover,
-        width: double.infinity,
-        errorBuilder: (_, __, ___) => const _BrokenImage(),
-      );
-    } catch (_) {
-      // Malformed base64 throws here rather than reaching errorBuilder.
-      return const _BrokenImage();
-    }
-  }
+  /// Handles a photo stored either way — base64 in the database, or a file on
+  /// disk after the migration. See PinPhotoImage.
+  Widget _imageWidget(String src) =>
+      PinPhotoImage(reference: src, width: double.infinity);
 
   /// The viewer when the pin has no photos at all.
   Widget _emptyViewer() => GestureDetector(
@@ -743,48 +731,3 @@ class _ActionSpec {
   final VoidCallback onTap;
 }
 
-/// A photo that is on the pin but cannot be drawn.
-///
-/// Says so in words. It used to be a mute icon, indistinguishable at a glance
-/// from a pin with no photos on it — so a real bug in how photos were stored
-/// looked like nothing being there, and went unnoticed far longer than it
-/// should have.
-class _BrokenImage extends StatelessWidget {
-  const _BrokenImage();
-
-  @override
-  Widget build(BuildContext context) => Container(
-        color: Colors.white.withValues(alpha: 0.05),
-        alignment: Alignment.center,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            // The same widget fills a 220 px viewer and a 56 px thumbnail. The
-            // words only go in where they fit; in a thumbnail they would
-            // overflow the tile, and the icon alone carries the meaning next to
-            // the viewer that spells it out.
-            final roomForWords =
-                constraints.maxHeight >= 90 && constraints.maxWidth >= 90;
-            if (!roomForWords) {
-              return const Icon(Icons.broken_image_outlined,
-                  color: Colors.white24, size: 22);
-            }
-            return Padding(
-              padding: const EdgeInsets.all(8),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.broken_image_outlined,
-                      color: Colors.white24, size: 28),
-                  const SizedBox(height: 6),
-                  Text('Photo unavailable',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.45),
-                          fontSize: 10)),
-                ],
-              ),
-            );
-          },
-        ),
-      );
-}

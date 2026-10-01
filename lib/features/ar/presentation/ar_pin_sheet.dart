@@ -1,15 +1,12 @@
-import 'dart:convert';
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
-import 'package:bush_track/core/models/photo_paths_codec.dart';
 import 'package:bush_track/core/models/waypoint.dart';
 import 'package:bush_track/core/services/heading/heading_reading.dart';
 import 'package:bush_track/features/ar/services/ar_targets.dart';
 import 'package:bush_track/features/map/services/pin_photo_editing.dart';
+import 'package:bush_track/features/map/widgets/pin_photo_image.dart';
 import 'package:bush_track/features/map/widgets/pin_photo_viewer.dart';
 import 'package:bush_track/features/map/widgets/waypoint_editor.dart';
 import 'package:bush_track/features/tracking/providers/track_target_provider.dart';
@@ -93,7 +90,7 @@ class _ArPinSheetState extends ConsumerState<_ArPinSheet> {
       source: HeadingSourceKind.sensors,
     ).cardinal;
 
-    final photo = _firstPhotoOf(_photos);
+    final firstPhoto = _photos.isEmpty ? null : _photos.first;
 
     return Container(
       decoration: const BoxDecoration(
@@ -119,7 +116,7 @@ class _ArPinSheetState extends ConsumerState<_ArPinSheet> {
           const SizedBox(height: 16),
 
           Row(children: [
-            _thumbnail(photo, colour),
+            _thumbnail(firstPhoto, colour),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -278,7 +275,7 @@ class _ArPinSheetState extends ConsumerState<_ArPinSheet> {
   }
 
   /// The pin's first photo, tappable, with how many there are.
-  Widget _thumbnail(Uint8List? photo, Color colour) {
+  Widget _thumbnail(String? photo, Color colour) {
     final count = _photos.length;
 
     return GestureDetector(
@@ -289,12 +286,10 @@ class _ArPinSheetState extends ConsumerState<_ArPinSheet> {
           if (photo != null)
             ClipRRect(
               borderRadius: BorderRadius.circular(10),
-              child: Image.memory(
-                photo,
+              child: SizedBox(
                 width: 56,
                 height: 56,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => _noPhoto(colour),
+                child: PinPhotoImage(reference: photo, showLabel: false),
               ),
             )
           else
@@ -355,28 +350,7 @@ class _ArPinSheetState extends ConsumerState<_ArPinSheet> {
         ),
       );
 
-  Widget _small(String src) {
-    if (!PhotoPathsCodec.looksLikeImage(src)) {
-      return Container(
-        color: Colors.white.withValues(alpha: 0.05),
-        child: const Icon(Icons.broken_image_outlined,
-            color: Colors.white24, size: 18),
-      );
-    }
-    try {
-      return Image.memory(
-        base64Decode(src.substring(src.indexOf(',') + 1)),
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => Container(
-          color: Colors.white.withValues(alpha: 0.05),
-          child: const Icon(Icons.broken_image_outlined,
-              color: Colors.white24, size: 18),
-        ),
-      );
-    } catch (_) {
-      return Container(color: Colors.white.withValues(alpha: 0.05));
-    }
-  }
+  Widget _small(String src) => PinPhotoImage(reference: src, showLabel: false);
 
   /// The same viewer the pin detail sheet uses, with the same add and remove.
   ///
@@ -450,16 +424,4 @@ class _ArPinSheetState extends ConsumerState<_ArPinSheet> {
           ]),
         ),
       );
-}
-
-/// The first photo, decoded, or null if there is none that can be read.
-Uint8List? _firstPhotoOf(List<String> photos) {
-  if (photos.isEmpty) return null;
-  final first = photos.first;
-  if (!PhotoPathsCodec.looksLikeImage(first)) return null;
-  try {
-    return base64Decode(first.substring(first.indexOf(',') + 1));
-  } catch (_) {
-    return null;
-  }
 }

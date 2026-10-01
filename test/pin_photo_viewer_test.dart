@@ -227,10 +227,16 @@ void main() {
   });
 
   group('bad photos', () {
-    testWidgets('an unreadable photo says so instead of showing nothing',
+    testWidgets('a file reference does not throw while it resolves',
         (tester) async {
-      await pump(tester, images: ['not a data uri at all']);
-      expect(find.text('Photo unavailable'), findsOneWidget);
+      // Not a data URI, so it is treated as a file on disk. A widget test has
+      // no photo directory, exactly as web has none, and the viewer has to
+      // cope rather than take the screen down. The "Photo unavailable" wording
+      // for a missing file is covered in pin_photo_image_test, which injects a
+      // store instead of relying on a platform channel.
+      await pump(tester, images: ['not-a-real-file.jpg']);
+      expect(tester.takeException(), isNull);
+      expect(find.text('1 / 1'), findsOneWidget);
     });
 
     testWidgets('a shredded data URI is caught too', (tester) async {

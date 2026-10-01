@@ -1,8 +1,6 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 
-import 'package:bush_track/core/models/photo_paths_codec.dart';
+import 'package:bush_track/features/map/widgets/pin_photo_image.dart';
 
 /// A pin's photos, full screen.
 ///
@@ -59,7 +57,8 @@ class _PinPhotoViewerState extends State<PinPhotoViewer> {
   void initState() {
     super.initState();
     _photos = [...widget.photos];
-    _index = widget.initialIndex.clamp(0, _photos.isEmpty ? 0 : _photos.length - 1);
+    _index =
+        widget.initialIndex.clamp(0, _photos.isEmpty ? 0 : _photos.length - 1);
     // Held in state, not built in build. The old viewer made a new
     // PageController on every rebuild, which leaks them and snaps the page back
     // to wherever the index happened to be.
@@ -274,46 +273,31 @@ class _PinPhotoViewerState extends State<PinPhotoViewer> {
         ),
       );
 
-  Widget _image(String src) {
-    if (!PhotoPathsCodec.looksLikeImage(src)) return const _Unavailable();
-    try {
-      return Image.memory(
-        base64Decode(src.substring(src.indexOf(',') + 1)),
-        fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => const _Unavailable(),
-      );
-    } catch (_) {
-      return const _Unavailable();
-    }
-  }
+  /// Handles a photo stored either way — base64 in the database, or a file on
+  /// disk after the migration. See PinPhotoImage.
+  Widget _image(String src) =>
+      PinPhotoImage(reference: src, fit: BoxFit.contain);
 
   static String _formatDate(DateTime d) {
     const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     final h = d.hour > 12 ? d.hour - 12 : (d.hour == 0 ? 12 : d.hour);
     final ampm = d.hour >= 12 ? 'pm' : 'am';
     return '${months[d.month - 1]} ${d.day}, ${d.year}  '
         '$h:${d.minute.toString().padLeft(2, '0')}$ampm';
   }
-}
-
-class _Unavailable extends StatelessWidget {
-  const _Unavailable();
-
-  @override
-  Widget build(BuildContext context) => const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.broken_image_outlined, color: Colors.white24, size: 40),
-            SizedBox(height: 10),
-            Text('Photo unavailable',
-                style: TextStyle(color: Colors.white38, fontSize: 12)),
-          ],
-        ),
-      );
 }
 
 /// Open the viewer, and hand back the photo list as it stands on close.

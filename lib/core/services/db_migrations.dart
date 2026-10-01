@@ -40,7 +40,7 @@ class DbMigrations {
   const DbMigrations._();
 
   /// The version the code expects. Bump this when adding a migration.
-  static const int currentVersion = 2;
+  static const int currentVersion = 3;
 
   /// Every step, in order. A gap in the numbering is a bug, and
   /// [assertWellFormed] catches it in the tests rather than on a phone.
@@ -49,6 +49,11 @@ class DbMigrations {
           to: 2,
           describe: 'sync columns: uuid, updated_at, deleted_at',
           run: _v2SyncColumns,
+        ),
+        Migration(
+          to: 3,
+          describe: 'photo migration backup table',
+          run: _v3PhotoBackup,
         ),
       ];
 
@@ -141,6 +146,22 @@ class DbMigrations {
       await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS '
           'idx_${table}_uuid ON $table(uuid)');
     }
+  }
+
+  /// Somewhere to keep a pin's original `photo_paths` text before photos move
+  /// out of the column and onto disk.
+  ///
+  /// Created as its own migration rather than inside the photo migration, so
+  /// the table exists before anything needs it and a rollback is possible even
+  /// if the move itself never ran.
+  static Future<void> _v3PhotoBackup(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS photo_migration_backup(
+        waypoint_id INTEGER PRIMARY KEY,
+        photo_paths TEXT,
+        backed_up_at INTEGER
+      )
+    ''');
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────

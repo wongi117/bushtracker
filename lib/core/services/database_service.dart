@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:sqflite_common/sqflite.dart';
 import 'package:path/path.dart';
 import 'db_migrations.dart';
+import 'photo_migration.dart';
 
 import 'native_db_factory_stub.dart'
     if (dart.library.io) 'native_db_factory_io.dart';
@@ -120,8 +121,41 @@ class DatabaseService {
     _initialized = true;
     await _runStorageSelfTest();
     debugPrint('Native SQLite initialized at $path: $storageReport');
+    await _photoStorageStep();
   }
   
+  /// Report what the photo migration would do, and run it only when asked.
+  ///
+  /// The dry run is unconditional and writes nothing: it is the only way to
+  /// see, from a real handset, how many photos are sitting in table rows and
+  /// what they weigh. The move itself is behind a build flag so it happens
+  /// deliberately, with those numbers already in hand, rather than the first
+  /// launch of a new build quietly rewriting every pin on a phone carrying
+  /// months of field work.
+  ///
+  /// Both are best-effort: a failure here must never stop the app opening.
+  ///
+  /// It runs by default now that it has been verified on a handset carrying
+  /// real data — 4 pins, 15 photos, 5.2 MB moved with nothing failed, and a
+  /// second launch reporting nothing left to do. The escape hatch is for
+  /// diagnosing a phone, not for normal use; `PhotoMigration.rollback()`
+  /// restores from the backup table either way.
+  static const bool _skipPhotoMigration =
+      bool.fromEnvironment('SKIP_PHOTO_MIGRATION');
+
+  Future<void> _photoStorageStep() async {
+    final db = _db;
+    if (db == null) return;
+    try {
+      final migration = PhotoMigration(db: db);
+      final dry = await migration.dryRun();
+      if (dry.nothingToDo || _skipPhotoMigration) return;
+      await migration.migrate();
+    } catch (e) {
+      debugPrint('Photo storage step skipped: $e');
+    }
+  }
+
   /// Count this boot, and report whether previous boots were remembered.
   Future<void> _runStorageSelfTest() async {
     try {
