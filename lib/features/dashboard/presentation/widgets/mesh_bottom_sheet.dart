@@ -21,7 +21,20 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
   String _activeTab = 'System';
   int _sheetState = 0; // 0=collapsed, 1=half, 2=full
 
-  static const double _collapsedHeight = 120.0;
+  /// How much of the sheet shows when it is down, not counting the system bar
+  /// underneath it.
+  static const double _collapsedContentHeight = 120.0;
+
+  /// The Android navigation bar's height, read each build.
+  ///
+  /// The collapsed sheet was a flat 120 and sat flush with the bottom of the
+  /// screen, so the speed, coordinates and node count were drawn underneath
+  /// the system navigation bar and could not be read or tapped. viewPadding
+  /// rather than padding: padding goes to zero while a keyboard is up, which
+  /// would drop the sheet back under the bar mid-edit.
+  double _bottomInset = 0;
+
+  double get _collapsedHeight => _collapsedContentHeight + _bottomInset;
 
   /// The live height while a finger is on the sheet. Null when not dragging,
   /// in which case the height comes from [_sheetState] and animates.
@@ -32,7 +45,10 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
   double? _dragHeight;
 
   void _advanceState() => setState(() => _sheetState = (_sheetState + 1) % 3);
-  void _collapseOne() { if (_sheetState > 0) setState(() => _sheetState--); }
+  void _collapseOne() {
+    if (_sheetState > 0) setState(() => _sheetState--);
+  }
+
   bool get _isExpanded => _sheetState > 0;
 
   /// The three heights the sheet settles at.
@@ -45,9 +61,9 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
 
   void _onDragUpdate(DragUpdateDetails d, double screenHeight) {
     // Dragging up (negative dy) makes the sheet taller.
-    final next = (_dragHeight ?? _stops(screenHeight)[_sheetState]) - d.delta.dy;
-    setState(() =>
-        _dragHeight = next.clamp(_collapsedHeight, screenHeight));
+    final next =
+        (_dragHeight ?? _stops(screenHeight)[_sheetState]) - d.delta.dy;
+    setState(() => _dragHeight = next.clamp(_collapsedHeight, screenHeight));
   }
 
   void _onDragEnd(DragEndDetails d, double screenHeight) {
@@ -60,12 +76,18 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
       // Thrown upwards: go to the next size up, however far it was dragged.
       target = (_sheetState + 1).clamp(0, 2);
       for (var i = 0; i < stops.length; i++) {
-        if (stops[i] > height + 1) { target = i; break; }
+        if (stops[i] > height + 1) {
+          target = i;
+          break;
+        }
       }
     } else if (velocity > 400) {
       target = (_sheetState - 1).clamp(0, 2);
       for (var i = stops.length - 1; i >= 0; i--) {
-        if (stops[i] < height - 1) { target = i; break; }
+        if (stops[i] < height - 1) {
+          target = i;
+          break;
+        }
       }
     } else {
       // Released slowly: settle at whichever size it is closest to.
@@ -73,7 +95,10 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
       var best = double.infinity;
       for (var i = 0; i < stops.length; i++) {
         final gap = (stops[i] - height).abs();
-        if (gap < best) { best = gap; target = i; }
+        if (gap < best) {
+          best = gap;
+          target = i;
+        }
       }
     }
 
@@ -85,13 +110,14 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
 
   @override
   Widget build(BuildContext context) {
-    final meshState     = ref.watch(meshProvider);
+    final meshState = ref.watch(meshProvider);
     final locationState = ref.watch(locationProvider);
-    final stats         = locationState.stats;
-    final screenHeight  = MediaQuery.of(context).size.height;
+    final stats = locationState.stats;
+    final screenHeight = MediaQuery.of(context).size.height;
 
     // While a finger is down the height is whatever it has been dragged to,
     // with no animation, so it tracks the finger exactly.
+    _bottomInset = MediaQuery.of(context).viewPadding.bottom;
     final double height = _dragHeight ?? _stops(screenHeight)[_sheetState];
 
     return AnimatedContainer(
@@ -101,8 +127,8 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
       child: Container(
         decoration: BoxDecoration(
           gradient: AppColors.steelGradient,
-          borderRadius:
-              const BorderRadius.vertical(top: Radius.circular(BushDS.radiusXL)),
+          borderRadius: const BorderRadius.vertical(
+              top: Radius.circular(BushDS.radiusXL)),
           border: const Border(
             top: BorderSide(color: Color(0xFF2A2A2A)),
           ),
@@ -114,114 +140,118 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
             ),
           ],
         ),
-        child: Column(
-          children: [
-            // ── Drag handle ────────────────────────────────────────────────
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onVerticalDragStart: (_) => _onDragStart(screenHeight),
-              onVerticalDragUpdate: (d) => _onDragUpdate(d, screenHeight),
-              onVerticalDragEnd: (d) => _onDragEnd(d, screenHeight),
-              // Tap still works: a thumb on a rough track is not always
-              // steady enough to drag.
-              onTap: _advanceState,
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.04),
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(BushDS.radiusXL)),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Pill
-                    Container(
-                      width: 48,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        gradient: AppColors.accentGradient,
-                        borderRadius: BorderRadius.circular(3),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.accent.withValues(alpha: 0.5),
-                            blurRadius: 6,
+        // Everything inside clears the system bar. The sheet's background
+        // still runs to the bottom edge, which is what it should do.
+        child: Padding(
+          padding: EdgeInsets.only(bottom: _bottomInset),
+          child: Column(
+            children: [
+              // ── Drag handle ────────────────────────────────────────────────
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onVerticalDragStart: (_) => _onDragStart(screenHeight),
+                onVerticalDragUpdate: (d) => _onDragUpdate(d, screenHeight),
+                onVerticalDragEnd: (d) => _onDragEnd(d, screenHeight),
+                // Tap still works: a thumb on a rough track is not always
+                // steady enough to drag.
+                onTap: _advanceState,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.04),
+                    borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(BushDS.radiusXL)),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Pill
+                      Container(
+                        width: 48,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          gradient: AppColors.accentGradient,
+                          borderRadius: BorderRadius.circular(3),
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppColors.accent.withValues(alpha: 0.5),
+                              blurRadius: 6,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            _sheetState == 0
+                                ? Icons.keyboard_arrow_up_rounded
+                                : _sheetState == 2
+                                    ? Icons.keyboard_arrow_down_rounded
+                                    : Icons.swap_vert_rounded,
+                            color: AppColors.accent,
+                            size: 22,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            _sheetState == 0
+                                ? 'Swipe up'
+                                : _sheetState == 1
+                                    ? 'Swipe up for fullscreen'
+                                    : 'Swipe down to close',
+                            style: TextStyle(
+                              color: AppColors.accent.withValues(alpha: 0.85),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0.3,
+                            ),
                           ),
                         ],
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          _sheetState == 0
-                              ? Icons.keyboard_arrow_up_rounded
-                              : _sheetState == 2
-                                  ? Icons.keyboard_arrow_down_rounded
-                                  : Icons.swap_vert_rounded,
-                          color: AppColors.accent,
-                          size: 22,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          _sheetState == 0
-                              ? 'Swipe up'
-                              : _sheetState == 1
-                                  ? 'Swipe up for fullscreen'
-                                  : 'Swipe down to close',
-                          style: TextStyle(
-                            color: AppColors.accent.withValues(alpha: 0.85),
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 0.3,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            // ── Collapsed view ─────────────────────────────────────────────
-            if (!_isExpanded)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: BushDS.spMD),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    _buildCollapsedStat(
-                        Icons.speed, 'SPEED', stats.speedFormatted),
-                    Text(
-                      stats.coordsDecimal.substring(
-                          0,
-                          stats.coordsDecimal.length > 24
-                              ? 24
-                              : stats.coordsDecimal.length),
-                      style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold),
-                    ),
-                    _buildCollapsedStat(
-                        Icons.cell_tower,
-                        'NODES',
-                        '${meshState.connectedEndpoints.length}'),
-                  ],
+                    ],
+                  ),
                 ),
               ),
 
-            // ── Expanded view ──────────────────────────────────────────────
-            if (_isExpanded) ...[
-              const SizedBox(height: BushDS.spSM),
-              _buildTabBar(),
-              const SizedBox(height: BushDS.spMD),
-              Expanded(
-                child: _buildTabContent(stats, meshState, locationState),
-              ),
+              // ── Collapsed view ─────────────────────────────────────────────
+              if (!_isExpanded)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: BushDS.spMD),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildCollapsedStat(
+                          Icons.speed, 'SPEED', stats.speedFormatted),
+                      Text(
+                        stats.coordsDecimal.substring(
+                            0,
+                            stats.coordsDecimal.length > 24
+                                ? 24
+                                : stats.coordsDecimal.length),
+                        style: const TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold),
+                      ),
+                      _buildCollapsedStat(Icons.cell_tower, 'NODES',
+                          '${meshState.connectedEndpoints.length}'),
+                    ],
+                  ),
+                ),
+
+              // ── Expanded view ──────────────────────────────────────────────
+              if (_isExpanded) ...[
+                const SizedBox(height: BushDS.spSM),
+                _buildTabBar(),
+                const SizedBox(height: BushDS.spMD),
+                Expanded(
+                  child: _buildTabContent(stats, meshState, locationState),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -260,10 +290,10 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          _buildTab(Icons.settings,          'System',    'System'),
-          _buildTab(Icons.place,             'Waypoints', 'Waypoints'),
-          _buildTab(Icons.smart_toy,         'AI',        'AI'),
-          _buildTab(Icons.chat_bubble_outline,'Chat',     'Chat'),
+          _buildTab(Icons.settings, 'System', 'System'),
+          _buildTab(Icons.place, 'Waypoints', 'Waypoints'),
+          _buildTab(Icons.smart_toy, 'AI', 'AI'),
+          _buildTab(Icons.chat_bubble_outline, 'Chat', 'Chat'),
         ],
       ),
     );
@@ -297,8 +327,7 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
               style: TextStyle(
                 color:
                     isActive ? AppColors.textPrimary : AppColors.textSecondary,
-                fontWeight:
-                    isActive ? FontWeight.bold : FontWeight.normal,
+                fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
                 fontSize: BushDS.fontSM,
               ),
             ),
@@ -312,18 +341,17 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
   Widget _buildTabContent(
       TrackStats stats, MeshState meshState, LocationState locationState) {
     return switch (_activeTab) {
-      'System'    => _buildSystemTab(stats, meshState),
+      'System' => _buildSystemTab(stats, meshState),
       'Waypoints' => _buildWaypointsTab(locationState),
-      'AI'        => _buildAITab(),
-      'Chat'      => const AIChatScreen(),
-      _           => _buildSystemTab(stats, meshState),
+      'AI' => _buildAITab(),
+      'Chat' => const AIChatScreen(),
+      _ => _buildSystemTab(stats, meshState),
     };
   }
 
   // ── System tab ─────────────────────────────────────────────────────────────
   Widget _buildSystemTab(TrackStats stats, MeshState meshState) {
-    final meshActive =
-        meshState.isAdvertising || meshState.isDiscovering;
+    final meshActive = meshState.isAdvertising || meshState.isDiscovering;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: BushDS.spMD),
@@ -335,9 +363,10 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _buildStatItem(Icons.speed,     'SPEED',    stats.speedFormatted),
-                _buildStatItem(Icons.straighten,'DISTANCE', stats.distanceFormatted),
-                _buildStatItem(Icons.timer,     'ELAPSED',  stats.elapsedFormatted),
+                _buildStatItem(Icons.speed, 'SPEED', stats.speedFormatted),
+                _buildStatItem(
+                    Icons.straighten, 'DISTANCE', stats.distanceFormatted),
+                _buildStatItem(Icons.timer, 'ELAPSED', stats.elapsedFormatted),
               ],
             ),
             const SizedBox(height: BushDS.spLG),
@@ -440,8 +469,7 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
             children: [
               _buildSectionLabel(Icons.place, 'WAYPOINTS'),
               Text('${pins.length}',
-                  style:
-                      const TextStyle(color: AppColors.textSecondary)),
+                  style: const TextStyle(color: AppColors.textSecondary)),
             ],
           ),
           const SizedBox(height: BushDS.spSM),
@@ -451,12 +479,12 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.place,
-                            color: AppColors.textMuted, size: 40),
+                        Icon(Icons.place, color: AppColors.textMuted, size: 40),
                         SizedBox(height: BushDS.spSM),
                         Text(
                           'No pins saved yet\nLong-press the map to add one',
-                          style: TextStyle(color: AppColors.textSecondary,
+                          style: TextStyle(
+                              color: AppColors.textSecondary,
                               fontSize: BushDS.fontMD),
                           textAlign: TextAlign.center,
                         ),
@@ -504,8 +532,9 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
             const SizedBox(height: BushDS.spSM),
             Expanded(
               child: ListView.builder(
-                itemCount:
-                    state.breadcrumbs.length > 20 ? 20 : state.breadcrumbs.length,
+                itemCount: state.breadcrumbs.length > 20
+                    ? 20
+                    : state.breadcrumbs.length,
                 itemBuilder: (context, index) {
                   final breadcrumb =
                       state.breadcrumbs.reversed.elementAt(index);
@@ -603,8 +632,7 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
             ),
             const SizedBox(height: BushDS.spMD),
             Container(
-              constraints:
-                  const BoxConstraints(minHeight: BushDS.tapMin),
+              constraints: const BoxConstraints(minHeight: BushDS.tapMin),
               padding: const EdgeInsets.symmetric(
                   horizontal: BushDS.spLG, vertical: BushDS.spSM),
               decoration: BoxDecoration(
@@ -621,8 +649,7 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
                   Text(
                     'Tap to chat',
                     style: TextStyle(
-                        color: AppColors.textPrimary,
-                        fontSize: BushDS.fontMD),
+                        color: AppColors.textPrimary, fontSize: BushDS.fontMD),
                   ),
                 ],
               ),
@@ -675,11 +702,11 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
   }
 
   IconData _getWaypointIcon(String? icon) => switch (icon) {
-        'camp'   => Icons.holiday_village,
-        'water'  => Icons.water_drop,
+        'camp' => Icons.holiday_village,
+        'water' => Icons.water_drop,
         'hazard' => Icons.warning_amber_rounded,
-        'fuel'   => Icons.local_gas_station,
-        'road'   => Icons.route,
-        _        => Icons.place,
+        'fuel' => Icons.local_gas_station,
+        'road' => Icons.route,
+        _ => Icons.place,
       };
 }

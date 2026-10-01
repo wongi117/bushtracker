@@ -90,7 +90,11 @@ class _PhotoPinSheetState extends ConsumerState<_PhotoPinSheet> {
           color: AppColors.panelMatte,
           borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
         ),
-        padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
+        // 18 plus the system navigation bar. viewInsets above handles the
+        // keyboard; viewPadding here handles the bar, and a sheet that only
+        // did the first drew its buttons underneath the second.
+        padding: EdgeInsets.fromLTRB(
+            18, 10, 18, 18 + MediaQuery.of(context).viewPadding.bottom),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,

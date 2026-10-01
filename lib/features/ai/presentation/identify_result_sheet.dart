@@ -39,7 +39,8 @@ Future<bool> showIdentifyResult(
             Expanded(
               child: ListView(
                 controller: scrollController,
-                padding: const EdgeInsets.fromLTRB(18, 16, 18, 24),
+                padding: EdgeInsets.fromLTRB(18, 16, 18,
+                    24 + MediaQuery.of(context).viewPadding.bottom),
                 children: _buildBody(sheetContext, result),
               ),
             ),

@@ -687,9 +687,15 @@ Future<void> showWaypointEditor(BuildContext context, {Waypoint? waypoint, LatLn
         color: AppColors.panelMatte,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      child: WaypointEditorSheet(
-        waypoint: waypoint,
-        position: position,
+      // The sheet is 85% of the screen and its buttons sit at the bottom of
+      // that, which on a phone with a navigation bar put them behind it.
+      child: Padding(
+        padding:
+            EdgeInsets.only(bottom: MediaQuery.of(context).viewPadding.bottom),
+        child: WaypointEditorSheet(
+          waypoint: waypoint,
+          position: position,
+        ),
       ),
     ),
   );

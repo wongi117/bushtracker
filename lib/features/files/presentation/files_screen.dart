@@ -866,7 +866,8 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
             color: AppColors.panelMatte,
             borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
           ),
-          padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
+          padding: EdgeInsets.fromLTRB(
+              18, 10, 18, 18 + MediaQuery.of(sheetContext).viewPadding.bottom),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
