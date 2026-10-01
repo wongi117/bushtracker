@@ -63,6 +63,20 @@ PINAGE_BUILD_PLAN_4.md  current phase plan and task checklist
 - Never use GitHub's "unblock secret" link to force a blocked push. Remove the secret.
 - Do not print the git remote URL: it has a PAT embedded in `.git/config`.
 
+### Tokens and where they live
+- `config/pinage.json` is **git-ignored** and holds the Mapbox public token and the Mapillary
+  access token. `config/pinage.example.json` is the committed template.
+- Build with `--dart-define-from-file=config/pinage.json`. Without it the app still runs: no
+  Mapbox token keeps the map on MapTiler, no Mapillary token hides the imagery layer.
+- A Mapbox **secret** token (`sk.`) goes in the **user-level** gradle properties file,
+  `~/.gradle/gradle.properties` (on this PC, under `C:/Users/User/.gradle/`), as
+  `MAPBOX_DOWNLOADS_TOKEN`. **Never `android/gradle.properties` — that one is tracked by
+  git.** Most Mapbox guides say "gradle.properties" without saying which, and that is how an
+  sk. leaks.
+- Mapillary has two tokens and they are not interchangeable: the **client** token returns
+  `{"data":[]}` with HTTP 200, the **access** token returns real imagery. Empty-with-200 means
+  the wrong credential, not thin coverage.
+
 ### Supabase
 - Only ever the `pinage-maps` project in Sydney. **Never `autoplexity-ai`** — that is a
   different product in a different repo that happens to share an owner.
