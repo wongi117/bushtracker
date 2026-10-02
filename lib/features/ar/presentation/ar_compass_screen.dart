@@ -13,6 +13,7 @@ import 'package:bush_track/core/models/waypoint.dart';
 import 'package:bush_track/theme/app_colors.dart';
 import 'package:bush_track/features/map/services/photo_geotagging_service.dart';
 import 'package:bush_track/features/map/presentation/photo_pin_screen.dart';
+import 'package:bush_track/core/widgets/safe_sheet.dart';
 
 class ARCompassScreen extends ConsumerStatefulWidget {
   const ARCompassScreen({super.key});
@@ -786,7 +787,9 @@ class _PinDetailSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.all(16),
+      // The 16 px margin is thinner than every Android navigation bar, so the
+      // bottom of this sheet sat under it.
+      margin: EdgeInsets.fromLTRB(16, 16, 16, 16 + sheetBottomInset(context)),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: const Color(0xFF0E1624),

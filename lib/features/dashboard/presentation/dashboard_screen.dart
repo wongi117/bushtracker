@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -31,11 +31,13 @@ import 'package:bush_track/features/ai/providers/ai_control_provider.dart';
 import '../../ai/providers/ai_assistant_provider.dart';
 import 'package:bush_track/features/ai/services/ai_monitor_service.dart';
 import 'package:bush_track/core/models/geofence.dart';
-import 'package:bush_track/core/utils/geo_geometry.dart' show formatArea, formatDistance;
+import 'package:bush_track/core/utils/geo_geometry.dart'
+    show formatArea, formatDistance;
 import 'package:bush_track/features/geofence/presentation/geofence_screen.dart';
 import 'package:bush_track/features/geofence/presentation/zone_drawing.dart';
 import 'package:bush_track/features/geofence/providers/geofence_provider.dart';
-import 'package:bush_track/features/chat/presentation/ai_chat_screen.dart' show showAIChat;
+import 'package:bush_track/features/chat/presentation/ai_chat_screen.dart'
+    show showAIChat;
 import 'package:bush_track/features/files/presentation/files_screen.dart';
 import 'package:bush_track/features/files/providers/files_provider.dart';
 import 'package:bush_track/features/gallery/presentation/photo_gallery_screen.dart';
@@ -50,6 +52,7 @@ import 'package:bush_track/features/map/providers/map_action_provider.dart';
 import 'package:bush_track/features/map/providers/marker_visibility_provider.dart';
 import 'package:bush_track/features/map/providers/satellite_source_provider.dart';
 import 'package:bush_track/core/providers/outbox_provider.dart';
+import 'package:bush_track/features/dashboard/providers/sheet_metrics_provider.dart';
 import 'package:bush_track/features/map/widgets/connectivity_pill.dart';
 import 'package:bush_track/features/streetview/presentation/street_photo_viewer.dart';
 import 'package:bush_track/features/streetview/providers/mapillary_provider.dart';
@@ -294,7 +297,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               ),
             ),
             GestureDetector(
-              onTap: () => ref.read(navigationProvider.notifier).stopNavigation(),
+              onTap: () =>
+                  ref.read(navigationProvider.notifier).stopNavigation(),
               child: const Icon(Icons.close, color: Colors.white70, size: 18),
             ),
           ]),
@@ -309,9 +313,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             const SizedBox(height: 6),
             Row(children: [
               GestureDetector(
-                onTap: () => ref.read(navigationProvider.notifier).previousStep(),
+                onTap: () =>
+                    ref.read(navigationProvider.notifier).previousStep(),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
                       color: Colors.white24,
                       borderRadius: BorderRadius.circular(8)),
@@ -328,7 +334,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               GestureDetector(
                 onTap: () => ref.read(navigationProvider.notifier).nextStep(),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
                       color: Colors.white24,
                       borderRadius: BorderRadius.circular(8)),
@@ -408,11 +415,30 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
     final streetView = ref.watch(streetViewProvider);
 
+    // Where the bottom sheet currently is, so the right-hand controls can sit
+    // above it instead of guessing. Every one of them used a hardcoded
+    // `bottom:` picked by eye on one handset, which is how the compass ended up
+    // half under the sheet on a phone whose navigation bar is a different
+    // height.
+    final systemInset = MediaQuery.of(context).viewPadding.bottom;
+    final sheetHeight = ref.watch(sheetHeightProvider);
+    final screenHeight = MediaQuery.of(context).size.height;
+    final stackBase = controlsBottom(sheetHeight, systemInset);
+    final hideStack = hideControlsFor(sheetHeight, screenHeight);
+
+    // Stacked upward from the sheet: attribution, then compass, then locate.
+    // Sizes are the widgets' own, so the gaps hold at any text scale.
+    const attributionHeight = 16.0;
+    const compassSize = 60.0;
+    const locateSize = 52.0;
+    final attributionBottom = stackBase;
+    final compassBottom = attributionBottom + attributionHeight + 6;
+    final locateBottom = compassBottom + compassSize + 8;
+
     // The satellite slot is swapped by setting; the other two are fixed.
     final satellite = ref.watch(satelliteSourceProvider);
-    final baseTileUrl = _mapStyleIndex == 0
-        ? satellite.urlTemplate
-        : _tileUrls[_mapStyleIndex];
+    final baseTileUrl =
+        _mapStyleIndex == 0 ? satellite.urlTemplate : _tileUrls[_mapStyleIndex];
     final maxNativeZoom = _mapStyleIndex == 0
         ? satellite.maxNativeZoom
         : _tileMaxNativeZoom[_mapStyleIndex];
@@ -457,7 +483,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                         initialCenter: locationState.stats.currentLat != null
                             ? LatLng(locationState.stats.currentLat!,
                                 locationState.stats.currentLon!)
-                            : const LatLng(-25.3444, 131.0369), // centre of Australia
+                            : const LatLng(
+                                -25.3444, 131.0369), // centre of Australia
                         // No fix: show the whole country so it's obvious we
                         // haven't located you. It used to open zoomed into
                         // Uluru at street level, which reads as "you are
@@ -513,7 +540,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                           // blank, which reads as "the map never loaded".
                           tileProvider: _retryingTileProvider,
                           // OpenTopoMap uses {s} subdomain rotation
-                          subdomains: _mapStyleIndex == 1 ? const ['a', 'b', 'c'] : const [],
+                          subdomains: _mapStyleIndex == 1
+                              ? const ['a', 'b', 'c']
+                              : const [],
                           maxZoom: 19.0,
                           maxNativeZoom: maxNativeZoom,
                           minZoom: 3.0,
@@ -530,7 +559,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                           ),
                         ),
                         // Trail lines layer
-                        ..._buildTrailLayers(trailState, locationState, navState),
+                        ..._buildTrailLayers(
+                            trailState, locationState, navState),
                         // Trail draft line
                         if (trailState.isCreating &&
                             trailState.draftPoints.length > 1)
@@ -581,8 +611,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                         // Waypoint markers with interaction
                         // Mapillary coverage, under everything of the
                         // user's own: it is context, not content.
-                        if (streetView.enabled &&
-                            streetView.photos.isNotEmpty)
+                        if (streetView.enabled && streetView.photos.isNotEmpty)
                           CircleLayer(
                             circles: [
                               for (final photo in streetView.photos)
@@ -619,17 +648,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                               ),
                             // Pin Waypoints with interaction + live distance
                             ...pinWaypoints.map((w) {
-                              final wPos = LatLng(
-                                  w.latitude ?? 0.0, w.longitude ?? 0.0);
-                              final userLat =
-                                  locationState.stats.currentLat;
-                              final userLon =
-                                  locationState.stats.currentLon;
-                              final distLabel =
-                                  (userLat != null && userLon != null)
-                                      ? _fmtDist(_distM(
-                                          LatLng(userLat, userLon), wPos))
-                                      : null;
+                              final wPos =
+                                  LatLng(w.latitude ?? 0.0, w.longitude ?? 0.0);
+                              final userLat = locationState.stats.currentLat;
+                              final userLon = locationState.stats.currentLon;
+                              final distLabel = (userLat != null &&
+                                      userLon != null)
+                                  ? _fmtDist(
+                                      _distM(LatLng(userLat, userLon), wPos))
+                                  : null;
                               return Marker(
                                 point: wPos,
                                 width: 78,
@@ -700,8 +727,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                         // hides them.
                         ...buildZoneMapLayers(
                           zones: geofenceState.geofences
-                              .where((z) =>
-                                  visibility.showsZone(id: z.id, fileId: z.fileId))
+                              .where((z) => visibility.showsZone(
+                                  id: z.id, fileId: z.fileId))
                               .toList(),
                           insideIds: geofenceState.insideIds,
                           draft: _zoneDraft,
@@ -817,7 +844,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                       borderRadius: BorderRadius.circular(16),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFFFF8C00).withValues(alpha: 0.65),
+                          color:
+                              const Color(0xFFFF8C00).withValues(alpha: 0.65),
                           blurRadius: 18,
                           spreadRadius: 1,
                           offset: const Offset(0, 4),
@@ -961,49 +989,55 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                   // instead of overflowing the bar again.
                   Flexible(
                     child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.55),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
-                    ),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      ShaderMask(
-                        shaderCallback: (b) =>
-                            AppColors.accentGradient.createShader(b),
-                        child: const Icon(Icons.explore, color: Colors.white, size: 20),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.55),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.1)),
                       ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          'BUSHTRACK',
-                          softWrap: false,
-                          overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.outfit(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 1,
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        ShaderMask(
+                          shaderCallback: (b) =>
+                              AppColors.accentGradient.createShader(b),
+                          child: const Icon(Icons.explore,
+                              color: Colors.white, size: 20),
+                        ),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            'BUSHTRACK',
+                            softWrap: false,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.outfit(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 1,
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF7B2FFF).withValues(alpha: 0.25),
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(
-                              color: const Color(0xFF7B2FFF).withValues(alpha: 0.45)),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color:
+                                const Color(0xFF7B2FFF).withValues(alpha: 0.25),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                                color: const Color(0xFF7B2FFF)
+                                    .withValues(alpha: 0.45)),
+                          ),
+                          child: const Text('v3.0',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold)),
                         ),
-                        child: const Text('v3.0',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold)),
-                      ),
-                    ]),
-                  ),
+                      ]),
+                    ),
                   ),
                   const SizedBox(width: 10),
                   files,
@@ -1023,34 +1057,35 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
           // Compass Rose — bottom right, out of the way of the top-of-screen
           // panels (pin tracking, navigation) and clear of the scale bar,
           // coordinates and breadcrumb buttons, which all sit left/centre.
-          // Locate button, directly above the compass rose. The rose is 60
-          // high at bottom 150, so this clears it with a gap.
-          Positioned(
-            bottom: 218,
-            right: 18,
-            child: _locateButton(locationState),
-          ),
-
-          Positioned(
-            bottom: 150,
-            right: 14,
-            child: Consumer(
-              builder: (context, ref, _) {
-                final heading = ref.watch(headingProvider).valueOrNull ??
-                    const HeadingReading.unavailable();
-                return CompassRose(
-                  rotation: heading.isLive ? heading.radians : 0.0,
-                  quality: heading.quality,
-                  onTap: () async {
-                    if (!heading.isLive) {
-                      await requestHeadingPermission(ref);
-                    }
-                    _mapController.rotate(0);
-                  },
-                );
-              },
+          // Locate button, above the compass, above the sheet.
+          if (!hideStack)
+            Positioned(
+              bottom: locateBottom,
+              right: 18,
+              child: _locateButton(locationState),
             ),
-          ),
+
+          if (!hideStack)
+            Positioned(
+              bottom: compassBottom,
+              right: 14,
+              child: Consumer(
+                builder: (context, ref, _) {
+                  final heading = ref.watch(headingProvider).valueOrNull ??
+                      const HeadingReading.unavailable();
+                  return CompassRose(
+                    rotation: heading.isLive ? heading.radians : 0.0,
+                    quality: heading.quality,
+                    onTap: () async {
+                      if (!heading.isLive) {
+                        await requestHeadingPermission(ref);
+                      }
+                      _mapController.rotate(0);
+                    },
+                  );
+                },
+              ),
+            ),
 
           // SOS — always on the map, directly under the search button. Spec §1
           // took it off the main screen; the BHP bug brief then found it
@@ -1074,18 +1109,19 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
           // Weather sits under the bottom sheet (so an expanded sheet covers it)
           // and steps aside while the tracking or navigation panels are up.
-          if (_trackTarget == null && !navState.isActive) const WeatherOverlay(),
+          if (_trackTarget == null && !navState.isActive)
+            const WeatherOverlay(),
 
           // Scale Bar (Bottom Left, above coordinate display)
-          Positioned(
-            bottom: 260,
-            left: 20,
-            child: ScaleBar(
-              zoom: _currentZoom,
-              latitude: locationState.stats.currentLat ?? -25.3444,
+          if (!hideStack)
+            Positioned(
+              bottom: stackBase + 108,
+              left: 20,
+              child: ScaleBar(
+                zoom: _currentZoom,
+                latitude: locationState.stats.currentLat ?? -25.3444,
+              ),
             ),
-          ),
-
 
           // Trail creation overlay — minimal floating bar
           if (trailState.isCreating)
@@ -1093,16 +1129,20 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               draftPoints: trailState.draftPoints,
               onCancel: () {
                 ref.read(trailProvider.notifier).cancelCreatingTrail();
-                ref.read(aiAssistantProvider.notifier).speak("Trail creation cancelled.");
+                ref
+                    .read(aiAssistantProvider.notifier)
+                    .speak("Trail creation cancelled.");
               },
-              onUndo: () => ref.read(trailProvider.notifier).removeLastDraftPoint(),
-              onClear: () => ref.read(trailProvider.notifier).clearDraftPoints(),
+              onUndo: () =>
+                  ref.read(trailProvider.notifier).removeLastDraftPoint(),
+              onClear: () =>
+                  ref.read(trailProvider.notifier).clearDraftPoints(),
               onSave: (name, color, lineStyle) {
                 ref.read(trailProvider.notifier).saveDraftTrail(
-                  name: name,
-                  color: color,
-                  lineStyle: lineStyle,
-                );
+                      name: name,
+                      color: color,
+                      lineStyle: lineStyle,
+                    );
                 ref.read(aiAssistantProvider.notifier).speak(
                     "Trail '$name' saved. Long-press the trail to edit details.");
               },
@@ -1146,8 +1186,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                     // Retrace button
                     GestureDetector(
                       onTap: () {
-                        final crumbs = ref.read(locationProvider).breadcrumbs
-                            .where((b) => b.latitude != null && b.longitude != null)
+                        final crumbs = ref
+                            .read(locationProvider)
+                            .breadcrumbs
+                            .where((b) =>
+                                b.latitude != null && b.longitude != null)
                             .toList();
                         setState(() => _isRetracing = !_isRetracing);
                         if (!_isRetracing) return;
@@ -1162,27 +1205,40 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                               lons.reduce((a, b) => a > b ? a : b)),
                         );
                         _mapController.fitCamera(
-                          CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(48)),
+                          CameraFit.bounds(
+                              bounds: bounds,
+                              padding: const EdgeInsets.all(48)),
                         );
-                        ref.read(aiAssistantProvider.notifier).speak(
-                            _isRetracing ? "Retrace mode on. Follow the cyan trail back to start." : "Retrace mode off.");
+                        ref.read(aiAssistantProvider.notifier).speak(_isRetracing
+                            ? "Retrace mode on. Follow the cyan trail back to start."
+                            : "Retrace mode off.");
                       },
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 18, vertical: 12),
                         decoration: BoxDecoration(
-                          color: _isRetracing ? AppColors.statusBlue.withValues(alpha: 0.9) : AppColors.panelMatte.withValues(alpha: 0.92),
-                          borderRadius: const BorderRadius.horizontal(left: Radius.circular(30)),
-                          boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 6)],
+                          color: _isRetracing
+                              ? AppColors.statusBlue.withValues(alpha: 0.9)
+                              : AppColors.panelMatte.withValues(alpha: 0.92),
+                          borderRadius: const BorderRadius.horizontal(
+                              left: Radius.circular(30)),
+                          boxShadow: const [
+                            BoxShadow(color: Colors.black45, blurRadius: 6)
+                          ],
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.undo, color: _isRetracing ? Colors.black : Colors.white, size: 20),
+                            Icon(Icons.undo,
+                                color:
+                                    _isRetracing ? Colors.black : Colors.white,
+                                size: 20),
                             const SizedBox(width: 6),
                             Text(
                               _isRetracing ? 'RETRACING' : 'RETRACE',
                               style: TextStyle(
-                                color: _isRetracing ? Colors.black : Colors.white,
+                                color:
+                                    _isRetracing ? Colors.black : Colors.white,
                                 fontWeight: FontWeight.bold,
                                 fontSize: 13,
                               ),
@@ -1194,23 +1250,36 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                     // Clear trail button
                     GestureDetector(
                       onTap: () {
-                        setState(() { _isRetracing = false; });
+                        setState(() {
+                          _isRetracing = false;
+                        });
                         ref.read(locationProvider.notifier).clearBreadcrumbs();
-                        ref.read(aiAssistantProvider.notifier).speak("Trail cleared.");
+                        ref
+                            .read(aiAssistantProvider.notifier)
+                            .speak("Trail cleared.");
                       },
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 18, vertical: 12),
                         decoration: BoxDecoration(
                           color: Colors.red.shade800.withValues(alpha: 0.92),
-                          borderRadius: const BorderRadius.horizontal(right: Radius.circular(30)),
-                          boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 6)],
+                          borderRadius: const BorderRadius.horizontal(
+                              right: Radius.circular(30)),
+                          boxShadow: const [
+                            BoxShadow(color: Colors.black45, blurRadius: 6)
+                          ],
                         ),
                         child: const Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.delete_outline, color: Colors.white, size: 20),
+                            Icon(Icons.delete_outline,
+                                color: Colors.white, size: 20),
                             SizedBox(width: 6),
-                            Text('CLEAR', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                            Text('CLEAR',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13)),
                           ],
                         ),
                       ),
@@ -1233,13 +1302,18 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
           // right. In this app "it didn't work" and "it hasn't sent yet" look
           // the same from outside, and after pressing SOS that is the
           // difference that matters.
+          // Below the top button row, not on top of it. It was at
+          // padding.top + 12 and the 54 px hamburger starts at padding.top +
+          // 10, so it covered the menu button and ate its taps.
           Positioned(
-            top: MediaQuery.of(context).padding.top + 12,
-            left: 16,
+            top: MediaQuery.of(context).padding.top + 10 + 54 + 8,
+            left: 14,
             // The queue count makes "offline" and "offline with three things
             // waiting" different readings, which is the point of the badge.
-            child: ConnectivityPill(
-                pendingCount: ref.watch(outboxStatusProvider).pending),
+            child: IgnorePointer(
+              child: ConnectivityPill(
+                  pendingCount: ref.watch(outboxStatusProvider).pending),
+            ),
           ),
 
           // Imagery credit. Required by Esri's and Mapbox's terms alike, and
@@ -1249,15 +1323,18 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
           // Tapping it swaps satellite source, which is the quickest way to
           // compare two providers over the same patch of ground: no menus, no
           // losing your place on the map.
+          // A licence requirement, so it is never hidden by the sheet and
+          // never tucked under the compass. It keeps its place even when the
+          // other controls hide, because the imagery is still on screen.
           if (!_drawerOpen)
             Positioned(
-              bottom: 4,
+              bottom: attributionBottom,
               right: 6,
               child: GestureDetector(
                 onTap: _mapStyleIndex == 0 ? _swapSatelliteSource : null,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 6, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   color: Colors.black.withValues(alpha: 0.45),
                   child: Text(
                     _mapStyleIndex == 0
@@ -1280,72 +1357,72 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
           // anyone thinks when their pins are missing is that the app threw
           // them away. This sits above the coordinates where the left column is
           // otherwise empty, and one tap puts everything back.
-          if (!_drawerOpen && visibility.isFiltered)
+          if (!_drawerOpen && visibility.isFiltered && !hideStack)
             Positioned(
-              bottom: 200,
+              bottom: stackBase + 54,
               left: 20,
               child: _filterPill(visibility),
             ),
 
           // Coordinate Display — hidden when drawer is open to prevent z-order clash.
           if (!_drawerOpen)
-          Positioned(
-            bottom: 130,
-            left: 20,
-            child: GestureDetector(
-              onTap: () =>
-                  setState(() => _showCoordinatePanel = !_showCoordinatePanel),
-              // With no fix this used to show -25.3444, 131.0369 — Uluru — as
-              // if it were your position. Someone reading coordinates off the
-              // screen to radio them in would have read out Uluru.
-              child: locationState.stats.currentLat == null ||
-                      locationState.stats.currentLon == null
-                  ? _noGpsFixChip()
-                  // A coarse fix is worse than no fix if it is presented as
-                  // though it were exact — it puts you on the wrong street
-                  // while looking perfectly confident.
-                  : locationState.stats.currentAccuracyM >
-                          LocationNotifier.maxUsableAccuracyMetres
-                      ? _coarseFixChip(locationState.stats.currentAccuracyM)
-                  : _showCoordinatePanel
-                  ? SizedBox(
-                      width: 280,
-                      child: CoordinateDisplay(
-                        position: LatLng(
-                          locationState.stats.currentLat!,
-                          locationState.stats.currentLon!,
-                        ),
-                        format: _coordinateFormat,
-                        showAllFormats: true,
-                        onFormatChanged: () {
-                          setState(() {
-                            const formats = CoordinateFormat.values;
-                            final currentIndex =
-                                formats.indexOf(_coordinateFormat);
-                            _coordinateFormat =
-                                formats[(currentIndex + 1) % formats.length];
-                          });
-                        },
-                      ),
-                    )
-                  : CoordinateDisplay(
-                      position: LatLng(
-                        locationState.stats.currentLat!,
-                        locationState.stats.currentLon!,
-                      ),
-                      format: _coordinateFormat,
-                      onFormatChanged: () {
-                        setState(() {
-                          const formats = CoordinateFormat.values;
-                          final currentIndex =
-                              formats.indexOf(_coordinateFormat);
-                          _coordinateFormat =
-                              formats[(currentIndex + 1) % formats.length];
-                        });
-                      },
-                    ),
+            Positioned(
+              bottom: stackBase,
+              left: 20,
+              child: GestureDetector(
+                onTap: () => setState(
+                    () => _showCoordinatePanel = !_showCoordinatePanel),
+                // With no fix this used to show -25.3444, 131.0369 — Uluru — as
+                // if it were your position. Someone reading coordinates off the
+                // screen to radio them in would have read out Uluru.
+                child: locationState.stats.currentLat == null ||
+                        locationState.stats.currentLon == null
+                    ? _noGpsFixChip()
+                    // A coarse fix is worse than no fix if it is presented as
+                    // though it were exact — it puts you on the wrong street
+                    // while looking perfectly confident.
+                    : locationState.stats.currentAccuracyM >
+                            LocationNotifier.maxUsableAccuracyMetres
+                        ? _coarseFixChip(locationState.stats.currentAccuracyM)
+                        : _showCoordinatePanel
+                            ? SizedBox(
+                                width: 280,
+                                child: CoordinateDisplay(
+                                  position: LatLng(
+                                    locationState.stats.currentLat!,
+                                    locationState.stats.currentLon!,
+                                  ),
+                                  format: _coordinateFormat,
+                                  showAllFormats: true,
+                                  onFormatChanged: () {
+                                    setState(() {
+                                      const formats = CoordinateFormat.values;
+                                      final currentIndex =
+                                          formats.indexOf(_coordinateFormat);
+                                      _coordinateFormat = formats[
+                                          (currentIndex + 1) % formats.length];
+                                    });
+                                  },
+                                ),
+                              )
+                            : CoordinateDisplay(
+                                position: LatLng(
+                                  locationState.stats.currentLat!,
+                                  locationState.stats.currentLon!,
+                                ),
+                                format: _coordinateFormat,
+                                onFormatChanged: () {
+                                  setState(() {
+                                    const formats = CoordinateFormat.values;
+                                    final currentIndex =
+                                        formats.indexOf(_coordinateFormat);
+                                    _coordinateFormat = formats[
+                                        (currentIndex + 1) % formats.length];
+                                  });
+                                },
+                              ),
+              ),
             ),
-          ),
 
           // Bottom Sheet Overlay — renders on top of coordinate display
           Align(
@@ -1464,11 +1541,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                     backgroundColor: AppColors.primaryOrange,
                   ));
                 },
-                onToggleBreadcrumbs: () => setState(() => _showBreadcrumbs = !_showBreadcrumbs),
+                onToggleBreadcrumbs: () =>
+                    setState(() => _showBreadcrumbs = !_showBreadcrumbs),
                 onRecenter: () {
                   if (locationState.stats.currentLat != null) {
                     _mapController.move(
-                      LatLng(locationState.stats.currentLat!, locationState.stats.currentLon!),
+                      LatLng(locationState.stats.currentLat!,
+                          locationState.stats.currentLon!),
                       16.0,
                     );
                   }
@@ -1490,15 +1569,18 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                   _showDwellMap = !_showDwellMap;
                 }),
                 onAddWaypoint: () {
-                  showWaypointEditor(context, position: _mapController.camera.center);
+                  showWaypointEditor(context,
+                      position: _mapController.camera.center);
                 },
                 onTrackRecord: () {
                   ref.read(trailProvider.notifier).startCreatingTrail();
                   ref.read(aiAssistantProvider.notifier).speak(
                       "Trail creation mode activated. Tap on the map to drop points.");
                 },
-                onExportTrack: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const TripStatisticsScreen())),
+                onExportTrack: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const TripStatisticsScreen())),
                 onLayerManager: () => setState(() {
                   final next = (_mapStyleIndex + 1) % _tileUrls.length;
                   _mapStyleIndex = next;
@@ -1511,26 +1593,40 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                   }
                 },
                 onScreenshot: _takeScreenshot,
-                onDeviceInfo: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => CoordinateInputScreen(
-                      onCoordinateEntered: (c) => _mapController.move(c, 14.0),
-                    ))),
-                onNavigation: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const RouteOptionsScreen())),
-                onAIAssistant: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => NaturalLanguageSearchScreen(
-                      onLocationFound: (c) => _mapController.move(c, 14.0),
-                    ))),
-                onSearchPlace: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const PlacesSearchScreen())),
+                onDeviceInfo: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => CoordinateInputScreen(
+                              onCoordinateEntered: (c) =>
+                                  _mapController.move(c, 14.0),
+                            ))),
+                onNavigation: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const RouteOptionsScreen())),
+                onAIAssistant: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => NaturalLanguageSearchScreen(
+                              onLocationFound: (c) =>
+                                  _mapController.move(c, 14.0),
+                            ))),
+                onSearchPlace: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const PlacesSearchScreen())),
                 onCompassNav: () => Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const ARCompassScreen())),
-                onMeshSignal: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const OfflineMapsScreen())),
+                onMeshSignal: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const OfflineMapsScreen())),
                 onSettings: () => Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const SettingsScreen())),
-                onAnalytics: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const AgentManagerScreen())),
+                onAnalytics: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const AgentManagerScreen())),
                 onSavedPins: _showSavedPins,
                 onMyTrails: _showMyTrails,
                 onFiles: _showFiles,
@@ -1550,10 +1646,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                   final armed = ref.read(aiControlProvider).deadmanArmed;
                   ref.read(aiControlProvider.notifier).setDeadmanArmed(!armed);
                 },
-                onGallery: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => PhotoGalleryScreen(
-                      onJumpToMap: (loc) => _mapController.move(loc, 16.0),
-                    ))),
+                onGallery: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => PhotoGalleryScreen(
+                              onJumpToMap: (loc) =>
+                                  _mapController.move(loc, 16.0),
+                            ))),
                 onSOS: _showSOSConfirmation,
               ),
             ),
@@ -1589,7 +1688,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.82),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF7B2FFF).withValues(alpha: 0.6)),
+        border:
+            Border.all(color: const Color(0xFF7B2FFF).withValues(alpha: 0.6)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1630,10 +1730,19 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _hudStat('Covered', '${coveredKm.toStringAsFixed(2)} km', Colors.greenAccent),
-              _hudStat('Remaining', '${remainingKm.clamp(0, double.infinity).toStringAsFixed(2)} km', const Color(0xFFFF9800)),
+              _hudStat('Covered', '${coveredKm.toStringAsFixed(2)} km',
+                  Colors.greenAccent),
+              _hudStat(
+                  'Remaining',
+                  '${remainingKm.clamp(0, double.infinity).toStringAsFixed(2)} km',
+                  const Color(0xFFFF9800)),
               if (trailState.distanceToNextPoint != null)
-                _hudStat('Next pin', trailState.distanceToNextPoint! < 1000 ? '${trailState.distanceToNextPoint!.toInt()} m' : '${(trailState.distanceToNextPoint! / 1000).toStringAsFixed(1)} km', AppColors.statusBlue),
+                _hudStat(
+                    'Next pin',
+                    trailState.distanceToNextPoint! < 1000
+                        ? '${trailState.distanceToNextPoint!.toInt()} m'
+                        : '${(trailState.distanceToNextPoint! / 1000).toStringAsFixed(1)} km',
+                    AppColors.statusBlue),
             ],
           ),
         ],
@@ -1645,8 +1754,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: GoogleFonts.outfit(color: Colors.white38, fontSize: 10)),
-        Text(value, style: GoogleFonts.outfit(color: color, fontSize: 13, fontWeight: FontWeight.w600)),
+        Text(label,
+            style: GoogleFonts.outfit(color: Colors.white38, fontSize: 10)),
+        Text(value,
+            style: GoogleFonts.outfit(
+                color: color, fontSize: 13, fontWeight: FontWeight.w600)),
       ],
     );
   }
@@ -1683,9 +1795,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             const SizedBox(height: 12),
             // Say what each channel really does. The mesh can't run in a
             // browser, and SMS only opens the messages app.
-            _sosChannel(Icons.hub, 'Mesh broadcast',
-                kIsWeb ? 'Android app only — not in the browser'
-                       : 'BushTrack phones in radio range'),
+            _sosChannel(
+                Icons.hub,
+                'Mesh broadcast',
+                kIsWeb
+                    ? 'Android app only — not in the browser'
+                    : 'BushTrack phones in radio range'),
             _sosChannel(Icons.sms, 'SMS',
                 'Opens your messages — you choose who to send to'),
             _sosChannel(Icons.share, 'Share', 'WhatsApp, Signal, etc.'),
@@ -1746,8 +1861,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: GoogleFonts.outfit(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
-                Text(subtitle, style: GoogleFonts.outfit(color: Colors.white38, fontSize: 11)),
+                Text(title,
+                    style: GoogleFonts.outfit(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600)),
+                Text(subtitle,
+                    style: GoogleFonts.outfit(
+                        color: Colors.white38, fontSize: 11)),
               ],
             ),
           ),
@@ -1757,8 +1878,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   }
 
   static String _compass8(double bearingDeg) {
-    const names = ['north', 'north-east', 'east', 'south-east',
-                   'south', 'south-west', 'west', 'north-west'];
+    const names = [
+      'north',
+      'north-east',
+      'east',
+      'south-east',
+      'south',
+      'south-west',
+      'west',
+      'north-west'
+    ];
     return names[(((bearingDeg % 360) + 360) % 360 / 45).round() % 8];
   }
 
@@ -1871,14 +2000,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   void _announceTracking(String name, LatLng there) {
     final here = _userLatLng();
     if (here == null) {
-      ref.read(aiAssistantProvider.notifier)
+      ref
+          .read(aiAssistantProvider.notifier)
           .speak('Tracking $name. Waiting for a GPS fix.');
       return;
     }
     final bearing =
         HeadingReading.normalize(const Distance().bearing(here, there));
-    ref.read(aiAssistantProvider.notifier).speak(
-        'Tracking $name. '
+    ref.read(aiAssistantProvider.notifier).speak('Tracking $name. '
         '${NavigationNotifier.formatSpokenDistance(_distM(here, there))} '
         'to the ${_compass8(bearing)}.');
   }
@@ -1894,15 +2023,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     final name = w.label ?? 'your pin';
     final here = _userLatLng();
     if (here == null) {
-      ref.read(aiAssistantProvider.notifier)
+      ref
+          .read(aiAssistantProvider.notifier)
           .speak('Tracking $name. Waiting for a GPS fix.');
       return;
     }
     final there = LatLng(w.latitude!, w.longitude!);
     final bearing =
         HeadingReading.normalize(const Distance().bearing(here, there));
-    ref.read(aiAssistantProvider.notifier).speak(
-        'Tracking $name. '
+    ref.read(aiAssistantProvider.notifier).speak('Tracking $name. '
         '${NavigationNotifier.formatSpokenDistance(_distM(here, there))} '
         'to the ${_compass8(bearing)}.');
   }
@@ -1921,8 +2050,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     // A zone is reached at its boundary; a pin at the spot itself.
     if (d > target.arriveWithinMetres) return;
     final name = target.name;
-    ref.read(aiAssistantProvider.notifier).speak(
-        target.isZone ? 'You have reached $name.' : 'You have arrived at $name.');
+    ref.read(aiAssistantProvider.notifier).speak(target.isZone
+        ? 'You have reached $name.'
+        : 'You have arrived at $name.');
     setState(() => _trackedPin = null);
     _setTrackTarget(null);
     if (!mounted) return;
@@ -2056,10 +2186,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
     // 2. SMS — opens the messages app with the text filled in. The user
     //    still picks who to send it to; nothing is sent automatically.
-    try { await openSmsUrl(msg); } catch (_) {}
+    try {
+      await openSmsUrl(msg);
+    } catch (_) {}
 
     // 3. Share sheet — WhatsApp, Signal, etc.
-    try { await shareText('SOS EMERGENCY', msg); } catch (_) {}
+    try {
+      await shareText('SOS EMERGENCY', msg);
+    } catch (_) {}
 
     // This used to say "Help is on the way", which nothing here guarantees.
     ref.read(aiAssistantProvider.notifier).speak(kIsWeb
@@ -2111,7 +2245,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
     if (trailState.isCreating) {
       ref.read(trailProvider.notifier).addDraftPoint(point);
-      ref.read(aiAssistantProvider.notifier)
+      ref
+          .read(aiAssistantProvider.notifier)
           .speak("Point ${trailState.draftPoints.length + 1} added.");
       return;
     }
@@ -2136,11 +2271,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   /// The closest dropped pin to [tap], within a zoom-scaled tolerance, or null
   /// if the tap was not near one. Same approach as _findNearestTrail.
   Waypoint? _findNearestPin(LatLng tap) {
-    final threshold = 0.0006 * math.pow(2, (16 - _currentZoom).clamp(-3.0, 4.0));
+    final threshold =
+        0.0006 * math.pow(2, (16 - _currentZoom).clamp(-3.0, 4.0));
     Waypoint? nearest;
     var nearestDist = double.infinity;
     for (final w in ref.read(locationProvider).waypoints) {
-      if (w.isPin != true || w.latitude == null || w.longitude == null) continue;
+      if (w.isPin != true || w.latitude == null || w.longitude == null)
+        continue;
       final d = _latlngDeg(tap, LatLng(w.latitude!, w.longitude!));
       if (d < threshold && d < nearestDist) {
         nearestDist = d;
@@ -2158,8 +2295,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
       waypoint: w,
       distanceInfo: _pinDistanceInfo(w),
       onEdit: () => w.isPinage ? _showPinageViewer(w) : _editWaypoint(w),
-      onDelete: () =>
-          ref.read(locationProvider.notifier).deleteWaypoint(w.id!),
+      onDelete: () => ref.read(locationProvider.notifier).deleteWaypoint(w.id!),
       onColorChanged: (color) =>
           ref.read(locationProvider.notifier).updateWaypointColor(w.id!, color),
       onIconChanged: (icon) =>
@@ -2341,10 +2477,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     // than asking for them again; only the shape changed.
     final editingId = draft.editingId;
     if (editingId != null) {
-      final existing = ref
-          .read(geofenceProvider)
-          .geofences
-          .where((z) => z.id == editingId);
+      final existing =
+          ref.read(geofenceProvider).geofences.where((z) => z.id == editingId);
       if (existing.isNotEmpty) {
         final was = existing.first;
         final updated = isCircle
@@ -2437,7 +2571,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   // Base 0.0012 keeps the pixel-radius ~45px constant across all zoom levels,
   // which is comfortably within a finger-width on both web and mobile.
   Trail? _findNearestTrail(LatLng tap, List<Trail> trails) {
-    final threshold = 0.0012 * math.pow(2, (16 - _currentZoom).clamp(-3.0, 4.0));
+    final threshold =
+        0.0012 * math.pow(2, (16 - _currentZoom).clamp(-3.0, 4.0));
     Trail? nearest;
     double nearestDist = double.infinity;
     for (final trail in trails) {
@@ -2445,10 +2580,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
       if (points.isEmpty) continue;
       for (int i = 0; i < points.length; i++) {
         final d = _latlngDeg(tap, points[i]);
-        if (d < threshold && d < nearestDist) { nearestDist = d; nearest = trail; }
+        if (d < threshold && d < nearestDist) {
+          nearestDist = d;
+          nearest = trail;
+        }
         if (i < points.length - 1) {
           final sd = _segDeg(tap, points[i], points[i + 1]);
-          if (sd < threshold && sd < nearestDist) { nearestDist = sd; nearest = trail; }
+          if (sd < threshold && sd < nearestDist) {
+            nearestDist = sd;
+            nearest = trail;
+          }
         }
       }
     }
@@ -2464,7 +2605,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     final dx = b.longitude - a.longitude, dy = b.latitude - a.latitude;
     final len2 = dx * dx + dy * dy;
     if (len2 == 0) return _latlngDeg(p, a);
-    final t = ((p.longitude - a.longitude) * dx + (p.latitude - a.latitude) * dy) / len2;
+    final t =
+        ((p.longitude - a.longitude) * dx + (p.latitude - a.latitude) * dy) /
+            len2;
     final tc = t.clamp(0.0, 1.0);
     final ex = p.longitude - (a.longitude + tc * dx);
     final ey = p.latitude - (a.latitude + tc * dy);
@@ -2473,17 +2616,18 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
   List<CircleMarker> _buildDwellCircles(List<Breadcrumb> crumbs) {
     if (crumbs.length < 2) return [];
-    final sorted = [...crumbs]
-      ..sort((a, b) =>
-          (a.timestamp?.millisecondsSinceEpoch ?? 0)
-              .compareTo(b.timestamp?.millisecondsSinceEpoch ?? 0));
+    final sorted = [...crumbs]..sort((a, b) =>
+        (a.timestamp?.millisecondsSinceEpoch ?? 0)
+            .compareTo(b.timestamp?.millisecondsSinceEpoch ?? 0));
     const grid = 0.0005; // ~55 m per cell
     final Map<String, _DwellCell> cells = {};
     for (int i = 0; i < sorted.length - 1; i++) {
       final a = sorted[i];
       final b = sorted[i + 1];
-      final alat = a.latitude; final alon = a.longitude;
-      final ats = a.timestamp; final bts = b.timestamp;
+      final alat = a.latitude;
+      final alon = a.longitude;
+      final ats = a.timestamp;
+      final bts = b.timestamp;
       if (alat == null || alon == null || ats == null || bts == null) continue;
       final ms = bts.millisecondsSinceEpoch - ats.millisecondsSinceEpoch;
       if (ms <= 0 || ms > 120000) continue; // skip gaps > 2 min
@@ -2514,7 +2658,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     return circles;
   }
 
-  List<Widget> _buildTrailLayers(TrailState trailState, LocationState locationState, NavigationState navState) {
+  List<Widget> _buildTrailLayers(TrailState trailState,
+      LocationState locationState, NavigationState navState) {
     final layers = <Widget>[];
 
     // Active navigation route — blue polyline + destination flag
@@ -2538,7 +2683,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               color: AppColors.accent,
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white, width: 2),
-              boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 8)],
+              boxShadow: const [
+                BoxShadow(color: Colors.black45, blurRadius: 8)
+              ],
             ),
             child: const Icon(Icons.flag, color: Colors.white, size: 22),
           ),
@@ -2625,13 +2772,19 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               decoration: BoxDecoration(
                 color: color.withValues(alpha: 0.92),
                 borderRadius: BorderRadius.circular(12),
-                boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 4)],
-                border: Border.all(color: Colors.white.withValues(alpha: 0.3), width: 1),
+                boxShadow: const [
+                  BoxShadow(color: Colors.black45, blurRadius: 4)
+                ],
+                border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.3), width: 1),
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
                 Text(
                   trailName,
-                  style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold),
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(width: 5),
@@ -2660,7 +2813,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
           .toList();
 
       if (crumbs.length > 1) {
-        final pts = crumbs.map((b) => LatLng(b.latitude!, b.longitude!)).toList();
+        final pts =
+            crumbs.map((b) => LatLng(b.latitude!, b.longitude!)).toList();
         final displayPts = _isRetracing ? pts.reversed.toList() : pts;
 
         // Trail line — red when recording, cyan when retracing
@@ -2687,7 +2841,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                 color: AppColors.statusGreen.withValues(alpha: 0.85),
                 shape: BoxShape.circle,
                 border: Border.all(color: Colors.white, width: 2),
-                boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 4)],
+                boxShadow: const [
+                  BoxShadow(color: Colors.black45, blurRadius: 4)
+                ],
               ),
               child: const Icon(Icons.flag, color: Colors.white, size: 22),
             ),
@@ -2754,8 +2910,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                   ? const Center(
                       child: Text(
                           'No pins yet — long-press the map to drop one',
-                          style: TextStyle(
-                              color: Colors.white38, fontSize: 14),
+                          style: TextStyle(color: Colors.white38, fontSize: 14),
                           textAlign: TextAlign.center))
                   : ListView.separated(
                       controller: ctrl,
@@ -2861,8 +3016,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                   ? const Center(
                       child: Text(
                           'No trails yet — use Trail Creation on the map',
-                          style: TextStyle(
-                              color: Colors.white38, fontSize: 14),
+                          style: TextStyle(color: Colors.white38, fontSize: 14),
                           textAlign: TextAlign.center))
                   : ListView.separated(
                       controller: ctrl,
@@ -2926,7 +3080,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     final lon = stats.currentLon;
     return (lat == null || lon == null) ? null : LatLng(lat, lon);
   }
-
 
   String _fmtDist(double m) =>
       m >= 1000 ? '${(m / 1000).toStringAsFixed(2)} km' : '${m.toInt()} m';
@@ -3002,7 +3155,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
         builder: (ctx, setState) => Container(
           padding: EdgeInsets.only(
             bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
-            left: 20, right: 20, top: 20,
+            left: 20,
+            right: 20,
+            top: 20,
           ),
           decoration: const BoxDecoration(
             color: Color(0xFF1A1A2E),
@@ -3013,7 +3168,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text('Edit Trail',
-                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold)),
               const SizedBox(height: 16),
               TextField(
                 controller: nameCtrl,
@@ -3021,8 +3179,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                 decoration: const InputDecoration(
                   labelText: 'Trail name',
                   labelStyle: TextStyle(color: Colors.white54),
-                  enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.orange)),
+                  enabledBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white24)),
+                  focusedBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.orange)),
                 ),
                 onChanged: (v) => name = v,
               ),
@@ -3034,20 +3194,27 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                 decoration: const InputDecoration(
                   labelText: 'Color',
                   labelStyle: TextStyle(color: Colors.white54),
-                  enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                  enabledBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white24)),
                 ),
                 items: TrailColors.allColors
                     .map((c) => DropdownMenuItem(
                           value: c,
                           child: Row(children: [
-                            Container(width: 16, height: 16,
-                                decoration: BoxDecoration(color: WaypointColors.fromHex(c), shape: BoxShape.circle)),
+                            Container(
+                                width: 16,
+                                height: 16,
+                                decoration: BoxDecoration(
+                                    color: WaypointColors.fromHex(c),
+                                    shape: BoxShape.circle)),
                             const SizedBox(width: 8),
                             Text(c),
                           ]),
                         ))
                     .toList(),
-                onChanged: (v) { if (v != null) setState(() => color = v); },
+                onChanged: (v) {
+                  if (v != null) setState(() => color = v);
+                },
               ),
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
@@ -3057,20 +3224,27 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                 decoration: const InputDecoration(
                   labelText: 'Line style',
                   labelStyle: TextStyle(color: Colors.white54),
-                  enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                  enabledBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white24)),
                 ),
                 items: const [
-                  DropdownMenuItem(value: TrailLineStyle.solid, child: Text('Solid')),
-                  DropdownMenuItem(value: TrailLineStyle.dashed, child: Text('Dashed')),
-                  DropdownMenuItem(value: TrailLineStyle.dotted, child: Text('Dotted')),
+                  DropdownMenuItem(
+                      value: TrailLineStyle.solid, child: Text('Solid')),
+                  DropdownMenuItem(
+                      value: TrailLineStyle.dashed, child: Text('Dashed')),
+                  DropdownMenuItem(
+                      value: TrailLineStyle.dotted, child: Text('Dotted')),
                 ],
-                onChanged: (v) { if (v != null) setState(() => lineStyle = v); },
+                onChanged: (v) {
+                  if (v != null) setState(() => lineStyle = v);
+                },
               ),
               const SizedBox(height: 24),
               Row(children: [
                 Expanded(
                   child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent,
+                    style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.redAccent,
                         side: const BorderSide(color: Colors.redAccent)),
                     onPressed: () {
                       Navigator.pop(ctx);
@@ -3082,10 +3256,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                 const SizedBox(width: 12),
                 Expanded(
                   child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orange),
                     onPressed: () {
                       Navigator.pop(ctx);
-                      trail.name = nameCtrl.text.trim().isEmpty ? 'Trail' : nameCtrl.text.trim();
+                      trail.name = nameCtrl.text.trim().isEmpty
+                          ? 'Trail'
+                          : nameCtrl.text.trim();
                       trail.color = color;
                       trail.lineStyle = lineStyle;
                       ref.read(trailProvider.notifier).updateTrail(trail);
@@ -3102,7 +3279,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   }
 
   void _zoomToFitWaypoints(List<Waypoint> waypoints) {
-    final valid = waypoints.where((w) => w.latitude != null && w.longitude != null).toList();
+    final valid = waypoints
+        .where((w) => w.latitude != null && w.longitude != null)
+        .toList();
     if (valid.isEmpty) return;
 
     final lats = valid.map((w) => w.latitude!).toList();
@@ -3144,7 +3323,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
         position: LatLng(waypoint.latitude!, waypoint.longitude!),
         existing: waypoint,
       ),
-      onDelete: () => ref.read(locationProvider.notifier).deleteWaypoint(waypoint.id!),
+      onDelete: () =>
+          ref.read(locationProvider.notifier).deleteWaypoint(waypoint.id!),
       onTrack: () => _startTracking(waypoint),
       onJumpToMap: () {
         if (waypoint.latitude != null && waypoint.longitude != null) {
@@ -3349,8 +3529,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     }
 
     return GestureDetector(
-      onTap: () =>
-          ref.read(markerVisibilityProvider.notifier).showEverything(),
+      onTap: () => ref.read(markerVisibilityProvider.notifier).showEverything(),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
         decoration: BoxDecoration(
@@ -3613,8 +3792,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     final stats = next.stats;
     final compass = ref.read(headingProvider).valueOrNull;
     final declination = (stats.currentLat != null && stats.currentLon != null)
-        ? MagneticDeclination.forPosition(
-            stats.currentLat!, stats.currentLon!)
+        ? MagneticDeclination.forPosition(stats.currentLat!, stats.currentLon!)
         : 0.0;
 
     final out = _travel.update(
@@ -3666,7 +3844,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
       ]),
     );
   }
-
 
   Widget _hamburgerLine() => Container(
         width: 18,
@@ -4001,8 +4178,8 @@ class _SidebarButtonState extends State<_SidebarButton> {
               decoration: BoxDecoration(
                 color: Colors.black.withValues(alpha: 0.85),
                 borderRadius: BorderRadius.circular(8),
-                border:
-                    Border.all(color: AppColors.primaryOrange.withValues(alpha: 0.4)),
+                border: Border.all(
+                    color: AppColors.primaryOrange.withValues(alpha: 0.4)),
               ),
               child: Text(
                 widget.tooltip!,
@@ -4218,7 +4395,10 @@ class _HamburgerDrawer extends StatelessWidget {
       child: Container(
         decoration: const BoxDecoration(
           color: Color(0xFF0D0F1E),
-          boxShadow: [BoxShadow(color: Colors.black54, blurRadius: 24, offset: Offset(8, 0))],
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black54, blurRadius: 24, offset: Offset(8, 0))
+          ],
         ),
         child: SafeArea(
           child: Column(
@@ -4231,29 +4411,140 @@ class _HamburgerDrawer extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _section('MAP LAYERS'),
-                      _item(context, Icons.landscape, const Color(0xFFFF8C00), 'Terrain Layer', is3DMode ? '3D active' : '2D view', 'Switch between flat 2D tactical view and immersive 3D terrain rendering.', () => _go(onToggle3D)),
-                      _item(context, Icons.layers, const Color(0xFF9C60F0), 'Layer Manager', 'Cycle map style', 'Cycle through Street, Satellite (Esri), Dark, and Topo map styles.', () => _go(onLayerManager)),
+                      _item(
+                          context,
+                          Icons.landscape,
+                          const Color(0xFFFF8C00),
+                          'Terrain Layer',
+                          is3DMode ? '3D active' : '2D view',
+                          'Switch between flat 2D tactical view and immersive 3D terrain rendering.',
+                          () => _go(onToggle3D)),
+                      _item(
+                          context,
+                          Icons.layers,
+                          const Color(0xFF9C60F0),
+                          'Layer Manager',
+                          'Cycle map style',
+                          'Cycle through Street, Satellite (Esri), Dark, and Topo map styles.',
+                          () => _go(onLayerManager)),
 
                       _section('NAVIGATION'),
-                      _item(context, Icons.my_location, const Color(0xFF2196F3), 'Re-centre GPS', 'Jump to my location', 'Centres the map on your current GPS position at zoom 16.', () => _go(onRecenter)),
-                      _item(context, Icons.add, const Color(0xFF4CAF50), 'Zoom In', 'Increase detail', 'Zoom in one level for more map detail.', () => _go(onZoomIn)),
-                      _item(context, Icons.remove, const Color(0xFFF44336), 'Zoom Out', 'Decrease detail', 'Zoom out one level to see a wider area.', () => _go(onZoomOut)),
-                      _item(context, Icons.fit_screen, const Color(0xFF00BCD4), 'Scan Bounds', 'Fit all waypoints', 'Zooms and pans to show all your saved waypoints on screen at once.', () => _go(onScanBounds)),
+                      _item(
+                          context,
+                          Icons.my_location,
+                          const Color(0xFF2196F3),
+                          'Re-centre GPS',
+                          'Jump to my location',
+                          'Centres the map on your current GPS position at zoom 16.',
+                          () => _go(onRecenter)),
+                      _item(
+                          context,
+                          Icons.add,
+                          const Color(0xFF4CAF50),
+                          'Zoom In',
+                          'Increase detail',
+                          'Zoom in one level for more map detail.',
+                          () => _go(onZoomIn)),
+                      _item(
+                          context,
+                          Icons.remove,
+                          const Color(0xFFF44336),
+                          'Zoom Out',
+                          'Decrease detail',
+                          'Zoom out one level to see a wider area.',
+                          () => _go(onZoomOut)),
+                      _item(
+                          context,
+                          Icons.fit_screen,
+                          const Color(0xFF00BCD4),
+                          'Scan Bounds',
+                          'Fit all waypoints',
+                          'Zooms and pans to show all your saved waypoints on screen at once.',
+                          () => _go(onScanBounds)),
 
                       _section('TRACKING'),
-                      _item(context, Icons.route, const Color(0xFF2196F3), 'Breadcrumb Trail', showBreadcrumbs ? 'Trail on · RETRACE shown' : 'Show your path', 'Records and displays your movement path. Shows RETRACE and CLEAR controls on the map.', () => _go(onToggleBreadcrumbs)),
-                      _item(context, Icons.thermostat, const Color(0xFFFFB300), 'Dwell Heatmap', showDwellMap ? 'Heatmap on' : 'Show dwell heatmap', 'Shows where you spent the most time. Yellow = brief stop, Red = long stay.', () => _go(onElevationProfile)),
-                      _item(context, Icons.add_location_alt, const Color(0xFF4CAF50), 'Add Waypoint', 'Drop a pin', 'Drop a waypoint marker at the current map centre.', () => _go(onAddWaypoint)),
-                      _item(context, Icons.timeline, const Color(0xFF9C60F0), 'Track Record', isCreatingTrail ? 'Recording…' : 'Record a trail', 'Activate trail recording mode — tap the map to drop route points.', () => _go(onTrackRecord)),
-                      _item(context, Icons.analytics, const Color(0xFF2196F3), 'Export Track', 'Trip stats & export', 'View trip statistics, distance, speed and export your track data.', () => _go(onExportTrack)),
+                      _item(
+                          context,
+                          Icons.route,
+                          const Color(0xFF2196F3),
+                          'Breadcrumb Trail',
+                          showBreadcrumbs
+                              ? 'Trail on · RETRACE shown'
+                              : 'Show your path',
+                          'Records and displays your movement path. Shows RETRACE and CLEAR controls on the map.',
+                          () => _go(onToggleBreadcrumbs)),
+                      _item(
+                          context,
+                          Icons.thermostat,
+                          const Color(0xFFFFB300),
+                          'Dwell Heatmap',
+                          showDwellMap ? 'Heatmap on' : 'Show dwell heatmap',
+                          'Shows where you spent the most time. Yellow = brief stop, Red = long stay.',
+                          () => _go(onElevationProfile)),
+                      _item(
+                          context,
+                          Icons.add_location_alt,
+                          const Color(0xFF4CAF50),
+                          'Add Waypoint',
+                          'Drop a pin',
+                          'Drop a waypoint marker at the current map centre.',
+                          () => _go(onAddWaypoint)),
+                      _item(
+                          context,
+                          Icons.timeline,
+                          const Color(0xFF9C60F0),
+                          'Track Record',
+                          isCreatingTrail ? 'Recording…' : 'Record a trail',
+                          'Activate trail recording mode — tap the map to drop route points.',
+                          () => _go(onTrackRecord)),
+                      _item(
+                          context,
+                          Icons.analytics,
+                          const Color(0xFF2196F3),
+                          'Export Track',
+                          'Trip stats & export',
+                          'View trip statistics, distance, speed and export your track data.',
+                          () => _go(onExportTrack)),
 
                       _section('MY DATA'),
-                      _item(context, Icons.location_on, const Color(0xFFFF6D00), 'Saved Pins', 'All your dropped pins', 'Every pin you have dropped, with its distance from you. Tap one to jump to it on the map.', () => _go(onSavedPins)),
-                      _item(context, Icons.route, const Color(0xFFFF6D00), 'My Trails', 'Recorded trails', 'Every trail you have recorded. Tap one to jump to its starting point.', () => _go(onMyTrails)),
+                      _item(
+                          context,
+                          Icons.location_on,
+                          const Color(0xFFFF6D00),
+                          'Saved Pins',
+                          'All your dropped pins',
+                          'Every pin you have dropped, with its distance from you. Tap one to jump to it on the map.',
+                          () => _go(onSavedPins)),
+                      _item(
+                          context,
+                          Icons.route,
+                          const Color(0xFFFF6D00),
+                          'My Trails',
+                          'Recorded trails',
+                          'Every trail you have recorded. Tap one to jump to its starting point.',
+                          () => _go(onMyTrails)),
 
-                      _item(context, Icons.folder_rounded, const Color(0xFFFF6B00), 'Files', openFileName == null ? 'Notes and field records' : 'Open: $openFileName', 'A folder per job, site or trip. While a file is open, every note, pin and zone you make is filed under it, so you can come back and see where you worked.', () => _go(onFiles)),
+                      _item(
+                          context,
+                          Icons.folder_rounded,
+                          const Color(0xFFFF6B00),
+                          'Files',
+                          openFileName == null
+                              ? 'Notes and field records'
+                              : 'Open: $openFileName',
+                          'A folder per job, site or trip. While a file is open, every note, pin and zone you make is filed under it, so you can come back and see where you worked.',
+                          () => _go(onFiles)),
 
-                      _item(context, Icons.visibility, const Color(0xFF00BCD4), 'Show & Follow', hiddenCount == 0 ? 'Choose what is drawn' : '$hiddenCount hidden', 'Pick which pins and zones appear on the map and through the camera, and choose one to follow. Hiding never deletes anything.', () => _go(onMarkerPicker)),
+                      _item(
+                          context,
+                          Icons.visibility,
+                          const Color(0xFF00BCD4),
+                          'Show & Follow',
+                          hiddenCount == 0
+                              ? 'Choose what is drawn'
+                              : '$hiddenCount hidden',
+                          'Pick which pins and zones appear on the map and through the camera, and choose one to follow. Hiding never deletes anything.',
+                          () => _go(onMarkerPicker)),
                       // Greyed out rather than hidden when it cannot work: a
                       // missing row looks like a missing feature, while a
                       // disabled one with a reason explains itself.
@@ -4270,37 +4561,132 @@ class _HamburgerDrawer extends StatelessWidget {
                                   ? 'On — tap the map to open one'
                                   : 'Mapillary street-level imagery',
                           'Street-level photos contributed to Mapillary. The '
-                          'only part of this app that needs a connection: '
-                          'coverage is thin outside the towns, and nothing is '
-                          'stored on the phone.',
+                              'only part of this app that needs a connection: '
+                              'coverage is thin outside the towns, and nothing is '
+                              'stored on the phone.',
                           () => _go(onStreetView)),
 
                       _section('ZONES'),
-                      _item(context, Icons.draw, const Color(0xFFFF6B00), 'Draw Zone', 'Flag an area', 'Draw a circle, or tap out a boundary corner by corner around a site, hazard or heritage area. You get told when you cross in or out of it.', () => _go(onDrawZone)),
-                      _item(context, Icons.layers_outlined, const Color(0xFFAB47BC), 'My Zones', zoneCount == 0 ? 'No zones yet' : '$zoneCount saved', 'Every zone and boundary you have flagged. Tap one to jump to it on the map.', () => _go(onZones)),
+                      _item(
+                          context,
+                          Icons.draw,
+                          const Color(0xFFFF6B00),
+                          'Draw Zone',
+                          'Flag an area',
+                          'Draw a circle, or tap out a boundary corner by corner around a site, hazard or heritage area. You get told when you cross in or out of it.',
+                          () => _go(onDrawZone)),
+                      _item(
+                          context,
+                          Icons.layers_outlined,
+                          const Color(0xFFAB47BC),
+                          'My Zones',
+                          zoneCount == 0 ? 'No zones yet' : '$zoneCount saved',
+                          'Every zone and boundary you have flagged. Tap one to jump to it on the map.',
+                          () => _go(onZones)),
 
                       _section('TOOLS'),
-                      _item(context, Icons.straighten, const Color(0xFF00BCD4), 'Measure Distance', showMeasurementTool ? 'Active' : 'Tap to measure', 'Tap points on the map to measure distance, area, and bearing.', () => _go(onMeasure)),
-                      _item(context, Icons.screenshot, Colors.white70, 'Map Screenshot', 'Save as PNG', 'Saves the current map view as a PNG image to your device.', () => _go(onScreenshot)),
-                      _item(context, Icons.pin_drop, const Color(0xFFFFB300), 'Enter Coordinates', 'Go to GPS location', 'Manually enter GPS coordinates in decimal, DMS, or UTM format to jump to a location.', () => _go(onDeviceInfo)),
-                      _item(context, Icons.directions, const Color(0xFF2196F3), 'Navigation Mode', 'Route guidance', 'Get turn-by-turn directions to any destination using OSRM routing.', () => _go(onNavigation)),
-                      _item(context, Icons.psychology, const Color(0xFF9C60F0), 'AI Assistant', 'Natural language search', 'Search in plain English — "nearest water source" or "fuel under 50 km".', () => _go(onAIAssistant)),
-                      _item(context, Icons.place, const Color(0xFF4CAF50), 'Search Place', 'Find places & POIs', 'Search for towns, landmarks, and points of interest near you.', () => _go(onSearchPlace)),
-                      _item(context, Icons.compass_calibration, const Color(0xFFFF8C00), 'Compass Nav', 'AR compass overlay', 'Augmented reality compass overlay on your device camera view.', () => _go(onCompassNav)),
-                      _item(context, Icons.download_for_offline, const Color(0xFF00BCD4), 'Offline Maps', 'Download map regions', 'Download map regions for use without an internet connection.', () => _go(onMeshSignal)),
+                      _item(
+                          context,
+                          Icons.straighten,
+                          const Color(0xFF00BCD4),
+                          'Measure Distance',
+                          showMeasurementTool ? 'Active' : 'Tap to measure',
+                          'Tap points on the map to measure distance, area, and bearing.',
+                          () => _go(onMeasure)),
+                      _item(
+                          context,
+                          Icons.screenshot,
+                          Colors.white70,
+                          'Map Screenshot',
+                          'Save as PNG',
+                          'Saves the current map view as a PNG image to your device.',
+                          () => _go(onScreenshot)),
+                      _item(
+                          context,
+                          Icons.pin_drop,
+                          const Color(0xFFFFB300),
+                          'Enter Coordinates',
+                          'Go to GPS location',
+                          'Manually enter GPS coordinates in decimal, DMS, or UTM format to jump to a location.',
+                          () => _go(onDeviceInfo)),
+                      _item(
+                          context,
+                          Icons.directions,
+                          const Color(0xFF2196F3),
+                          'Navigation Mode',
+                          'Route guidance',
+                          'Get turn-by-turn directions to any destination using OSRM routing.',
+                          () => _go(onNavigation)),
+                      _item(
+                          context,
+                          Icons.psychology,
+                          const Color(0xFF9C60F0),
+                          'AI Assistant',
+                          'Natural language search',
+                          'Search in plain English — "nearest water source" or "fuel under 50 km".',
+                          () => _go(onAIAssistant)),
+                      _item(
+                          context,
+                          Icons.place,
+                          const Color(0xFF4CAF50),
+                          'Search Place',
+                          'Find places & POIs',
+                          'Search for towns, landmarks, and points of interest near you.',
+                          () => _go(onSearchPlace)),
+                      _item(
+                          context,
+                          Icons.compass_calibration,
+                          const Color(0xFFFF8C00),
+                          'Compass Nav',
+                          'AR compass overlay',
+                          'Augmented reality compass overlay on your device camera view.',
+                          () => _go(onCompassNav)),
+                      _item(
+                          context,
+                          Icons.download_for_offline,
+                          const Color(0xFF00BCD4),
+                          'Offline Maps',
+                          'Download map regions',
+                          'Download map regions for use without an internet connection.',
+                          () => _go(onMeshSignal)),
 
                       _section('MEDIA'),
-                      _item(context, Icons.photo_library, const Color(0xFFFFB300), 'Photo Gallery', 'Geotagged photos', 'Browse all geotagged photos — tap the pin icon to jump to that location on the map.', () => _go(onGallery)),
+                      _item(
+                          context,
+                          Icons.photo_library,
+                          const Color(0xFFFFB300),
+                          'Photo Gallery',
+                          'Geotagged photos',
+                          'Browse all geotagged photos — tap the pin icon to jump to that location on the map.',
+                          () => _go(onGallery)),
 
                       _section('SYSTEM'),
-                      _item(context, Icons.settings, Colors.grey, 'Settings', 'App preferences', 'Configure vehicle profile, privacy settings, and app preferences.', () => _go(onSettings)),
-                      _item(context, Icons.support_agent_rounded, const Color(0xFF9C60F0), 'Analytics', 'AI personas', 'Select your AI persona — Scout, Navigator, Rescue, or Tactical.', () => _go(onAnalytics)),
+                      _item(
+                          context,
+                          Icons.settings,
+                          Colors.grey,
+                          'Settings',
+                          'App preferences',
+                          'Configure vehicle profile, privacy settings, and app preferences.',
+                          () => _go(onSettings)),
+                      _item(
+                          context,
+                          Icons.support_agent_rounded,
+                          const Color(0xFF9C60F0),
+                          'Analytics',
+                          'AI personas',
+                          'Select your AI persona — Scout, Navigator, Rescue, or Tactical.',
+                          () => _go(onAnalytics)),
 
                       _section('SAFETY'),
-                      _item(context, Icons.timer_outlined,
+                      _item(
+                          context,
+                          Icons.timer_outlined,
                           deadmanArmed ? Colors.red : Colors.white70,
                           'Deadman Switch',
-                          deadmanArmed ? 'ARMED — auto-SOS after 4h still' : 'Off — tap to arm',
+                          deadmanArmed
+                              ? 'ARMED — auto-SOS after 4h still'
+                              : 'Off — tap to arm',
                           "Arm it before heading out alone. If you don't move for 4 hours you get a spoken warning, then an SOS goes to nearby BushTrack phones 10 minutes later. Walk a few metres to cancel.",
                           () => _go(onToggleDeadman)),
 
@@ -4321,7 +4707,8 @@ class _HamburgerDrawer extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 12, 12),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: Colors.white.withValues(alpha: 0.08))),
+        border: Border(
+            bottom: BorderSide(color: Colors.white.withValues(alpha: 0.08))),
       ),
       child: Row(children: [
         ShaderMask(
@@ -4336,7 +4723,11 @@ class _HamburgerDrawer extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text('BUSHTRACK',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15, letterSpacing: 1)),
+                style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 15,
+                    letterSpacing: 1)),
             // Which build is running, and whether anything saved will still
             // be here after a refresh. Both are invisible otherwise — a
             // stale copy and a memory-only session look completely normal.
@@ -4354,7 +4745,8 @@ class _HamburgerDrawer extends StatelessWidget {
         GestureDetector(
           onTap: onClose,
           child: Container(
-            width: 32, height: 32,
+            width: 32,
+            height: 32,
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.08),
               borderRadius: BorderRadius.circular(8),
@@ -4370,11 +4762,14 @@ class _HamburgerDrawer extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(2, 18, 0, 6),
         child: Text(label,
             style: const TextStyle(
-                color: Colors.white38, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 2)),
+                color: Colors.white38,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 2)),
       );
 
-  Widget _item(BuildContext context, IconData icon, Color color, String name, String subtitle,
-      String description, VoidCallback onTap) {
+  Widget _item(BuildContext context, IconData icon, Color color, String name,
+      String subtitle, String description, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -4387,7 +4782,8 @@ class _HamburgerDrawer extends StatelessWidget {
         ),
         child: Row(children: [
           Container(
-            width: 34, height: 34,
+            width: 34,
+            height: 34,
             decoration: BoxDecoration(
               color: color.withValues(alpha: 0.14),
               borderRadius: BorderRadius.circular(8),
@@ -4396,10 +4792,13 @@ class _HamburgerDrawer extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(name,
                   style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13)),
               Text(subtitle,
                   style: const TextStyle(color: Colors.white38, fontSize: 11)),
             ]),
@@ -4425,11 +4824,13 @@ class _HamburgerDrawer extends StatelessWidget {
         decoration: BoxDecoration(
           color: const Color(0xFFFF2D55).withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFFF2D55).withValues(alpha: 0.4)),
+          border:
+              Border.all(color: const Color(0xFFFF2D55).withValues(alpha: 0.4)),
         ),
         child: Row(children: [
           Container(
-            width: 34, height: 34,
+            width: 34,
+            height: 34,
             decoration: BoxDecoration(
               color: const Color(0xFFFF2D55).withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(8),
@@ -4438,7 +4839,8 @@ class _HamburgerDrawer extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           const Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               // Was "SOS — 505": leetspeak that reads like a number to dial.
               Text('SOS',
                   style: TextStyle(
@@ -4448,7 +4850,9 @@ class _HamburgerDrawer extends StatelessWidget {
                       letterSpacing: 0.5)),
               Text('Press and hold · call 000 · mesh · SMS',
                   style: TextStyle(
-                      color: Color(0xFFFF2D55), fontSize: 10, fontWeight: FontWeight.w500)),
+                      color: Color(0xFFFF2D55),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w500)),
             ]),
           ),
           _infoBtn(context, 'SOS',
@@ -4459,7 +4863,8 @@ class _HamburgerDrawer extends StatelessWidget {
     );
   }
 
-  static Widget _infoBtn(BuildContext context, String title, String desc, {required bool isRed}) {
+  static Widget _infoBtn(BuildContext context, String title, String desc,
+      {required bool isRed}) {
     return GestureDetector(
       onTap: () => showDialog(
         context: context,
@@ -4473,7 +4878,10 @@ class _HamburgerDrawer extends StatelessWidget {
                     : const Color(0xFF9C60F0).withValues(alpha: 0.5)),
           ),
           title: Text(title,
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15)),
           // Scrollable: a long description used to overflow the dialog and
           // render behind the OK button, with no way to reach the rest of it.
           content: SingleChildScrollView(
@@ -4484,13 +4892,15 @@ class _HamburgerDrawer extends StatelessWidget {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('OK', style: TextStyle(color: Color(0xFFFF8C00))),
+              child:
+                  const Text('OK', style: TextStyle(color: Color(0xFFFF8C00))),
             ),
           ],
         ),
       ),
       child: Container(
-        width: 28, height: 28,
+        width: 28,
+        height: 28,
         decoration: BoxDecoration(
           color: const Color(0xFF0D0F1E),
           borderRadius: BorderRadius.circular(7),
@@ -4500,10 +4910,10 @@ class _HamburgerDrawer extends StatelessWidget {
                 : const Color(0xFF9C60F0).withValues(alpha: 0.5),
           ),
         ),
-        child: Icon(Icons.info_outline, size: 14,
+        child: Icon(Icons.info_outline,
+            size: 14,
             color: isRed ? const Color(0xFFFF2D55) : const Color(0xFFC9A8FF)),
       ),
     );
   }
 }
-

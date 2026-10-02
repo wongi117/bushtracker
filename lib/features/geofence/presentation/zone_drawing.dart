@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 
 import 'package:bush_track/core/models/geofence.dart';
 import 'package:bush_track/core/utils/geo_geometry.dart';
+import 'package:bush_track/core/widgets/safe_sheet.dart';
 import 'package:bush_track/theme/app_colors.dart';
 
 /// Smallest and largest a circle zone can be.
@@ -26,7 +27,8 @@ double radiusToSliderT(double metres) =>
         .clamp(0.0, 1.0);
 
 double sliderTToRadius(double t) =>
-    kZoneMinRadius * math.pow(kZoneMaxRadius / kZoneMinRadius, t.clamp(0.0, 1.0));
+    kZoneMinRadius *
+    math.pow(kZoneMaxRadius / kZoneMinRadius, t.clamp(0.0, 1.0));
 
 /// A zone being drawn on the map, before it is named and saved.
 ///
@@ -64,9 +66,8 @@ class ZoneDraft {
 
   /// Whether there is enough here to save: a placed centre, or three corners
   /// that actually enclose ground.
-  bool get isSaveable => shape == ZoneShape.circle
-      ? points.isNotEmpty
-      : points.length >= 3;
+  bool get isSaveable =>
+      shape == ZoneShape.circle ? points.isNotEmpty : points.length >= 3;
 
   double get areaSqMetres => shape == ZoneShape.circle
       ? 3.141592653589793 * radiusMetres * radiusMetres
@@ -90,8 +91,9 @@ class ZoneDraft {
       ? copyWith(points: [point])
       : copyWith(points: [...points, point]);
 
-  ZoneDraft undoLastPoint() =>
-      points.isEmpty ? this : copyWith(points: points.sublist(0, points.length - 1));
+  ZoneDraft undoLastPoint() => points.isEmpty
+      ? this
+      : copyWith(points: points.sublist(0, points.length - 1));
 
   /// Switching shape throws away points that do not carry over, so the map
   /// never shows a half-converted shape.
@@ -153,7 +155,8 @@ List<Widget> buildZoneMapLayers({
 
   final layers = <Widget>[
     if (circles.isNotEmpty) CircleLayer(circles: circles),
-    if (polygons.isNotEmpty) PolygonLayer(polygons: polygons, polygonLabels: showLabels),
+    if (polygons.isNotEmpty)
+      PolygonLayer(polygons: polygons, polygonLabels: showLabels),
   ];
 
   // Circle zones carry their name on a label marker; CircleMarker has no
@@ -182,8 +185,18 @@ List<Widget> buildZoneMapLayers({
   return layers;
 }
 
-List<Widget> _buildDraftLayers(ZoneDraft draft, ValueChanged<Offset>? onRadiusDragTo) {
-  const draftColor = AppColors.accent;
+List<Widget> _buildDraftLayers(
+    ZoneDraft draft, ValueChanged<Offset>? onRadiusDragTo) {
+  // White, not AppColors.accent. The accent orange is byte-identical to the
+  // "No entry" category — which is also the default — so a zone that saved
+  // perfectly well looked exactly like one still being dragged out. Reported
+  // as "I picked Heritage and got orange": the orange was an unsaved draft,
+  // and had they left the category alone the saved zone would have been orange
+  // too.
+  //
+  // A draft is not a category, so it should not borrow a category's colour.
+  // White reads as unfinished and clashes with none of them.
+  const draftColor = Colors.white;
 
   if (draft.shape == ZoneShape.circle) {
     // A grab handle on the edge, due east of the centre, so the circle can be
@@ -279,7 +292,8 @@ class _RadiusHandle extends StatelessWidget {
                     color: Colors.black.withValues(alpha: 0.4), blurRadius: 4),
               ],
             ),
-            child: const Icon(Icons.open_in_full, size: 13, color: Colors.black),
+            child:
+                const Icon(Icons.open_in_full, size: 13, color: Colors.black),
           ),
         ),
       );
@@ -608,153 +622,161 @@ Future<ZoneDetails?> showZoneDetailsSheet(
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
     builder: (sheetContext) => StatefulBuilder(
-      builder: (sheetContext, setSheetState) => Padding(
-        padding: EdgeInsets.only(
-            bottom: MediaQuery.of(sheetContext).viewInsets.bottom),
-        child: Container(
-          decoration: const BoxDecoration(
-            color: AppColors.panelMatte,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-          ),
-          padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: AppColors.panelHighlight,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
+      // Was padded for viewInsets only — the keyboard — so SAVE and CANCEL
+      // were drawn underneath the Android navigation bar whenever the keyboard
+      // was down, and a boundary could not be saved at all. sheetPadding
+      // clears both; see safe_sheet.dart for why they combine with max rather
+      // than a sum.
+      builder: (sheetContext, setSheetState) => Container(
+        constraints: BoxConstraints(
+          // Leaves the keyboard its room, so the form scrolls rather than
+          // pushing its own buttons off the bottom while being typed into.
+          maxHeight: (MediaQuery.of(sheetContext).size.height -
+                  MediaQuery.of(sheetContext).viewInsets.bottom) *
+              0.9,
+        ),
+        decoration: const BoxDecoration(
+          color: AppColors.panelMatte,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+        ),
+        padding: sheetPadding(sheetContext),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.panelHighlight,
+                    borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-                const SizedBox(height: 16),
-                const Text('NAME THIS ZONE',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 14,
-                        letterSpacing: 1)),
-                const SizedBox(height: 4),
-                Text(summary,
-                    style: const TextStyle(
-                        color: AppColors.accentLight, fontSize: 12)),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: nameController,
-                  autofocus: true,
-                  textCapitalization: TextCapitalization.sentences,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: _fieldDecoration('Name', 'Old shaft, creek bend'),
-                ),
-                const SizedBox(height: 16),
-                const Text('WHAT IS IT?',
-                    style: TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.8)),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: ZoneCategory.values.map((c) {
-                    final selected = c == category;
-                    final color = Color(c.colorValue);
-                    return GestureDetector(
-                      onTap: () => setSheetState(() => category = c),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: selected
-                              ? color.withValues(alpha: 0.25)
-                              : AppColors.panelLight,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                              color: selected ? color : AppColors.panelHighlight,
-                              width: selected ? 2 : 1),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              width: 10,
-                              height: 10,
-                              decoration: BoxDecoration(
-                                  color: color, shape: BoxShape.circle),
-                            ),
-                            const SizedBox(width: 7),
-                            Text(c.label,
-                                style: TextStyle(
-                                    color: selected
-                                        ? Colors.white
-                                        : AppColors.textSecondary,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600)),
-                          ],
-                        ),
+              ),
+              const SizedBox(height: 16),
+              const Text('NAME THIS ZONE',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14,
+                      letterSpacing: 1)),
+              const SizedBox(height: 4),
+              Text(summary,
+                  style: const TextStyle(
+                      color: AppColors.accentLight, fontSize: 12)),
+              const SizedBox(height: 16),
+              TextField(
+                controller: nameController,
+                autofocus: true,
+                textCapitalization: TextCapitalization.sentences,
+                style: const TextStyle(color: Colors.white),
+                decoration: _fieldDecoration('Name', 'Old shaft, creek bend'),
+              ),
+              const SizedBox(height: 16),
+              const Text('WHAT IS IT?',
+                  style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.8)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: ZoneCategory.values.map((c) {
+                  final selected = c == category;
+                  final color = Color(c.colorValue);
+                  return GestureDetector(
+                    onTap: () => setSheetState(() => category = c),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? color.withValues(alpha: 0.25)
+                            : AppColors.panelLight,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                            color: selected ? color : AppColors.panelHighlight,
+                            width: selected ? 2 : 1),
                       ),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: notesController,
-                  maxLines: 3,
-                  textCapitalization: TextCapitalization.sentences,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: _fieldDecoration(
-                      'Notes (optional)', 'What is here, who to tell'),
-                ),
-                const SizedBox(height: 18),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextButton(
-                        onPressed: () => Navigator.pop(sheetContext),
-                        child: const Text('CANCEL',
-                            style: TextStyle(color: AppColors.textSecondary)),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                                color: color, shape: BoxShape.circle),
+                          ),
+                          const SizedBox(width: 7),
+                          Text(c.label,
+                              style: TextStyle(
+                                  color: selected
+                                      ? Colors.white
+                                      : AppColors.textSecondary,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600)),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      flex: 2,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.accent,
-                          foregroundColor: Colors.black,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10)),
-                        ),
-                        onPressed: () {
-                          final name = nameController.text.trim();
-                          Navigator.pop(
-                            sheetContext,
-                            ZoneDetails(
-                              // An unnamed zone is still worth saving; it just
-                              // needs something to show in the list.
-                              name: name.isEmpty ? category.label : name,
-                              category: category,
-                              notes: notesController.text.trim().isEmpty
-                                  ? null
-                                  : notesController.text.trim(),
-                            ),
-                          );
-                        },
-                        child: const Text('SAVE',
-                            style: TextStyle(fontWeight: FontWeight.w900)),
-                      ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: notesController,
+                maxLines: 3,
+                textCapitalization: TextCapitalization.sentences,
+                style: const TextStyle(color: Colors.white),
+                decoration: _fieldDecoration(
+                    'Notes (optional)', 'What is here, who to tell'),
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(sheetContext),
+                      child: const Text('CANCEL',
+                          style: TextStyle(color: AppColors.textSecondary)),
                     ),
-                  ],
-                ),
-              ],
-            ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.accent,
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
+                      onPressed: () {
+                        final name = nameController.text.trim();
+                        Navigator.pop(
+                          sheetContext,
+                          ZoneDetails(
+                            // An unnamed zone is still worth saving; it just
+                            // needs something to show in the list.
+                            name: name.isEmpty ? category.label : name,
+                            category: category,
+                            notes: notesController.text.trim().isEmpty
+                                ? null
+                                : notesController.text.trim(),
+                          ),
+                        );
+                      },
+                      child: const Text('SAVE',
+                          style: TextStyle(fontWeight: FontWeight.w900)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       ),

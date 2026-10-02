@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../../../core/models/waypoint.dart';
 import 'color_picker.dart';
+import 'package:bush_track/core/widgets/safe_sheet.dart';
 
 /// The pin's sheet: distance and bearing from you, plus Edit, Track and
 /// Delete.
@@ -277,8 +278,7 @@ class _WaypointMenuSheet extends StatelessWidget {
         color: Color(0xFF0D1035),
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      padding: EdgeInsets.fromLTRB(
-          20, 16, 20, MediaQuery.of(context).padding.bottom + 20),
+      padding: sheetPadding(context, left: 20, top: 16, right: 20, bottom: 20),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,

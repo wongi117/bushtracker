@@ -14,6 +14,7 @@ import 'package:bush_track/features/navigation/providers/navigation_provider.dar
 import 'package:bush_track/features/map/providers/map_action_provider.dart';
 import 'package:bush_track/features/ai/services/google_ai_service.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:bush_track/core/widgets/safe_sheet.dart';
 
 class _WebModelChoice {
   final String provider;
@@ -633,8 +634,15 @@ class _AIChatScreenState extends ConsumerState<AIChatScreen> {
   // ── Input bar ──────────────────────────────────────────────────────────────
   Widget _buildInputBar() {
     return Container(
-      margin: const EdgeInsets.symmetric(
-          horizontal: BushDS.spSM, vertical: BushDS.spSM),
+      // The text field sits at the bottom of the sheet, so it needs the
+      // navigation bar's height under it — and the keyboard's when that is up,
+      // or you cannot see what you are typing. See safe_sheet.
+      margin: EdgeInsets.fromLTRB(
+        BushDS.spSM,
+        BushDS.spSM,
+        BushDS.spSM,
+        BushDS.spSM + sheetBottomInset(context),
+      ),
       padding: const EdgeInsets.symmetric(
           horizontal: BushDS.spSM, vertical: BushDS.spXS),
       decoration: BoxDecoration(

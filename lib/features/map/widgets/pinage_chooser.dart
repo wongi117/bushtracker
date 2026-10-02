@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:bush_track/core/widgets/safe_sheet.dart';
 
 /// Shown on map long-press. Two cards side-by-side.
 /// Swipe left or tap the left card → Normal Pin.
@@ -55,9 +56,9 @@ class _PinageChooserSheetState extends State<_PinageChooserSheet> {
           color: Color(0xFF0D0F1E),
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
-        padding: EdgeInsets.fromLTRB(
-          16, 16, 16, MediaQuery.of(context).padding.bottom + 20,
-        ),
+        // padding.bottom reads zero while a keyboard is up, which drops the
+        // content back under the navigation bar mid-edit. See safe_sheet.
+        padding: sheetPadding(context, left: 16, top: 16, right: 16, bottom: 20),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [

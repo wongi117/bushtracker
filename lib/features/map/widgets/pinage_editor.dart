@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:image/image.dart' as img;
 import 'package:bush_track/core/models/waypoint.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
+import 'package:bush_track/core/widgets/safe_sheet.dart';
 
 /// Opens the Pinage editor as a bottom sheet.
 void showPinageEditor(
@@ -177,7 +178,8 @@ class _PinageEditorSheetState extends ConsumerState<PinageEditorSheet> {
         // ── Scrollable form ──────────────────────────────────────────────
         Expanded(
           child: SingleChildScrollView(
-            padding: EdgeInsets.fromLTRB(20, 4, 20, MediaQuery.of(context).padding.bottom + 12),
+            padding: sheetPadding(context,
+                left: 20, top: 4, right: 20, bottom: 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [

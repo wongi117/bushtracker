@@ -5,6 +5,7 @@ import 'package:bush_track/features/map/services/pin_photo_editing.dart';
 import 'package:bush_track/features/map/widgets/pin_photo_image.dart';
 import 'package:bush_track/features/map/widgets/pin_photo_viewer.dart';
 import 'package:bush_track/core/services/waypoint_share_service.dart';
+import 'package:bush_track/core/widgets/safe_sheet.dart';
 
 /// Opens the Pinage viewer as a bottom sheet.
 void showPinageViewer(
@@ -170,8 +171,10 @@ class _PinageViewerSheetState extends ConsumerState<PinageViewerSheet> {
             // ── Scrollable body ────────────────────────────────────────────
             Expanded(
               child: SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(
-                    20, 0, 20, MediaQuery.of(context).padding.bottom + 12),
+                // padding.bottom reads zero while a keyboard is up; see
+                // safe_sheet for why that matters.
+                padding: sheetPadding(context,
+                    left: 20, top: 0, right: 20, bottom: 12),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [

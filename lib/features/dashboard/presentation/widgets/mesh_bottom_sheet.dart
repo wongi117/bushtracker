@@ -7,6 +7,7 @@ import 'package:bush_track/features/mesh/providers/mesh_provider.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
 import 'package:bush_track/features/chat/presentation/ai_chat_screen.dart';
 import 'package:bush_track/core/models/waypoint.dart';
+import 'package:bush_track/features/dashboard/providers/sheet_metrics_provider.dart';
 
 class MeshBottomSheet extends ConsumerStatefulWidget {
   final void Function(LatLng)? onWaypointTapped;
@@ -23,7 +24,9 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
 
   /// How much of the sheet shows when it is down, not counting the system bar
   /// underneath it.
-  static const double _collapsedContentHeight = 120.0;
+  /// Shared with the map controls so they can sit above this sheet rather
+  /// than guessing at a pixel offset. See sheet_metrics_provider.
+  static const double _collapsedContentHeight = kCollapsedSheetContentHeight;
 
   /// The Android navigation bar's height, read each build.
   ///
@@ -119,6 +122,17 @@ class _MeshBottomSheetState extends ConsumerState<MeshBottomSheet>
     // with no animation, so it tracks the finger exactly.
     _bottomInset = MediaQuery.of(context).viewPadding.bottom;
     final double height = _dragHeight ?? _stops(screenHeight)[_sheetState];
+
+    // Tell the map controls where the top of this sheet is, so they move with
+    // it instead of ending up underneath. Deferred to after the frame: this is
+    // build, and writing to a provider mid-build would be modifying state
+    // during a build.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final current = ref.read(sheetHeightProvider);
+      if ((current - height).abs() < 0.5) return;
+      ref.read(sheetHeightProvider.notifier).state = height;
+    });
 
     return AnimatedContainer(
       duration: Duration(milliseconds: _dragHeight == null ? 280 : 0),
