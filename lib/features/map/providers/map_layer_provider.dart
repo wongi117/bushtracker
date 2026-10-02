@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:bush_track/features/map/providers/satellite_source_provider.dart';
 
 enum MapLayerType {
   street,
@@ -44,7 +45,11 @@ class MapLayerState {
       case MapLayerType.street:
         return 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
       case MapLayerType.satellite:
-        return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+        // One source of truth for satellite imagery, so a provider change is
+        // one edit rather than four. Falls back to Esri with no token.
+        return SatelliteSource.mapbox.isAvailable
+            ? SatelliteSource.mapbox.urlTemplate
+            : SatelliteSource.esri.urlTemplate;
       case MapLayerType.topo:
         return 'https://tile.opentopomap.org/{z}/{x}/{y}.png';
       default:

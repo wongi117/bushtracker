@@ -548,7 +548,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                           minZoom: 3.0,
                           tileSize: 256,
                           retinaMode: RetinaMode.isHighDensity(context),
-                          panBuffer: 3,
+                          // Tiles fetched beyond the viewport. Was 3, which
+                          // pre-loads three rings of tiles that may never be
+                          // looked at — free against Esri and OSM, billed per
+                          // request against Mapbox. 1 is the library default
+                          // and still smooths a pan.
+                          panBuffer: 1,
+                          // Tiles KEPT once fetched, which is the opposite: it
+                          // costs nothing and avoids re-fetching ground you
+                          // have already paid for when panning back. Generous
+                          // on purpose.
                           keepBuffer: 8,
                           errorTileCallback: (tile, error, stackTrace) {
                             debugPrint('Tile error: $error');

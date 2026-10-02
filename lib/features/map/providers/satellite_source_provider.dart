@@ -43,10 +43,19 @@ enum SatelliteSource {
         SatelliteSource.esri =>
           'https://server.arcgisonline.com/ArcGIS/rest/services/'
               'World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        // @2x for a retina-density tile, jpg90 because satellite imagery is
-        // photographic and PNG would triple the bytes for no visible gain.
+        // {r}, not a hardcoded @2x — and the difference is billable.
+        //
+        // flutter_map fills {r} with "@2x" on a high-density screen and with
+        // nothing otherwise: one request either way. With @2x written in and no
+        // {r} present, it instead *simulates* retina by "requesting four tiles
+        // at a larger zoom level and combining them" (its own docs), so every
+        // tile became four already-double-resolution requests — 4x the Mapbox
+        // bill to draw the same pixels — and cost a zoom level off the top.
+        //
+        // jpg90 because satellite imagery is photographic; PNG would triple
+        // the bytes for no visible gain.
         SatelliteSource.mapbox =>
-          'https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}@2x.jpg90'
+          'https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}{r}.jpg90'
               '?access_token=${ApiConfig.mapboxPublicToken}',
       };
 
@@ -84,7 +93,20 @@ enum SatelliteSource {
 }
 
 class SatelliteSourceNotifier extends StateNotifier<SatelliteSource> {
-  SatelliteSourceNotifier() : super(SatelliteSource.esri) {
+  /// Mapbox by default where there is a token, Esri where there is not.
+  ///
+  /// Esri was the default for as long as this app has existed, and is now the
+  /// comparison option only: its licence is the Esri Master License Agreement
+  /// and its stated use is "in various ArcGIS apps", which this is not. See
+  /// PINAGE_BUILD_PLAN_4.md 5.5. Mapbox's own terms cover raster tiles through
+  /// third-party libraries, billed per request.
+  ///
+  /// Still falling back rather than failing: a build with no token keeps
+  /// working exactly as before.
+  SatelliteSourceNotifier()
+      : super(SatelliteSource.mapbox.isAvailable
+            ? SatelliteSource.mapbox
+            : SatelliteSource.esri) {
     _load();
   }
 

@@ -77,6 +77,31 @@ PINAGE_BUILD_PLAN_4.md  current phase plan and task checklist
   `{"data":[]}` with HTTP 200, the **access** token returns real imagery. Empty-with-200 means
   the wrong credential, not thin coverage.
 
+### Mapbox tiles are billed per request
+Mapbox raster tiles through flutter_map are supported by Mapbox's terms and
+**billed per tile request** (25,000 MAU free on the mobile SDKs; raster tiles are
+counted separately). Esri and OSM were free, so nothing in this app was ever
+written with request cost in mind. Things that cost money quietly:
+
+- **`{r}`, never a hardcoded `@2x`.** flutter_map fills `{r}` with `@2x` on a
+  high-density screen and nothing otherwise — one request either way. With
+  `@2x` written into the URL and no `{r}`, flutter_map instead *simulates*
+  retina by requesting **four tiles at a higher zoom and combining them**, so
+  every tile becomes four already-doubled requests and the top zoom level is
+  lost. This was shipped and fixed; do not undo it.
+- **`panBuffer` is fetches, `keepBuffer` is memory.** `panBuffer` pre-loads
+  rings of tiles beyond the screen that may never be looked at — keep it at 1.
+  `keepBuffer` only retains tiles already fetched, so it is free and worth
+  having generous: it stops re-paying for ground you have already panned over.
+- **Never add Mapbox to the offline downloader.** Caching their tiles outside
+  their own SDK is not permitted, and bulk download would be both a terms
+  breach and a large bill. Offline regions stay on the other sources until the
+  Protomaps work lands.
+- **Do not rebuild the TileLayer needlessly.** A changing `key` or a URL
+  rebuilt with a new string identity re-fetches every visible tile.
+- Esri remains selectable for field comparison only. Its licence is unresolved
+  — see PINAGE_BUILD_PLAN_4.md 5.5.
+
 ### Supabase
 - Only ever the `pinage-maps` project in Sydney. **Never `autoplexity-ai`** — that is a
   different product in a different repo that happens to share an owner.

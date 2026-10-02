@@ -14,13 +14,25 @@ void main() {
       expect(SatelliteSource.esri.urlTemplate, contains('/{z}/{y}/{x}'));
     });
 
-    test('Mapbox uses x/y, retina and jpeg', () {
+    test('Mapbox uses x/y, the {r} placeholder, and jpeg', () {
       final url = SatelliteSource.mapbox.urlTemplate;
       expect(url, contains('/{z}/{x}/{y}'));
-      expect(url, contains('@2x'));
       // Satellite imagery is photographic; PNG would triple the bytes over a
       // mobile connection for no visible gain.
       expect(url, contains('jpg90'));
+    });
+
+    test('Mapbox asks for retina with {r}, never a hardcoded @2x', () {
+      // This one is billable. flutter_map fills {r} with "@2x" on a
+      // high-density screen and nothing otherwise — one request either way.
+      // With @2x written in and no {r} present it *simulates* retina instead,
+      // "requesting four tiles at a larger zoom level and combining them", so
+      // every tile becomes four already-doubled requests and the top zoom
+      // level is lost.
+      final url = SatelliteSource.mapbox.urlTemplate;
+      expect(url, contains('{r}'));
+      expect(url, isNot(contains('@2x')),
+          reason: 'a hardcoded @2x quadruples the Mapbox bill');
     });
 
     test('Mapbox carries the access token', () {
@@ -98,23 +110,38 @@ void main() {
   });
 
   group('the setting', () {
-    test('starts on ESRI, which is what the app has always shown', () {
-      expect(SatelliteSourceNotifier().state, SatelliteSource.esri);
+    test('starts on Mapbox where there is a token, Esri where there is not',
+        () {
+      // Esri was the default for as long as this app existed. It is now the
+      // comparison option only: its licence is the Esri Master License
+      // Agreement and its stated use is "in various ArcGIS apps", which this
+      // is not. A build with no Mapbox token still falls back rather than
+      // failing.
+      expect(
+          SatelliteSourceNotifier().state,
+          SatelliteSource.mapbox.isAvailable
+              ? SatelliteSource.mapbox
+              : SatelliteSource.esri);
     });
 
     test('toggling moves to the other source and back', () async {
+      // Start-agnostic on purpose: which source it opens on depends on whether
+      // the build has a Mapbox token, and the toggle has to work either way.
       final n = SatelliteSourceNotifier();
+      final started = n.state;
+
       if (!SatelliteSource.mapbox.isAvailable) {
-        // Without a token in the test build, toggling must change nothing
-        // rather than leave the map on a source that cannot load.
+        // Without a token there is only one usable source, so toggling must
+        // change nothing rather than leave the map on one that cannot load.
         await n.toggle();
         expect(n.state, SatelliteSource.esri);
         return;
       }
+
       await n.toggle();
-      expect(n.state, SatelliteSource.mapbox);
+      expect(n.state, isNot(started));
       await n.toggle();
-      expect(n.state, SatelliteSource.esri);
+      expect(n.state, started);
     });
 
     test('an unavailable source is refused rather than selected', () async {

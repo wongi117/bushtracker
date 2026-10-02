@@ -49,6 +49,7 @@ import 'package:bush_track/features/settings/presentation/settings_screen.dart';
 import 'package:bush_track/core/config/secrets.dart';
 import 'package:bush_track/core/services/gpx_service.dart';
 import 'package:bush_track/core/models/trail.dart';
+import 'package:bush_track/features/map/providers/satellite_source_provider.dart';
 
 class HomeScreenLayout extends ConsumerStatefulWidget {
   const HomeScreenLayout({super.key});
@@ -1503,9 +1504,14 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
     final k = AppSecrets.maptilerKey;
     switch (_mapStyle) {
       case _MapStyle.satellite:
+        // Mapbox first, then MapTiler if it has a key, then Esri. See
+        // satellite_source_provider for why Esri is no longer the default.
+        if (SatelliteSource.mapbox.isAvailable) {
+          return SatelliteSource.mapbox.urlTemplate;
+        }
         return k.isNotEmpty
             ? 'https://api.maptiler.com/maps/satellite/{z}/{x}/{y}.jpg?key=$k'
-            : 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+            : SatelliteSource.esri.urlTemplate;
       case _MapStyle.dark:
         return k.isNotEmpty
             ? 'https://api.maptiler.com/maps/dataviz-dark/{z}/{x}/{y}.png?key=$k'
