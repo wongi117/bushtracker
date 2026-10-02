@@ -163,6 +163,45 @@ void main() {
       expect(rows.first['sort_order'], 1000);
     });
 
+    test('it migrates a field_files that has no created_at at all', () async {
+      // The first version of this migration read created_at unguarded. A
+      // handset whose field_files predates that column would have thrown here,
+      // rolled the transaction back, and sat at version 4 -- retrying the same
+      // failing upgrade on every single launch, with projects never arriving
+      // and no way for the user to tell why.
+      final db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+      addTearDown(db.close);
+      await db.execute('''
+        CREATE TABLE field_files(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT, description TEXT
+        )''');
+      await db.insert('field_files', {'name': 'Old survey'});
+
+      await DbMigrations.upgrade(db, from: 4, to: 5);
+
+      final row = (await db.query('field_files')).single;
+      expect(row['name'], 'Old survey', reason: 'the project survives');
+      expect(row['sort_order'], 0, reason: 'level, falling back to id order');
+      expect(await DbMigrations.hasColumn(db, 'field_files', 'colour'), isTrue);
+    });
+
+    test('and falls back to updated_at when that is the only stamp it has',
+        () async {
+      final db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+      addTearDown(db.close);
+      await db.execute('''
+        CREATE TABLE field_files(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT, updated_at INTEGER
+        )''');
+      await db.insert('field_files', {'name': 'a', 'updated_at': 7000});
+
+      await DbMigrations.upgrade(db, from: 4, to: 5);
+
+      expect((await db.query('field_files')).single['sort_order'], 7000);
+    });
+
     test('and is safe to run twice', () async {
       final db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
       addTearDown(db.close);

@@ -215,9 +215,26 @@ class DbMigrations {
 
     // Existing projects get their creation order as a starting sort, so a list
     // that was ordered by age stays in the order the user is used to.
+    //
+    // Which column that order comes from is checked rather than assumed.
+    // `created_at` is in today's CREATE TABLE, but a migration runs against
+    // whatever is actually on the handset, and an unguarded reference to a
+    // missing column throws -- rolling this transaction back and leaving the
+    // database stuck at version 4, retrying and failing it on every launch.
+    // The rest of this step already checks before it touches anything; this
+    // was the one line that did not.
+    final String order;
+    if (await hasColumn(db, 'field_files', 'created_at')) {
+      order = 'COALESCE(created_at, 0)';
+    } else if (await hasColumn(db, 'field_files', 'updated_at')) {
+      order = 'COALESCE(updated_at, 0)';
+    } else {
+      // No timestamp to go on, so everything starts level and the list falls
+      // back to id order. Better than refusing to migrate.
+      order = '0';
+    }
     await db.execute(
-      'UPDATE field_files SET sort_order = COALESCE(created_at, 0) '
-      'WHERE sort_order IS NULL',
+      'UPDATE field_files SET sort_order = $order WHERE sort_order IS NULL',
     );
 
     await db.execute('CREATE INDEX IF NOT EXISTS idx_field_files_archived '

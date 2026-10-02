@@ -13,6 +13,7 @@ import 'package:bush_track/core/models/geofence.dart';
 import 'package:bush_track/core/models/trail.dart';
 import 'package:bush_track/core/models/waypoint.dart';
 import 'package:bush_track/core/services/database_service.dart';
+import 'package:bush_track/core/services/db_migrations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -25,6 +26,12 @@ void main() {
   setUp(() async {
     db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
     await DatabaseService().createTablesForTest(db);
+    // Both halves, because that is what onCreate does on a real install.
+    // CREATE TABLE deliberately does not chase the newest columns -- the
+    // migrations are the single source for those -- so a database built from
+    // the DDL alone is a schema the app never actually runs on, and a model
+    // whose toMap() writes a migration-added column fails against it.
+    await DbMigrations.markFresh(db);
   });
 
   tearDown(() => db.close());
