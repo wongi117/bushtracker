@@ -49,6 +49,7 @@ import 'package:bush_track/features/map/presentation/marker_picker_screen.dart';
 import 'package:bush_track/features/map/providers/map_action_provider.dart';
 import 'package:bush_track/features/map/providers/marker_visibility_provider.dart';
 import 'package:bush_track/features/map/providers/satellite_source_provider.dart';
+import 'package:bush_track/core/providers/outbox_provider.dart';
 import 'package:bush_track/features/map/widgets/connectivity_pill.dart';
 import 'package:bush_track/features/streetview/presentation/street_photo_viewer.dart';
 import 'package:bush_track/features/streetview/providers/mapillary_provider.dart';
@@ -1235,7 +1236,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
           Positioned(
             top: MediaQuery.of(context).padding.top + 12,
             left: 16,
-            child: const ConnectivityPill(),
+            // The queue count makes "offline" and "offline with three things
+            // waiting" different readings, which is the point of the badge.
+            child: ConnectivityPill(
+                pendingCount: ref.watch(outboxStatusProvider).pending),
           ),
 
           // Imagery credit. Required by Esri's and Mapbox's terms alike, and

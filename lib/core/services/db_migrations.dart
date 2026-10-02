@@ -40,7 +40,7 @@ class DbMigrations {
   const DbMigrations._();
 
   /// The version the code expects. Bump this when adding a migration.
-  static const int currentVersion = 3;
+  static const int currentVersion = 4;
 
   /// Every step, in order. A gap in the numbering is a bug, and
   /// [assertWellFormed] catches it in the tests rather than on a phone.
@@ -54,6 +54,11 @@ class DbMigrations {
           to: 3,
           describe: 'photo migration backup table',
           run: _v3PhotoBackup,
+        ),
+        Migration(
+          to: 4,
+          describe: 'outbox for work that has to leave the phone',
+          run: _v4Outbox,
         ),
       ];
 
@@ -162,6 +167,30 @@ class DbMigrations {
         backed_up_at INTEGER
       )
     ''');
+  }
+
+  /// The queue of things waiting for a connection.
+  ///
+  /// Indexed on state, because the status badge counts pending items on every
+  /// rebuild, and on dedupe_key, because every enqueue checks it.
+  static Future<void> _v4Outbox(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS outbox(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind TEXT NOT NULL,
+        payload TEXT,
+        created_at INTEGER NOT NULL,
+        dedupe_key TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        state TEXT NOT NULL DEFAULT 'queued',
+        next_attempt_at INTEGER
+      )
+    ''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_outbox_state ON outbox(state)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_outbox_dedupe ON outbox(dedupe_key)');
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────

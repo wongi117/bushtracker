@@ -26,6 +26,13 @@ class DatabaseService {
   /// Surfaced in the menu, because release web builds print nothing.
   bool get isPersistent => _db != null;
 
+  /// The open database, for code that needs to run its own SQL.
+  ///
+  /// Null on web where no factory would open, and before [initialize]. Callers
+  /// must handle that rather than assuming — the outbox and the photo
+  /// migration both do.
+  Database? get database => _db;
+
   /// Why the browser database could not open, when it could not.
   String? storageFailure;
 
