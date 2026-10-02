@@ -735,3 +735,77 @@ Non-negotiable per the brief, and the design above gives it for free:
 - No change to the offline downloader until Protomaps replaces it, so existing downloaded
   regions keep working.
 - Nothing is removed until you have compared them on the phone, in the field.
+
+## 5.5 Esri World Imagery licensing — answered, and the answer is a problem
+
+Asked: does Esri World Imagery's licence allow use in a commercial app the way we are
+using it, and what account and attribution does it need?
+
+**I am not a lawyer and this is not legal advice.** What follows is what Esri's own published
+metadata says, fetched from their APIs rather than recalled, with the inference drawn plainly
+so you can take it to them.
+
+### What Esri's own records say
+
+From `server.arcgisonline.com/.../World_Imagery/MapServer?f=json`:
+
+```
+copyrightText: Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community
+```
+
+From the ArcGIS Online item record (`10df2279f9684e4a9f6a7f08febac2a9`), field `licenseInfo`:
+
+> This work is licensed under the **Esri Master License Agreement**.
+>
+> **Export:** This layer is **not intended to be used to export tiles for offline**. If you
+> would like to export imagery for offline use in ArcGIS applications, you may use the
+> World Imagery (for Export) layer, which is intended for this purpose.
+>
+> **Data Collection and Editing:** This layer may be used **in various ArcGIS apps** to
+> support data collection and editing, with the results used internally or shared with
+> others, as described for these use cases.
+
+### What that means for us
+
+| Question | Answer |
+|---|---|
+| Is it an open or free-to-use licence? | **No.** It is the Esri Master License Agreement — a contract between Esri and its customers, not a public licence. |
+| Do we have one? | **No.** There is no Esri account, agreement or API key anywhere in this project. |
+| Does the stated use case cover us? | **Probably not.** The permitted use is described as "in various ArcGIS apps". Pinage Maps is a Flutter app hitting the REST tile endpoint directly. |
+| Are we breaching the offline clause? | **No.** Checked: `offline_map_manager.dart` downloads MapTiler tiles only, never `arcgisonline.com`. Esri imagery is display-only here. That is the one part of this that is clearly fine. |
+| What attribution is required? | `Esri, Vantor, Earthstar Geographics, and the GIS User Community` — now shown on the map. |
+
+**Note the attribution had drifted.** I had written "Esri, Maxar, Earthstar Geographics" from
+memory; the service now says **Vantor**, because Maxar rebranded. The string is taken verbatim
+from the API response, so it cannot quietly go stale again.
+
+### Assessment
+
+The endpoint being reachable without a key is not permission. Esri moved basemap access to
+ArcGIS Location Platform with API keys and a free tier some years ago; `server.arcgisonline.com`
+is the older unauthenticated path that a great many apps still use, which makes it common but
+not thereby licensed. **For a commercial release I would not rely on it.**
+
+### Options, in the order I would consider them
+
+1. **Make Mapbox the default satellite and keep Esri only for comparison.** You already have a
+   Mapbox account with an explicit free tier. Smallest change — one line of default state.
+   Caveat: this does not resolve the *other* terms question I flagged in 5.2, that Mapbox's
+   terms likely restrict serving their tiles through a non-Mapbox SDK, which is what Option A
+   does. That points at Option B as the licensed end state for Mapbox.
+2. **Get an ArcGIS Location Platform API key.** There is a free tier, and it makes Esri usage
+   licensed and explicit rather than incidental. Keeps the imagery you already know, with a
+   key in `config/pinage.json` like the others. Needs you to read their current pricing and
+   basemap-request allowance, which I will not quote from memory.
+3. **Drop Esri entirely** once the field test picks a winner. Simplest legally, and if Mapbox
+   looks better over Leonora anyway then the question answers itself.
+
+### What I have not changed
+
+Esri is **still the default**, deliberately. It is what the app has always shipped, the field
+comparison needs both sources, and quietly switching the default would undermine the very
+test you are about to run. Say which option you want and I will make the change.
+
+**Esri is referenced in four places**, so a switch is not just the one I added:
+`satellite_source_provider.dart`, `home_screen_layout.dart`, `map_3d_screen.dart`,
+`map_layer_provider.dart`.

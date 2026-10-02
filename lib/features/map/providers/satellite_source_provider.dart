@@ -13,8 +13,16 @@ import 'package:bush_track/core/config/api_config.dart';
 /// whether that imagery is *useful* at 20, or just upscaled, is a question for
 /// eyes on a phone.
 enum SatelliteSource {
-  /// ESRI World Imagery. Free, no key, the same source Avenza and Gaia use.
+  /// Esri World Imagery, via the unauthenticated ArcGIS REST endpoint.
   /// What this app has always used.
+  ///
+  /// **Licensing is unresolved — see PINAGE_BUILD_PLAN_4.md 5.5.** The item's
+  /// own licenseInfo says "licensed under the Esri Master License Agreement"
+  /// and describes its use cases as being "in various ArcGIS apps". This is
+  /// not an ArcGIS app and there is no Esri agreement, so this may not be a
+  /// licensed use. Not changed unilaterally, because it is what the app has
+  /// always shipped and the field comparison needs both sources — but it
+  /// should not be the default for a commercial release until answered.
   esri,
 
   /// Mapbox Satellite. Needs a public token; falls back to ESRI without one.
@@ -56,8 +64,15 @@ enum SatelliteSource {
       };
 
   /// Required by both providers' terms, and absent from this app until now.
+  ///
+  /// The Esri wording is taken verbatim from the service's own `copyrightText`
+  /// and the ArcGIS Online item's `accessInformation`, not from memory — which
+  /// matters, because it has changed: Maxar rebranded to Vantor, so an
+  /// attribution written from recollection is already out of date and credits
+  /// a company that no longer exists under that name.
   String get attribution => switch (this) {
-        SatelliteSource.esri => 'Imagery © Esri, Maxar, Earthstar Geographics',
+        SatelliteSource.esri =>
+          'Esri, Vantor, Earthstar Geographics, and the GIS User Community',
         SatelliteSource.mapbox => '© Mapbox © OpenStreetMap',
       };
 
