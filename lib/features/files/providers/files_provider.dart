@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:bush_track/core/models/field_file.dart';
 import 'package:bush_track/core/services/database_service.dart';
+import 'package:bush_track/core/services/photo_file_store.dart';
 import 'package:bush_track/main.dart';
 
 class FilesState {
@@ -135,10 +136,37 @@ class FilesNotifier extends StateNotifier<FilesState> {
     await _load();
   }
 
-  Future<void> deleteFile(int id) async {
-    await db.deleteFieldFile(id);
+  /// What is filed under a project, for a delete confirmation.
+  Future<ProjectContents> contentsOf(int id) => db.countFieldFileContents(id);
+
+  /// Delete a project.
+  ///
+  /// [withContents] false unfiles its pins, zones and trails -- they stay on
+  /// the map as Unsorted. True deletes them, which is the one action in the app
+  /// that can lose collected work, so the caller must have shown the counts
+  /// first.
+  Future<void> deleteFile(int id, {bool withContents = false}) async {
+    await db.deleteFieldFile(id, withContents: withContents);
     if (state.activeFileId == id) await setActiveFile(null);
     await _load();
+
+    if (withContents) {
+      // Photos are removed by being unreferenced, not by the paths that were
+      // just deleted: two pins can point at the same file, and deleting by
+      // path would take it out from under the one that remains.
+      try {
+        final store = PhotoFileStore();
+        if (!await store.isAvailable) return;
+        final referenced = await db.referencedPhotoPaths();
+        for (final orphan in await store.orphans(referenced)) {
+          await store.delete(orphan);
+        }
+      } catch (e) {
+        // A photo left on disk costs space; a crash here costs the delete. The
+        // orphan sweep can run again later.
+        debugPrint('Photo cleanup after project delete failed: $e');
+      }
+    }
   }
 
   /// Open a file for work, or pass null to close whatever is open.

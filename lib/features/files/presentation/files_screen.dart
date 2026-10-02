@@ -1012,37 +1012,115 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
   }
 
   Future<void> _confirmDelete(FieldFile file) async {
-    final yes = await showDialog<bool>(
+    // Counted from the database before anything is offered, because the
+    // destructive option has to name the real number. A count taken from the
+    // providers would be whatever the current scope happens to show, and
+    // undercounting here means agreeing to lose more than you were told.
+    final contents = await ref.read(filesProvider.notifier).contentsOf(file.id!);
+    if (!mounted) return;
+
+    final choice = await showDialog<_DeleteChoice>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.panelMatte,
-        title: const Text('Delete file', style: TextStyle(color: Colors.white)),
-        content: Text(
-          'Delete "${file.name}" and its notes?\n\n'
-          'Pins and zones you collected stay on the map — they just stop '
-          'being filed under it.',
-          style: const TextStyle(color: AppColors.textSecondary, height: 1.4),
+        title: Text('Delete ${file.name}?',
+            style: const TextStyle(color: Colors.white, fontSize: 17)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              contents.isEmpty
+                  ? 'Nothing is filed under this project.'
+                  : 'It holds ${contents.describe()}.',
+              style: const TextStyle(
+                  color: AppColors.textSecondary, height: 1.4, fontSize: 13),
+            ),
+            if (!contents.isEmpty) ...[
+              const SizedBox(height: 14),
+              const Text(
+                'Keep the work and it moves to Unsorted, where you can find '
+                'it again and file it somewhere else.',
+                style: TextStyle(
+                    color: AppColors.textSecondary, height: 1.4, fontSize: 13),
+              ),
+            ],
+          ],
         ),
+        actionsOverflowDirection: VerticalDirection.down,
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
+            onPressed: () => Navigator.pop(ctx, _DeleteChoice.cancel),
             child: const Text('Cancel',
                 style: TextStyle(color: AppColors.textSecondary)),
           ),
+          // The safe option is listed first and worded as the obvious one.
           TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete',
-                style: TextStyle(color: AppColors.statusRed)),
+            onPressed: () => Navigator.pop(ctx, _DeleteChoice.keepContents),
+            child: Text(
+                contents.isEmpty ? 'Delete' : 'Delete, keep the work',
+                style: const TextStyle(color: Colors.white)),
           ),
+          if (!contents.isEmpty)
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, _DeleteChoice.withContents),
+              child: const Text('Delete everything',
+                  style: TextStyle(color: AppColors.statusRed)),
+            ),
         ],
       ),
     );
 
-    if (yes != true) return;
+    if (choice == null || choice == _DeleteChoice.cancel) return;
+
+    // A second confirmation, only for the irreversible one. There is no undo
+    // and no tombstone to recover from: these rows go, and so do the photos
+    // attached to them.
+    if (choice == _DeleteChoice.withContents) {
+      final sure = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.panelMatte,
+          title: const Text('This cannot be undone',
+              style: TextStyle(color: Colors.white, fontSize: 17)),
+          content: Text(
+            'Permanently delete ${contents.describe()}, and any photos '
+            'attached to them?',
+            style: const TextStyle(
+                color: AppColors.textSecondary, height: 1.4, fontSize: 13),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Keep the work',
+                  style: TextStyle(color: Colors.white)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Delete permanently',
+                  style: TextStyle(color: AppColors.statusRed)),
+            ),
+          ],
+        ),
+      );
+      if (sure != true) return;
+    }
+
+    if (!mounted) return;
     // Order matters: drop the scope first, or for an instant the map is
     // filtered to a project that no longer exists and shows nothing at all.
     await ref.read(markerVisibilityProvider.notifier).forgetProject(file.id!);
-    await ref.read(filesProvider.notifier).deleteFile(file.id!);
+    await ref.read(filesProvider.notifier).deleteFile(
+          file.id!,
+          withContents: choice == _DeleteChoice.withContents,
+        );
+
+    if (!mounted) return;
+    if (choice == _DeleteChoice.keepContents && !contents.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('${contents.describe()} moved to Unsorted'),
+      ));
+    }
     if (mounted) Navigator.pop(context);
   }
 }
@@ -1070,3 +1148,10 @@ InputDecoration fieldDecoration(String label, String hint) => InputDecoration(
         borderSide: const BorderSide(color: AppColors.accent),
       ),
     );
+
+/// What the delete dialog came back with.
+///
+/// Three outcomes rather than a bool, because "delete the project" and "delete
+/// the work in it" are different decisions and a single yes/no would have to
+/// pick one of them to mean.
+enum _DeleteChoice { cancel, keepContents, withContents }

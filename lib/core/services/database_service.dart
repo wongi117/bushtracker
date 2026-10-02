@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
+
+import 'package:bush_track/core/models/photo_paths_codec.dart';
 import 'package:flutter/foundation.dart';
 import 'package:sqflite_common/sqflite.dart';
 import 'package:path/path.dart';
@@ -312,6 +314,18 @@ class DatabaseService {
   /// fails on a device.
   @visibleForTesting
   Future<void> createTablesForTest(Database db) => _createTables(db);
+
+  /// Point the service at a test database.
+  ///
+  /// Without this a test can build a schema with [createTablesForTest] and
+  /// then exercise methods that never look at it: with no database attached
+  /// they fall through to the in-memory maps, pass, and prove nothing about
+  /// the SQL. Deletion is the last place to find that out.
+  @visibleForTesting
+  void attachForTest(Database db) {
+    _db = db;
+    _initialized = true;
+  }
 
   Future<void> _createTables(Database db) async {
     // Waypoints table
@@ -704,23 +718,105 @@ class DatabaseService {
   /// Deleting a file takes its notes with it, but leaves the pins, zones and
   /// trails alone - they are records of the ground, not paperwork. They just
   /// stop being filed under anything.
-  Future<int> deleteFieldFile(int id) async {
+  /// Delete a project.
+  ///
+  /// [withContents] false -- the default, and what the delete button has always
+  /// done -- unfiles the pins, zones and trails and leaves them on the map.
+  /// They become Unsorted, which is a view over `file_id IS NULL` and so needs
+  /// no row to point at.
+  ///
+  /// [withContents] true deletes them outright. That is the only operation in
+  /// the app that can lose field data, so it is spelled out at the call site
+  /// rather than being a flag somebody passes by accident, and the caller is
+  /// expected to have shown the counts first.
+  ///
+  /// One transaction either way. The previous version ran four statements
+  /// loose: an interruption between them left the notes deleted and the
+  /// project still there, or the pins unfiled under a project that still
+  /// claimed them.
+  Future<int> deleteFieldFile(int id, {bool withContents = false}) async {
     if (_db == null) {
       _getTable('field_files').removeWhere((e) => e['id'] == id);
       _getTable('file_notes').removeWhere((e) => e['file_id'] == id);
       for (final table in ['waypoints', 'geofences', 'trails']) {
-        for (final row in _getTable(table)) {
-          if (row['file_id'] == id) row['file_id'] = null;
+        if (withContents) {
+          _getTable(table).removeWhere((e) => e['file_id'] == id);
+        } else {
+          for (final row in _getTable(table)) {
+            if (row['file_id'] == id) row['file_id'] = null;
+          }
         }
       }
       return 1;
     }
-    await _db!.delete('file_notes', where: 'file_id = ?', whereArgs: [id]);
-    for (final table in ['waypoints', 'geofences', 'trails']) {
-      await _db!.update(table, {'file_id': null},
-          where: 'file_id = ?', whereArgs: [id]);
+
+    return await _db!.transaction((txn) async {
+      await txn.delete('file_notes', where: 'file_id = ?', whereArgs: [id]);
+      for (final table in ['waypoints', 'geofences', 'trails']) {
+        if (withContents) {
+          await txn.delete(table, where: 'file_id = ?', whereArgs: [id]);
+        } else {
+          await txn.update(table, {'file_id': null},
+              where: 'file_id = ?', whereArgs: [id]);
+        }
+      }
+      return await txn.delete('field_files', where: 'id = ?', whereArgs: [id]);
+    });
+  }
+
+  /// How much is filed under a project, so a delete can say what it will take.
+  ///
+  /// Counted from the database rather than from whatever the providers happen
+  /// to be holding, because the number in the confirmation has to be the real
+  /// one -- a scoped or filtered list would undercount, and undercounting here
+  /// means somebody agrees to lose more than they were told.
+  Future<ProjectContents> countFieldFileContents(int id) async {
+    if (_db == null) {
+      int n(String t) =>
+          _getTable(t).where((e) => e['file_id'] == id).length;
+      return ProjectContents(
+          pins: n('waypoints'),
+          zones: n('geofences'),
+          trails: n('trails'),
+          notes: n('file_notes'));
     }
-    return await _db!.delete('field_files', where: 'id = ?', whereArgs: [id]);
+
+    Future<int> n(String table) async {
+      final rows = await _db!.rawQuery(
+          'SELECT COUNT(*) AS c FROM $table WHERE file_id = ?', [id]);
+      return (rows.first['c'] as int?) ?? 0;
+    }
+
+    return ProjectContents(
+      pins: await n('waypoints'),
+      zones: await n('geofences'),
+      trails: await n('trails'),
+      notes: await n('file_notes'),
+    );
+  }
+
+  /// The photo references still pointed at by some waypoint.
+  ///
+  /// Fed to [PhotoFileStore.orphans] after a delete, so files on disk are
+  /// removed by being unreferenced rather than by path arithmetic. Deleting by
+  /// the paths that were just removed would take a photo that another pin also
+  /// points at, which is possible as soon as anything is duplicated.
+  Future<Set<String>> referencedPhotoPaths() async {
+    final rows = _db == null
+        ? _getTable('waypoints')
+        : await _db!.query('waypoints', columns: ['photo_paths']);
+    final out = <String>{};
+    for (final row in rows) {
+      final raw = row['photo_paths'];
+      if (raw is String && raw.isNotEmpty) {
+        // A column that will not decode yields null. Treated as "cannot say
+        // what this pin references", so nothing is added and the orphan sweep
+        // keeps the files -- erring towards an unused photo on disk rather
+        // than deleting one that is still in use.
+        out.addAll(PhotoPathsCodec.decode(raw) ?? const <String>[]);
+      }
+    }
+    return out;
   }
 
   Future<int> insertFileNote(Map<String, dynamic> note) async {
@@ -842,5 +938,38 @@ class DatabaseService {
     }
     _db = null;
     _initialized = false;
+  }
+}
+
+/// What a project is holding, for a delete confirmation.
+class ProjectContents {
+  const ProjectContents({
+    this.pins = 0,
+    this.zones = 0,
+    this.trails = 0,
+    this.notes = 0,
+  });
+
+  final int pins;
+  final int zones;
+  final int trails;
+  final int notes;
+
+  /// Notes are excluded: they belong to the project and go with it either way,
+  /// so they are not part of what the user is being asked to risk.
+  int get fieldItems => pins + zones + trails;
+
+  bool get isEmpty => fieldItems == 0;
+
+  /// "12 pins, 3 boundaries and 1 trail", for the confirmation.
+  String describe() {
+    final parts = <String>[
+      if (pins > 0) '$pins ${pins == 1 ? 'pin' : 'pins'}',
+      if (zones > 0) '$zones ${zones == 1 ? 'boundary' : 'boundaries'}',
+      if (trails > 0) '$trails ${trails == 1 ? 'trail' : 'trails'}',
+    ];
+    if (parts.isEmpty) return 'nothing';
+    if (parts.length == 1) return parts.first;
+    return '${parts.sublist(0, parts.length - 1).join(', ')} and ${parts.last}';
   }
 }
