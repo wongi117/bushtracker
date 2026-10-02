@@ -9,6 +9,7 @@ import 'core/utils/startup_trace.dart';
 
 import 'theme/app_theme.dart';
 import 'features/onboarding/presentation/splash_screen.dart';
+import 'package:bush_track/core/services/tile_cache.dart';
 
 // Provider for database service (works on all platforms)
 final databaseServiceProvider = Provider<DatabaseService>((ref) {
@@ -46,6 +47,12 @@ void main() async {
   final databaseService = DatabaseService();
   await databaseService.initialize();
   StartupTrace.mark('database');
+
+  // Before the map is built, so the TileLayer gets its final provider on the
+  // first frame. Swapping the provider in later re-fetches every visible tile,
+  // which against a per-request provider is a bill paid on every launch.
+  await TileCache.instance.warmUp();
+  StartupTrace.mark('tile_cache');
 
   // Isar is not opened any more.
   //

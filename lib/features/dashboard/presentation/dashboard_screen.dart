@@ -85,6 +85,7 @@ import 'package:bush_track/features/map/presentation/offline_maps_screen.dart';
 import 'package:bush_track/features/map/widgets/pinage_chooser.dart';
 import 'package:bush_track/features/map/widgets/pinage_editor.dart';
 import 'package:bush_track/features/map/widgets/pinage_viewer.dart';
+import 'package:bush_track/core/services/tile_cache.dart';
 
 class _DwellCell {
   final LatLng center;
@@ -538,7 +539,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                           // socket failure is not retried at all. So one blip
                           // as the app opens leaves those tiles permanently
                           // blank, which reads as "the map never loaded".
-                          tileProvider: _retryingTileProvider,
+                          // The caching provider where one could be set up,
+                          // the retrying one otherwise. Resolved during
+                          // startup so this is settled on the first frame:
+                          // changing it later re-fetches every visible tile.
+                          tileProvider: TileCache.instance.ready ??
+                              _retryingTileProvider,
                           // OpenTopoMap uses {s} subdomain rotation
                           subdomains: _mapStyleIndex == 1
                               ? const ['a', 'b', 'c']

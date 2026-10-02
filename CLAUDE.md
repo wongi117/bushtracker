@@ -99,6 +99,20 @@ written with request cost in mind. Things that cost money quietly:
   Protomaps work lands.
 - **Do not rebuild the TileLayer needlessly.** A changing `key` or a URL
   rebuilt with a new string identity re-fetches every visible tile.
+- **The tile cache is a performance cache, not offline maps.** `tile_cache.dart`
+  caches to disk so the app stops re-paying for tiles it already has, including
+  across restarts. Three rules it must keep:
+  - `CachePolicy.request`, **never** `forceCache`. The library's default saves
+    every successful GET whatever the response headers say; `request` caches
+    only what the provider's own directives permit. `maxStale` stays null, so
+    nothing outlives the expiry the provider set.
+  - It is capped (`TileCache.maxBytes`) and prunes oldest-first, because the
+    file store has no limit of its own and a map cache will happily eat the
+    space a field phone needs for photos.
+  - It is **not** a substitute for offline regions, and the settings row says so
+    in words. Mapbox offline stays SDK-only.
+  The cache is warmed up in `main()` before the map builds: handing the
+  TileLayer a different provider later re-fetches every visible tile.
 - Esri remains selectable for field comparison only. Its licence is unresolved
   — see PINAGE_BUILD_PLAN_4.md 5.5.
 

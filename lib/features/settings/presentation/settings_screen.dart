@@ -7,6 +7,7 @@ import 'package:bush_track/features/import_export/presentation/import_export_scr
 import 'package:bush_track/features/gallery/presentation/photo_gallery_screen.dart';
 import 'package:bush_track/features/map/presentation/offline_maps_screen.dart';
 import 'package:bush_track/features/heritage/presentation/artifact_logger_screen.dart';
+import 'package:bush_track/features/settings/presentation/widgets/tile_cache_tile.dart';
 
 IconData _vehicleTypeIcon(VehicleType type) => switch (type) {
       VehicleType.car => Icons.directions_car,
@@ -182,6 +183,10 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
           ),
+          const SizedBox(height: 12),
+          // Directly under Offline Map Regions, because the two are easy to
+          // confuse and the subtitle spells out which is which.
+          const TileCacheTile(),
           const SizedBox(height: 24),
           _buildSectionTitle('Safety'),
           const SizedBox(height: 12),
