@@ -550,7 +550,8 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
   /// changing where new work is filed, which is why the subtitle reports the two
   /// separately when they disagree.
   Widget _openSwitch(FieldFile file, bool isOpen) {
-    final scoped = ref.watch(markerVisibilityProvider).scopeFileId == file.id;
+    final scoped = file.id != null &&
+        ref.watch(markerVisibilityProvider).showsProject(file.id!);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
@@ -588,7 +589,9 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
     await ref.read(filesProvider.notifier).setActiveFile(on ? file.id : null);
     final visibility = ref.read(markerVisibilityProvider.notifier);
     if (on) {
-      await visibility.openProject(file.id!);
+      // Toggle, not open: picking a second project adds it to the view
+      // instead of replacing the first.
+      await visibility.toggleProject(file.id!);
     } else {
       await visibility.closeProject();
     }

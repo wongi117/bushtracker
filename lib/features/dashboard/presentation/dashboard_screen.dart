@@ -78,6 +78,7 @@ import 'package:bush_track/features/map/widgets/waypoint_editor.dart';
 import 'package:bush_track/features/map/widgets/trail_creation_overlay.dart';
 import 'package:bush_track/features/map/providers/trail_provider.dart';
 import 'package:bush_track/core/models/breadcrumb.dart';
+import 'package:bush_track/core/models/field_file.dart';
 import 'package:bush_track/core/models/waypoint.dart';
 import 'package:bush_track/core/models/trail.dart';
 import 'package:bush_track/features/ai/presentation/agent_manager_screen.dart';
@@ -3525,19 +3526,29 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   /// Kookynie only" is a thing someone remembers choosing, where "37 hidden"
   /// is just alarming.
   Widget _filterPill(MarkerVisibility visibility) {
-    final scope = visibility.scopeFileId;
+    final scope = visibility.scope;
     final named = ref
         .watch(filesProvider)
         .files
-        .where((f) => f.id == scope)
+        .where((f) => f.id != null && scope.isSelected(f.id!))
         .map((f) => f.name)
         .toList();
+    if (scope.isSelected(FieldFile.unsortedId)) named.add('Unsorted');
 
     final String label;
     if (visibility.isSoloed) {
       label = 'Showing one marker';
-    } else if (scope != null) {
-      label = 'Showing ${named.isEmpty ? 'one project' : named.first} only';
+    } else if (scope.isFiltered) {
+      // One project is named. Several are counted, because three names do not
+      // fit in a pill and a truncated list reads as if the rest were hidden
+      // by something other than this.
+      if (named.length == 1) {
+        label = 'Showing ${named.first} only';
+      } else if (named.isEmpty) {
+        label = 'Showing ${scope.count} projects';
+      } else {
+        label = 'Showing ${named.length} projects';
+      }
     } else {
       final n = visibility.hiddenCount;
       label = '$n ${n == 1 ? 'marker' : 'markers'} hidden';

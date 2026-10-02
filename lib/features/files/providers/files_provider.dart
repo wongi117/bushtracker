@@ -19,11 +19,20 @@ class FilesState {
   final int? viewingFileId;
   final List<FileNote> notes;
 
+  /// Whether the list has come back from the database yet.
+  ///
+  /// Needed because an empty list means two different things. Anything that
+  /// reconciles against the set of projects -- pruning a map scope, say --
+  /// would otherwise do it once against the empty list that exists before the
+  /// first query returns, and throw away perfectly good state.
+  final bool loaded;
+
   const FilesState({
     this.files = const [],
     this.activeFileId,
     this.viewingFileId,
     this.notes = const [],
+    this.loaded = false,
   });
 
   FieldFile? get activeFile {
@@ -36,6 +45,7 @@ class FilesState {
     int? activeFileId,
     int? viewingFileId,
     List<FileNote>? notes,
+    bool? loaded,
     bool clearActive = false,
   }) =>
       FilesState(
@@ -43,6 +53,7 @@ class FilesState {
         activeFileId: clearActive ? null : activeFileId ?? this.activeFileId,
         viewingFileId: viewingFileId ?? this.viewingFileId,
         notes: notes ?? this.notes,
+        loaded: loaded ?? this.loaded,
       );
 }
 
@@ -80,9 +91,13 @@ class FilesNotifier extends StateNotifier<FilesState> {
         files: files,
         activeFileId: active,
         clearActive: active == null,
+        loaded: true,
       );
     } catch (e) {
       debugPrint('FilesNotifier load error: $e');
+      // Marked loaded even on failure, or anything waiting for the list waits
+      // forever. A failed load is an empty list we know about.
+      if (mounted) state = state.copyWith(loaded: true);
     }
   }
 
