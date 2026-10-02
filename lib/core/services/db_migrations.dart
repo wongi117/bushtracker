@@ -40,7 +40,7 @@ class DbMigrations {
   const DbMigrations._();
 
   /// The version the code expects. Bump this when adding a migration.
-  static const int currentVersion = 4;
+  static const int currentVersion = 5;
 
   /// Every step, in order. A gap in the numbering is a bug, and
   /// [assertWellFormed] catches it in the tests rather than on a phone.
@@ -59,6 +59,11 @@ class DbMigrations {
           to: 4,
           describe: 'outbox for work that has to leave the phone',
           run: _v4Outbox,
+        ),
+        Migration(
+          to: 5,
+          describe: 'projects: colour, archive, sort order',
+          run: _v5Projects,
         ),
       ];
 
@@ -191,6 +196,32 @@ class DbMigrations {
         'CREATE INDEX IF NOT EXISTS idx_outbox_state ON outbox(state)');
     await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_outbox_dedupe ON outbox(dedupe_key)');
+  }
+
+  /// Projects become something you can organise, not just a label.
+  ///
+  /// No "Unsorted" row is created here on purpose. Items with a null file_id
+  /// already exist in their hundreds on a field phone, and rewriting every one
+  /// of them to point at a new row would be a large write over data that is
+  /// fine as it is. Unsorted is instead a *view* over file_id IS NULL — nothing
+  /// moves, nothing can be lost in the move, and a project genuinely cannot be
+  /// deleted out from under it.
+  static Future<void> _v5Projects(DatabaseExecutor db) async {
+    if (!await _hasTable(db, 'field_files')) return;
+
+    await addColumnIfMissing(db, 'field_files', 'colour', 'TEXT');
+    await addColumnIfMissing(db, 'field_files', 'archived_at', 'INTEGER');
+    await addColumnIfMissing(db, 'field_files', 'sort_order', 'INTEGER');
+
+    // Existing projects get their creation order as a starting sort, so a list
+    // that was ordered by age stays in the order the user is used to.
+    await db.execute(
+      'UPDATE field_files SET sort_order = COALESCE(created_at, 0) '
+      'WHERE sort_order IS NULL',
+    );
+
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_field_files_archived '
+        'ON field_files(archived_at)');
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
