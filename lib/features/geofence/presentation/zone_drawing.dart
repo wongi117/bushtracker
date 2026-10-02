@@ -639,6 +639,20 @@ Future<ZoneDetails?> showZoneDetailsSheet(
           color: AppColors.panelMatte,
           borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
         ),
+        // Two separate jobs, and one without the other leaves the buttons
+        // covered.
+        //
+        // The MARGIN lifts the whole panel clear of the keyboard. Content
+        // padding cannot do this: showModalBottomSheet pins the sheet to the
+        // bottom of the screen and the keyboard is drawn over the top, so
+        // padding only moves the contents around inside a box that is still
+        // underneath it. A test caught precisely that — the navigation bar was
+        // cleared and SAVE was still behind the keyboard. The background does
+        // not paint into the margin, which is right: nothing should be drawn
+        // under the keyboard.
+        margin: EdgeInsets.only(bottom: sheetLift(sheetContext)),
+        // The PADDING then clears whatever of the navigation bar the keyboard
+        // is not already covering.
         padding: sheetPadding(sheetContext),
         child: SingleChildScrollView(
           child: Column(

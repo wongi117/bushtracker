@@ -25,8 +25,33 @@ double sheetBottomInset(BuildContext context) {
   return math.max(media.viewInsets.bottom, media.viewPadding.bottom);
 }
 
+/// How far a sheet must be LIFTED so the keyboard does not cover it.
+///
+/// Applied as outer padding, outside the sheet's own panel. This is the piece
+/// that actually moves the sheet: showModalBottomSheet pins it to the bottom of
+/// the screen and the keyboard is drawn over the top, so padding *inside* the
+/// panel pushes its contents around within a box that is still underneath the
+/// keyboard. A test caught exactly that — the navigation bar was cleared and
+/// SAVE was still behind the keyboard.
+double sheetLift(BuildContext context) =>
+    MediaQuery.of(context).viewInsets.bottom;
+
+/// How much clearance the sheet's own content needs at the bottom.
+///
+/// Only the part of the navigation bar that the keyboard is not already
+/// covering. When the keyboard is up the sheet has been lifted clear of the
+/// bar as well, so adding the bar again on top would leave a visible gap under
+/// the buttons.
+double sheetContentBottom(BuildContext context) {
+  final media = MediaQuery.of(context);
+  return math.max(0, media.viewPadding.bottom - media.viewInsets.bottom);
+}
+
 /// Content padding for a sheet, with the bottom worked out by
-/// [sheetBottomInset].
+/// [sheetContentBottom].
+///
+/// Pair it with [sheetLift] on a Padding outside the panel. One without the
+/// other leaves either the navigation bar or the keyboard covering the buttons.
 EdgeInsets sheetPadding(
   BuildContext context, {
   double left = 18,
@@ -34,8 +59,7 @@ EdgeInsets sheetPadding(
   double right = 18,
   double bottom = 18,
 }) =>
-    EdgeInsets.fromLTRB(
-        left, top, right, bottom + sheetBottomInset(context));
+    EdgeInsets.fromLTRB(left, top, right, bottom + sheetContentBottom(context));
 
 /// A bottom sheet that keeps its content reachable.
 ///
@@ -74,19 +98,27 @@ class SafeSheet extends StatelessWidget {
       child: child,
     );
 
-    if (!scrollable) return panel;
-
-    return ConstrainedBox(
-      constraints: BoxConstraints(
-        // The keyboard's height comes off the available room, so a form that
-        // would otherwise be taller than the screen scrolls instead of pushing
-        // its own buttons off the bottom.
-        maxHeight: (media.size.height - media.viewInsets.bottom) *
-            maxHeightFraction,
-      ),
-      child: SingleChildScrollView(
-        padding: EdgeInsets.zero,
+    if (!scrollable) {
+      return Padding(
+        padding: EdgeInsets.only(bottom: sheetLift(context)),
         child: panel,
+      );
+    }
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: sheetLift(context)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          // The keyboard's height comes off the available room, so a form that
+          // would otherwise be taller than the screen scrolls instead of pushing
+          // its own buttons off the bottom.
+          maxHeight:
+              (media.size.height - media.viewInsets.bottom) * maxHeightFraction,
+        ),
+        child: SingleChildScrollView(
+          padding: EdgeInsets.zero,
+          child: panel,
+        ),
       ),
     );
   }
