@@ -36,6 +36,18 @@ class FilesState {
     this.loaded = false,
   });
 
+  /// The projects that belong in the list.
+  ///
+  /// Archived ones are kept in [files] rather than being filtered out at the
+  /// source, so an archived project that is still the active one, or still
+  /// scoped on the map, can be found by id instead of silently resolving to
+  /// null.
+  List<FieldFile> get liveFiles =>
+      files.where((f) => !f.isArchived).toList();
+
+  List<FieldFile> get archivedFiles =>
+      files.where((f) => f.isArchived).toList();
+
   FieldFile? get activeFile {
     final matches = files.where((f) => f.id == activeFileId);
     return matches.isEmpty ? null : matches.first;

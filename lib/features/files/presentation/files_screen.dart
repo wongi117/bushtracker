@@ -14,6 +14,7 @@ import 'package:bush_track/features/files/presentation/files_search_view.dart';
 import 'package:bush_track/features/map/providers/marker_visibility_provider.dart';
 import 'package:bush_track/features/map/providers/trail_provider.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
+import 'package:bush_track/features/files/presentation/project_edit_sheet.dart';
 import 'package:bush_track/theme/app_colors.dart';
 
 /// Every field file: one folder per job, site or trip.
@@ -53,13 +54,7 @@ class FilesScreen extends ConsumerWidget {
         onShowOnMap: (at) => Navigator.pop(context, at),
         idle: state.files.isEmpty
             ? _buildEmpty()
-            : ListView.builder(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
-                itemCount: state.files.length,
-                itemBuilder: (_, i) => _FileTile(
-                    file: state.files[i],
-                    isOpen: state.files[i].id == state.activeFileId),
-              ),
+            : _ProjectList(state: state),
       ),
     );
   }
@@ -224,6 +219,12 @@ class _FileTile extends ConsumerWidget {
         .where((z) => z.fileId == file.id)
         .length;
 
+    // A project with no colour keeps the accent it always had, so nothing
+    // changes for projects made before colours existed.
+    final tint = file.colour == null
+        ? AppColors.accent
+        : WaypointColors.fromHex(file.colour);
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -248,15 +249,28 @@ class _FileTile extends ConsumerWidget {
           );
           if (goTo != null && context.mounted) Navigator.pop(context, goTo);
         },
+        // Long-press rather than a third button in the trailing row: that row
+        // already holds the visibility toggle and the chevron, and crowding it
+        // is what made the pin sheet's actions overlap. The same sheet is on
+        // the detail screen's app bar, which is the discoverable route.
+        onLongPress: () => showProjectEditSheet(context, file),
         leading: Container(
           width: 38,
           height: 38,
           decoration: BoxDecoration(
-            color: AppColors.accent.withValues(alpha: 0.15),
+            // The project's own colour where it has one, so a folder and the
+            // pins filed under it read as the same job.
+            color: tint.withValues(alpha: 0.15),
             borderRadius: BorderRadius.circular(9),
           ),
-          child: Icon(isOpen ? Icons.folder_open_rounded : Icons.folder_rounded,
-              color: AppColors.accent, size: 20),
+          child: Icon(
+              file.isArchived
+                  ? Icons.inventory_2_rounded
+                  : isOpen
+                      ? Icons.folder_open_rounded
+                      : Icons.folder_rounded,
+              color: tint,
+              size: 20),
         ),
         title: Row(
           children: [
@@ -386,6 +400,11 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.edit_rounded, color: AppColors.accent),
+            tooltip: 'Rename, colour or archive',
+            onPressed: () => showProjectEditSheet(context, file),
+          ),
           IconButton(
             icon:
                 const Icon(Icons.playlist_add_rounded, color: AppColors.accent),
@@ -1155,3 +1174,77 @@ InputDecoration fieldDecoration(String label, String hint) => InputDecoration(
 /// the work in it" are different decisions and a single yes/no would have to
 /// pick one of them to mean.
 enum _DeleteChoice { cancel, keepContents, withContents }
+
+/// The project list, with archived projects tucked underneath it.
+///
+/// Archived ones are behind a tap because the point of archiving is to get a
+/// finished job out of the way -- but they are still listed, because "archived"
+/// has to be visibly different from "deleted" or nobody will trust it.
+class _ProjectList extends StatefulWidget {
+  const _ProjectList({required this.state});
+
+  final FilesState state;
+
+  @override
+  State<_ProjectList> createState() => _ProjectListState();
+}
+
+class _ProjectListState extends State<_ProjectList> {
+  bool _showArchived = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final live = widget.state.liveFiles;
+    final archived = widget.state.archivedFiles;
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+      children: [
+        if (live.isEmpty && archived.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              'Every project is archived.',
+              style: TextStyle(
+                  color: AppColors.textSecondary.withValues(alpha: 0.8),
+                  fontSize: 13),
+            ),
+          ),
+        for (final f in live)
+          _FileTile(file: f, isOpen: f.id == widget.state.activeFileId),
+        if (archived.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          InkWell(
+            onTap: () => setState(() => _showArchived = !_showArchived),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+              child: Row(
+                children: [
+                  Icon(
+                      _showArchived
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      color: AppColors.textMuted,
+                      size: 20),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Archived (${archived.length})',
+                    style: const TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_showArchived)
+            for (final f in archived)
+              _FileTile(file: f, isOpen: f.id == widget.state.activeFileId),
+        ],
+      ],
+    );
+  }
+}

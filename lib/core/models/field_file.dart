@@ -107,8 +107,11 @@ class FieldFile {
         sortOrder: (map['sort_order'] as int?) ?? 0,
       );
 
-  /// [clearArchived] un-archives, which a null [archivedAt] cannot express:
-  /// null means "leave it as it is".
+  /// [clearArchived] un-archives and [clearColour] goes back to the default
+  /// colour. Both exist because a null argument cannot express either: null
+  /// means "leave it as it is". Rebuilding the object by hand instead is how
+  /// fields get silently dropped -- it is what lost fileId, rating and
+  /// weatherConditions off a Waypoint once already.
   FieldFile copyWith({
     int? id,
     String? name,
@@ -121,6 +124,7 @@ class FieldFile {
     DateTime? archivedAt,
     int? sortOrder,
     bool clearArchived = false,
+    bool clearColour = false,
   }) =>
       FieldFile(
         id: id ?? this.id,
@@ -130,7 +134,7 @@ class FieldFile {
         longitude: longitude ?? this.longitude,
         createdAt: createdAt ?? this.createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
-        colour: colour ?? this.colour,
+        colour: clearColour ? null : colour ?? this.colour,
         archivedAt: clearArchived ? null : archivedAt ?? this.archivedAt,
         sortOrder: sortOrder ?? this.sortOrder,
       );
