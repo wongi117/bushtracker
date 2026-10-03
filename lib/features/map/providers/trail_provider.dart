@@ -190,6 +190,19 @@ class TrailNotifier extends StateNotifier<TrailState> {
   }
 
   /// Update trail
+  /// File a trail under a project, or take it out of one.
+  ///
+  /// Trail has mutable fields and no copyWith, unlike Waypoint and Geofence,
+  /// so the mutation is kept here rather than being done at each call site --
+  /// a Trail handed around and edited in place is easy to get wrong twice.
+  Future<void> setTrailFile(int id, int? fileId) async {
+    final matches = state.trails.where((t) => t.id == id);
+    if (matches.isEmpty) return;
+    final trail = matches.first;
+    trail.fileId = fileId;
+    await updateTrail(trail);
+  }
+
   Future<void> updateTrail(Trail trail) async {
     await databaseService.updateTrail(trail.toMap());
     await _loadTrails();

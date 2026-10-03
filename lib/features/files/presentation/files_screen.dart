@@ -14,6 +14,7 @@ import 'package:bush_track/features/files/presentation/files_search_view.dart';
 import 'package:bush_track/features/map/providers/marker_visibility_provider.dart';
 import 'package:bush_track/features/map/providers/trail_provider.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
+import 'package:bush_track/features/files/presentation/move_items_sheet.dart';
 import 'package:bush_track/features/files/presentation/project_edit_sheet.dart';
 import 'package:bush_track/theme/app_colors.dart';
 
@@ -52,9 +53,7 @@ class FilesScreen extends ConsumerWidget {
       // the field is cleared.
       body: FilesSearchView(
         onShowOnMap: (at) => Navigator.pop(context, at),
-        idle: state.files.isEmpty
-            ? _buildEmpty()
-            : _ProjectList(state: state),
+        idle: _ProjectList(state: state, empty: _buildEmpty()),
       ),
     );
   }
@@ -350,6 +349,9 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
     super.initState();
     // Notes live in the database rather than in the list state, so they are
     // fetched when the file is actually opened.
+    // Unsorted is a view over file_id IS NULL, not a row, so there is no
+    // project to fetch notes for.
+    if (widget.fileId == FieldFile.unsortedId) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(filesProvider.notifier).loadNotes(widget.fileId);
     });
@@ -358,7 +360,10 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(filesProvider);
-    final matches = state.files.where((f) => f.id == widget.fileId);
+    final unsorted = widget.fileId == FieldFile.unsortedId;
+    final matches = unsorted
+        ? [FieldFile.unsorted()]
+        : state.files.where((f) => f.id == widget.fileId).toList();
     if (matches.isEmpty) {
       return const Scaffold(
         backgroundColor: AppColors.background,
@@ -372,20 +377,25 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
     final notes =
         state.viewingFileId == file.id ? state.notes : const <FileNote>[];
 
+    // Unsorted matches on null rather than on its id. Comparing against
+    // FieldFile.unsortedId would match nothing, because -1 is never written to
+    // the column -- that is the whole reason Unsorted is a view and not a row.
+    bool mine(int? fileId) => unsorted ? fileId == null : fileId == file.id;
+
     final pins = ref
         .watch(locationProvider)
         .waypoints
-        .where((w) => w.fileId == file.id)
+        .where((w) => w.isPin == true && mine(w.fileId))
         .toList();
     final zones = ref
         .watch(geofenceProvider)
         .geofences
-        .where((z) => z.fileId == file.id)
+        .where((z) => mine(z.fileId))
         .toList();
     final trails = ref
         .watch(trailProvider)
         .trails
-        .where((t) => t.fileId == file.id)
+        .where((t) => mine(t.fileId))
         .toList();
 
     return Scaffold(
@@ -401,16 +411,35 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.edit_rounded, color: AppColors.accent),
-            tooltip: 'Rename, colour or archive',
-            onPressed: () => showProjectEditSheet(context, file),
+            icon: const Icon(Icons.drive_file_move_rounded,
+                color: AppColors.accent),
+            tooltip: 'Move items to another project',
+            onPressed: () => showMoveItemsSheet(
+              context,
+              // Null, not -1: this is what the items' file_id actually is, and
+              // it decides which destinations get offered.
+              currentFileId: unsorted ? null : file.id,
+              pins: pins,
+              zones: zones,
+              trails: trails,
+            ),
           ),
-          IconButton(
-            icon:
-                const Icon(Icons.playlist_add_rounded, color: AppColors.accent),
-            tooltip: 'Add existing pins and zones',
-            onPressed: () => _collectInto(file),
-          ),
+          // Renaming, colouring, archiving and collecting are all operations
+          // on a project row. Unsorted has no row, so they are left off rather
+          // than shown doing nothing.
+          if (!unsorted) ...[
+            IconButton(
+              icon: const Icon(Icons.edit_rounded, color: AppColors.accent),
+              tooltip: 'Rename, colour or archive',
+              onPressed: () => showProjectEditSheet(context, file),
+            ),
+            IconButton(
+              icon: const Icon(Icons.playlist_add_rounded,
+                  color: AppColors.accent),
+              tooltip: 'Add existing pins and zones',
+              onPressed: () => _collectInto(file),
+            ),
+          ],
           IconButton(
             icon: const Icon(Icons.ios_share, color: AppColors.accent),
             tooltip: 'Share this file',
@@ -1181,9 +1210,14 @@ enum _DeleteChoice { cancel, keepContents, withContents }
 /// finished job out of the way -- but they are still listed, because "archived"
 /// has to be visibly different from "deleted" or nobody will trust it.
 class _ProjectList extends StatefulWidget {
-  const _ProjectList({required this.state});
+  const _ProjectList({required this.state, required this.empty});
 
   final FilesState state;
+
+  /// Shown in place of the project list when there are none. The Unsorted
+  /// folder is still drawn underneath it, because no projects is precisely
+  /// when everything is sitting unfiled.
+  final Widget empty;
 
   @override
   State<_ProjectList> createState() => _ProjectListState();
@@ -1200,6 +1234,8 @@ class _ProjectListState extends State<_ProjectList> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
       children: [
+        if (live.isEmpty && archived.isEmpty)
+          SizedBox(height: 260, child: widget.empty),
         if (live.isEmpty && archived.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
@@ -1212,6 +1248,7 @@ class _ProjectListState extends State<_ProjectList> {
           ),
         for (final f in live)
           _FileTile(file: f, isOpen: f.id == widget.state.activeFileId),
+        const _UnsortedTile(),
         if (archived.isNotEmpty) ...[
           const SizedBox(height: 4),
           InkWell(
@@ -1245,6 +1282,79 @@ class _ProjectListState extends State<_ProjectList> {
               _FileTile(file: f, isOpen: f.id == widget.state.activeFileId),
         ],
       ],
+    );
+  }
+}
+
+/// Everything filed under nothing.
+///
+/// A folder like any other to use, but a view rather than a row: it lists
+/// items whose `file_id IS NULL`. That is why it cannot be renamed, coloured,
+/// archived or deleted -- there is nothing to rename -- and why it cannot lose
+/// anything when a project is deleted.
+///
+/// Hidden when there is nothing in it. An empty Unsorted folder is nothing to
+/// manage, and a permanent "Unsorted (0)" is just noise above the real work.
+class _UnsortedTile extends ConsumerWidget {
+  const _UnsortedTile();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final pins = ref
+        .watch(locationProvider)
+        .waypoints
+        .where((w) => w.isPin == true && w.fileId == null)
+        .length;
+    final zones = ref
+        .watch(geofenceProvider)
+        .geofences
+        .where((z) => z.fileId == null)
+        .length;
+    final trails =
+        ref.watch(trailProvider).trails.where((t) => t.fileId == null).length;
+
+    if (pins + zones + trails == 0) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: AppColors.panelMatte,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: ListTile(
+        onTap: () async {
+          final goTo = await Navigator.push<LatLng>(
+            context,
+            MaterialPageRoute(
+                builder: (_) =>
+                    const FileDetailScreen(fileId: FieldFile.unsortedId)),
+          );
+          if (goTo != null && context.mounted) Navigator.pop(context, goTo);
+        },
+        leading: Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: AppColors.textMuted.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(9),
+          ),
+          child: const Icon(Icons.inbox_rounded,
+              color: AppColors.textSecondary, size: 20),
+        ),
+        title: const Text('Unsorted',
+            style: TextStyle(color: Colors.white, fontSize: 14)),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 3),
+          child: Text(
+            'Not in a project  -  $pins pins  -  $zones zones',
+            style: TextStyle(
+                color: AppColors.textSecondary.withValues(alpha: 0.8),
+                fontSize: 11),
+          ),
+        ),
+        trailing: const Icon(Icons.chevron_right, color: AppColors.textMuted),
+      ),
     );
   }
 }
