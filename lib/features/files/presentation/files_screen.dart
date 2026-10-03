@@ -16,6 +16,7 @@ import 'package:bush_track/features/map/providers/trail_provider.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
 import 'package:bush_track/features/files/presentation/move_items_sheet.dart';
 import 'package:bush_track/features/files/presentation/project_edit_sheet.dart';
+import 'package:bush_track/features/files/presentation/project_export_sheet.dart';
 import 'package:bush_track/theme/app_colors.dart';
 
 /// Every field file: one folder per job, site or trip.
@@ -442,24 +443,40 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
           ],
           IconButton(
             icon: const Icon(Icons.ios_share, color: AppColors.accent),
-            tooltip: 'Share this file',
-            onPressed: () => _share(file, notes, pins, zones),
+            tooltip: 'Export or share',
+            onPressed: () => showProjectExportSheet(
+              context,
+              file: file,
+              pins: pins,
+              zones: zones,
+              trails: trails,
+              // Unsorted has no description, position or notes to summarise,
+              // so the text option is left off there.
+              onShareSummary:
+                  unsorted ? null : () => _share(file, notes, pins, zones),
+            ),
           ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline, color: AppColors.statusRed),
-            tooltip: 'Delete this file',
-            onPressed: () => _confirmDelete(file),
-          ),
+          if (!unsorted)
+            IconButton(
+              icon:
+                  const Icon(Icons.delete_outline, color: AppColors.statusRed),
+              tooltip: 'Delete this file',
+              onPressed: () => _confirmDelete(file),
+            ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: AppColors.accent,
-        foregroundColor: Colors.black,
-        icon: const Icon(Icons.note_add_rounded),
-        label: const Text('ADD NOTE',
-            style: TextStyle(fontWeight: FontWeight.w900)),
-        onPressed: () => _addNote(file),
-      ),
+      // No note button on Unsorted: a note is attached to a project row, and
+      // Unsorted is a view with no row to attach one to.
+      floatingActionButton: unsorted
+          ? null
+          : FloatingActionButton.extended(
+              backgroundColor: AppColors.accent,
+              foregroundColor: Colors.black,
+              icon: const Icon(Icons.note_add_rounded),
+              label: const Text('ADD NOTE',
+                  style: TextStyle(fontWeight: FontWeight.w900)),
+              onPressed: () => _addNote(file),
+            ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
         children: [
