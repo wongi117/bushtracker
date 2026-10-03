@@ -162,8 +162,43 @@ the camera.
 **`viewInsets` is the keyboard; `viewPadding` is the navigation bar.** Handling only the first
 draws your buttons underneath the second.
 
-**Schema has no migrations yet** (version 1, `CREATE TABLE IF NOT EXISTS`, no `onUpgrade`).
-Phase 4.0 adds a runner. Until then, any schema change loses field data.
+**Schema migrations exist now** -- `DbMigrations`, currently version 5, one transaction per
+step, every step idempotent. Two rules that are easy to break:
+
+* A fresh install runs `_createTables` **and then `markFresh`**, which replays every
+  migration. `CREATE TABLE` deliberately does not chase the newest columns; the migrations
+  are the single source. So a test that builds a schema from `createTablesForTest` alone is
+  testing a schema the app never runs on -- use `attachForTest` plus `markFresh`.
+* A migration must check before it touches anything, including the columns it *reads*.
+  Migration 5 backfilled `sort_order` from `created_at` without checking that column existed;
+  on a handset without it the step threw, the transaction rolled back, and the database stayed
+  at version 4 -- retrying and failing the same upgrade on every launch, with nothing on
+  screen saying why.
+
+**Unsorted is a view, not a row.** `FieldFile.unsortedId` is `-1` and is *never* written to
+`file_id`; unfiled work is `file_id IS NULL`. Writing `-1` would file items under a project
+that does not exist, hiding them from every project list **and** from the Unsorted view. Any
+code comparing `fileId == file.id` has to special-case it -- `-1` matches nothing.
+
+**An empty filter must mean "everything".** `ProjectScope` collapses an empty selection to
+"show all" and is not able to represent "show nothing". On a field phone a pin that is not
+drawn reads as lost work, not as filtered, so a blank map is never an acceptable state to
+land in by accident -- and a deleted project must be pruned out of any scope.
+
+**GeoJSON coordinates are `[longitude, latitude]`.** The spec's order, the opposite of how
+this app and every person says it. Backwards, a Leonora export is a valid file that opens
+without complaint somewhere off Somalia. Polygon rings must also be closed (last position
+repeats the first) or some readers accept the file and others reject it.
+
+**An async restore can clobber a tap.** A `StateNotifier` that loads from SharedPreferences in
+its constructor will overwrite anything the user did in the first few frames. `MarkerVisibility`
+records that the user has acted and the restore defers to it. Anything else that restores
+state this way has the same hole.
+
+**`downloadBytes` swallows write errors** (`catch (_) {}`) and writes into the app's documents
+directory, which no Android file manager can reach. So the old import/export screen can report
+a successful export when nothing was written and the user could not find it anyway. Share the
+file instead, and check it exists and is non-empty first.
 
 **Flutter test font is monospace-square.** Text measures nearly twice its real width, so
 layout tests at 360 px fail on things that fit fine in reality. Assert widths, not ellipsis.
