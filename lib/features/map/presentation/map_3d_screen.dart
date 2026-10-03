@@ -4,7 +4,6 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../tracking/providers/location_provider.dart';
-import 'package:bush_track/core/config/api_config.dart';
 import 'package:bush_track/features/map/providers/satellite_source_provider.dart';
 
 // Map modes: 2D Flat, 2D Satellite, 3D Terrain, 3D + Satellite
@@ -77,12 +76,15 @@ class _Map3DScreenState extends ConsumerState<Map3DScreen> {
       "sources": {
         "base": {
           "type": "raster",
-          "tiles": [isSatellite 
-              // MapLibre, not flutter_map, so {r} would be passed through
-              // literally and break the URL — this one asks for @2x outright.
-              ? (ApiConfig.hasMapbox
-                  ? 'https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}@2x.jpg90?access_token=${ApiConfig.mapboxPublicToken}'
-                  : SatelliteSource.esri.urlTemplate) 
+          "tiles": [isSatellite
+              // The selected source, so the 3D view agrees with the
+              // flat map. Via the MapLibre template: MapLibre has no
+              // {r} placeholder and would request a URL with a
+              // literal "{r}" in it.
+              ? ref
+                  .watch(satelliteSourceProvider)
+                  .resolved
+                  .urlTemplateForMapLibre
               : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'],
           "tileSize": 256
         },

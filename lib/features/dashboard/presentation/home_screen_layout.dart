@@ -1504,14 +1504,10 @@ class _HomeScreenLayoutState extends ConsumerState<HomeScreenLayout> {
     final k = AppSecrets.maptilerKey;
     switch (_mapStyle) {
       case _MapStyle.satellite:
-        // Mapbox first, then MapTiler if it has a key, then Esri. See
-        // satellite_source_provider for why Esri is no longer the default.
-        if (SatelliteSource.mapbox.isAvailable) {
-          return SatelliteSource.mapbox.urlTemplate;
-        }
-        return k.isNotEmpty
-            ? 'https://api.maptiler.com/maps/satellite/{z}/{x}/{y}.jpg?key=$k'
-            : SatelliteSource.esri.urlTemplate;
+        // Whatever source is selected, so this screen agrees with the main
+        // map. It used to pick Mapbox for itself regardless, which meant
+        // swapping sources to compare them only changed one of the two.
+        return ref.watch(satelliteSourceProvider).resolved.urlTemplate;
       case _MapStyle.dark:
         return k.isNotEmpty
             ? 'https://api.maptiler.com/maps/dataviz-dark/{z}/{x}/{y}.png?key=$k'

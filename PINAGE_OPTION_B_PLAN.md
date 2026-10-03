@@ -118,9 +118,20 @@ That is why B3 is on the list rather than being a consolation prize.
 
 So, in order:
 
-1. Field-test Mapbox vs Esri this week, as planned, **and add a third
-   comparison**: a Sentinel-2 tile of the same ground. One afternoon to stand
-   up, and it is the thing that makes B3 a real option instead of a guess.
+1. Field-test Mapbox vs Esri vs **Sentinel-2** this week. All three are in
+   the build as of 2026-10-03 -- tap the attribution line to cycle. Sentinel-2
+   is the thing that makes B3 a real option rather than a guess.
+
+   What to look for, since Sentinel-2 will lose any side-by-side screenshot on
+   sharpness alone: can you still follow the track you are standing on, find
+   the drainage, and pick out old workings? That is the job. It caps at zoom 14
+   against Mapbox's 20, so judge it at the zoom you actually navigate at, not
+   zoomed all the way in.
+
+   Note the tile service in the build is EOX's public endpoint, which is fine
+   for a comparison but is not a production source. Shipping B3 means
+   generating our own pack from Copernicus and serving it from Supabase
+   Storage; the imagery is CC BY 4.0, so that is ours to do.
 2. Get the MapTiler answer. It may make B3 trivial.
 3. If Mapbox imagery genuinely wins on ground that matters, do B2 — not B1.
    Scope the SDK to the satellite base map and leave `flutter_map` owning the
@@ -161,10 +172,9 @@ Each step ends somewhere shippable, so this can stop between any two.
 
 ### What to decide before step 4
 
-- **Does the SDK path need the drawing tools (4.2)?** If yes, 4.2 waits for
-  step 5 and is built once against the interface. If no, 4.2 can start now on
-  `flutter_map`. This is the question I need answered before 4.2 begins, and it
-  is why that work is on hold.
+- ~~Does the SDK path need the drawing tools (4.2)?~~ **Answered 2026-10-03:
+  yes.** So 4.2 waits for step 5 and is then built once against the interface.
+  Nothing starts on them before the satellite decision.
 - **Does 3D stay on `maplibre_gl`?** Two native map SDKs in one app is real
   binary size and two sets of lifecycle bugs. Folding 3D onto the Mapbox SDK is
   a day or two extra and removes a dependency.
