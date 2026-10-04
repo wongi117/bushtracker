@@ -69,6 +69,7 @@ import 'package:bush_track/core/services/connectivity_service.dart';
 import 'package:bush_track/features/map/widgets/coordinate_display.dart';
 import 'package:bush_track/core/utils/coordinate_utils.dart';
 import 'package:bush_track/features/map/services/photo_geotagging_service.dart';
+import 'package:bush_track/features/map/services/offline_first_tile_provider.dart';
 import 'package:bush_track/features/map/services/offline_map_manager.dart';
 import 'package:bush_track/features/map/widgets/compass_rose.dart';
 import 'package:bush_track/features/map/widgets/scale_bar.dart';
@@ -186,6 +187,26 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   /// connection or a name that would not resolve, and those are exactly the
   /// ones worth trying again. Backs off so a genuinely offline phone is not
   /// hammering the radio and flattening the battery.
+  /// Offline-first providers, one per imagery source, built once each.
+  ///
+  /// Must not be rebuilt per frame: this screen's build runs roughly once a
+  /// second off the heading stream, and a fresh TileProvider instance makes
+  /// flutter_map re-fetch every tile on screen. That is the same reason
+  /// [_retryingTileProvider] is a field.
+  final Map<MapStyle, TileProvider> _offlineFirstProviders = {};
+
+  /// Wraps the network provider so a downloaded tile is used before the
+  /// network. Null style -- no downloadable source serves this exact layer --
+  /// gives the plain network provider back.
+  TileProvider _tileProviderFor(MapStyle? style) {
+    final network = TileCache.instance.ready ?? _retryingTileProvider;
+    if (style == null) return network;
+    return _offlineFirstProviders.putIfAbsent(
+      style,
+      () => OfflineFirstTileProvider(fallback: network, style: style),
+    );
+  }
+
   late final _retryingTileProvider = NetworkTileProvider(
     httpClient: RetryClient(
       Client(),
@@ -444,6 +465,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     final maxNativeZoom = _mapStyleIndex == 0
         ? satellite.maxNativeZoom
         : _tileMaxNativeZoom[_mapStyleIndex];
+    // Matched on the exact template, so the tiles on disk are guaranteed to be
+    // the same imagery from the same provider as the layer being drawn.
+    final offlineStyle = OfflineMapManager.styleServing(baseTileUrl);
 
     return Scaffold(
       body: Stack(
@@ -544,8 +568,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                           // the retrying one otherwise. Resolved during
                           // startup so this is settled on the first frame:
                           // changing it later re-fetches every visible tile.
-                          tileProvider: TileCache.instance.ready ??
-                              _retryingTileProvider,
+                          tileProvider: _tileProviderFor(offlineStyle),
                           // OpenTopoMap uses {s} subdomain rotation
                           subdomains: _mapStyleIndex == 1
                               ? const ['a', 'b', 'c']

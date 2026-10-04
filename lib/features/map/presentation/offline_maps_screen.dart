@@ -716,6 +716,7 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
       case MapStyle.topo:      return Icons.terrain;
       case MapStyle.outdoor:   return Icons.hiking;
       case MapStyle.dark:      return Icons.dark_mode;
+      case MapStyle.sentinel2: return Icons.satellite_alt;
     }
   }
 }

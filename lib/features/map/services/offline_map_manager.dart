@@ -9,7 +9,14 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:bush_track/core/config/api_config.dart';
 
-enum MapStyle { streets, satellite, topo, outdoor, dark }
+/// The imagery an offline region can hold.
+///
+/// Mapbox is deliberately absent and must stay absent: their terms permit
+/// offline storage of their tiles only through their own SDK, which is what
+/// Option B is about. Esri is absent too, pending an answer on its licence.
+/// Sentinel-2 is here because it is the one satellite source whose imagery is
+/// unambiguously ours to store -- CC BY 4.0, modified Copernicus data.
+enum MapStyle { streets, satellite, topo, outdoor, dark, sentinel2 }
 
 enum DownloadStatus { pending, downloading, paused, completed, failed, cancelled }
 
@@ -21,6 +28,7 @@ extension MapStyleExt on MapStyle {
       case MapStyle.topo: return 'Topographic';
       case MapStyle.outdoor: return 'Outdoor';
       case MapStyle.dark: return 'Dark';
+      case MapStyle.sentinel2: return 'Satellite (Sentinel-2)';
     }
   }
 
@@ -32,6 +40,12 @@ extension MapStyleExt on MapStyle {
       case MapStyle.topo:      return 'https://api.maptiler.com/maps/topo-v2/$z/$x/$y.png?key=$k';
       case MapStyle.outdoor:   return 'https://api.maptiler.com/maps/outdoor-v2/$z/$x/$y.png?key=$k';
       case MapStyle.dark:      return 'https://api.maptiler.com/maps/dataviz-dark/$z/$x/$y.png?key=$k';
+      // WMTS: row before column, so $y comes before $x. The opposite of every
+      // other line here, and getting it backwards downloads the wrong part of
+      // the world into a region that then looks like real ground.
+      case MapStyle.sentinel2:
+        return 'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2024_3857/'
+            'default/g/$z/$y/$x.jpg';
     }
   }
 
@@ -43,8 +57,38 @@ extension MapStyleExt on MapStyle {
       case MapStyle.topo:      return 'https://api.maptiler.com/maps/topo-v2/{z}/{x}/{y}.png?key=$k';
       case MapStyle.outdoor:   return 'https://api.maptiler.com/maps/outdoor-v2/{z}/{x}/{y}.png?key=$k';
       case MapStyle.dark:      return 'https://api.maptiler.com/maps/dataviz-dark/{z}/{x}/{y}.png?key=$k';
+      case MapStyle.sentinel2:
+        return 'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2024_3857/'
+            'default/g/{z}/{y}/{x}.jpg';
     }
   }
+
+  /// The highest zoom with real imagery behind it.
+  ///
+  /// Downloading past this fills a region with upscaled tiles: more bytes, no
+  /// more detail, and for Sentinel-2 the service answers to 16 while its
+  /// resolution runs out at 14.
+  int get maxUsefulZoom => switch (this) {
+        MapStyle.sentinel2 => 14,
+        _ => 17,
+      };
+
+  /// Whether this imagery may be stored on the device.
+  ///
+  /// Here so that adding a source to the picker cannot quietly add one we are
+  /// not allowed to keep. Mapbox and Esri are not in this enum at all, which
+  /// is the stronger guarantee; this flag is for sources whose terms are known
+  /// but conditional.
+  bool get mayStoreOffline => switch (this) {
+        // CC BY 4.0, modified Copernicus data: ours to store and redistribute.
+        MapStyle.sentinel2 => true,
+        // MapTiler, under whatever the account's plan allows. These have been
+        // downloadable since the app's first commit, so the flag reflects
+        // today's behaviour rather than changing it -- but the plan's
+        // offline/caching terms are still unconfirmed, and if they turn out to
+        // forbid it this is the one place to switch them off.
+        _ => true,
+      };
 }
 
 class _Tile {
@@ -208,6 +252,18 @@ class OfflineMapManager {
     return _Tile(x, y, z);
   }
 
+  /// The deepest zoom worth downloading for this imagery.
+  ///
+  /// Clamped here, at the one point both the estimate and the download go
+  /// through, so a zoom preset cannot ask for more than the source has. The
+  /// presets run to 19 and 20; Sentinel-2's resolution stops at 14, and the
+  /// tiles past it are the same picture enlarged. Asking for z19 over a region
+  /// would fetch roughly a thousand times as many tiles as z14 for no extra
+  /// detail -- real storage on the phone and a great deal of somebody else's
+  /// bandwidth.
+  static int effectiveMaxZoom(MapStyle style, int requested) =>
+      requested < style.maxUsefulZoom ? requested : style.maxUsefulZoom;
+
   static List<_Tile> _tilesForBounds(LatLngBounds b, int minZ, int maxZ) {
     final tiles = <_Tile>[];
     for (int z = minZ; z <= maxZ; z++) {
@@ -225,7 +281,9 @@ class OfflineMapManager {
   // ─── Estimation ─────────────────────────────────────────────────────────────
 
   SizeEstimate estimate(LatLngBounds bounds, int minZoom, int maxZoom, MapStyle style) {
-    final tiles = _tilesForBounds(bounds, minZoom, maxZoom);
+    // Same clamp as the download, so the figure shown is the one that happens.
+    final tiles = _tilesForBounds(
+        bounds, minZoom, effectiveMaxZoom(style, maxZoom));
     final bytesPerTile = style == MapStyle.satellite ? 65 * 1024 : 35 * 1024;
     return SizeEstimate(tiles.length, tiles.length * bytesPerTile);
   }
@@ -241,7 +299,12 @@ class OfflineMapManager {
   }) async {
     if (!_isInitialized) await initialize();
 
-    final tiles = _tilesForBounds(bounds, minZoom, maxZoom);
+    // Clamped before the tiles are enumerated, and the region records the
+    // clamped value -- tileFileFor decides coverage from region.maxZoom, so a
+    // region claiming a zoom it never downloaded would serve gaps instead of
+    // letting the network fill them in.
+    final cappedMax = effectiveMaxZoom(style, maxZoom);
+    final tiles = _tilesForBounds(bounds, minZoom, cappedMax);
     final id = DateTime.now().millisecondsSinceEpoch.toString();
 
     final region = OfflineMapRegion(
@@ -249,7 +312,7 @@ class OfflineMapManager {
       name: name,
       bounds: bounds,
       minZoom: minZoom,
-      maxZoom: maxZoom,
+      maxZoom: cappedMax,
       style: style,
       totalTiles: tiles.length,
       status: DownloadStatus.downloading,
@@ -368,6 +431,69 @@ class OfflineMapManager {
   }
 
   // ─── Offline tile serving ────────────────────────────────────────────────────
+
+  /// The file holding this tile, if a completed region covers it.
+  ///
+  /// Synchronous on purpose. flutter_map's TileProvider.getImage must return an
+  /// ImageProvider immediately, so an async existence check cannot be used --
+  /// which is the reason [getOfflineTile] below, written at the same time as
+  /// the downloader, was never called from anywhere and offline maps have
+  /// never actually worked.
+  ///
+  /// Coverage is decided from the region's bounds and zoom range, using the
+  /// same tile arithmetic the download used to enumerate them, rather than by
+  /// touching the filesystem. A completed region with a tile missing therefore
+  /// shows a gap rather than falling back to the network; that is the trade for
+  /// being able to answer synchronously, and it only applies to regions marked
+  /// completed.
+  File? tileFileFor(MapStyle style, int z, int x, int y) {
+    final dir = _tilesDir;
+    if (dir == null) return null;
+
+    for (final region in _regions.values) {
+      if (region.status != DownloadStatus.completed) continue;
+      if (region.style != style) continue;
+      if (z < region.minZoom || z > region.maxZoom) continue;
+
+      final sw = _latLonToTile(
+          region.bounds.southWest.latitude, region.bounds.southWest.longitude, z);
+      final ne = _latLonToTile(
+          region.bounds.northEast.latitude, region.bounds.northEast.longitude, z);
+      // y is inverted: north is a smaller row number.
+      if (x < sw.x || x > ne.x) continue;
+      if (y < ne.y || y > sw.y) continue;
+
+      return File('$dir/${region.id}/${z}_${x}_$y');
+    }
+    return null;
+  }
+
+  /// The downloadable style that serves *exactly* this URL template, if any.
+  ///
+  /// Matched on the template string rather than by a hand-written mapping of
+  /// layer to style, because the two drifted completely apart without anyone
+  /// noticing: the downloader fetches MapTiler streets/satellite/topo while the
+  /// live map draws OpenStreetMap, OpenTopoMap and Mapbox/Esri satellite. There
+  /// was no overlap at all, so even with the read side connected a downloaded
+  /// region could never have matched what was on screen.
+  ///
+  /// An exact string match guarantees the tiles on disk are the same imagery
+  /// from the same provider as the layer being drawn. No match means no offline
+  /// tiles for that layer, which is the honest answer rather than serving
+  /// somebody a different provider's picture of the same ground.
+  static MapStyle? styleServing(String urlTemplate) {
+    for (final style in MapStyle.values) {
+      if (style.urlTemplate == urlTemplate) return style;
+    }
+    return null;
+  }
+
+  /// Whether anything at all has been downloaded for this imagery.
+  ///
+  /// Used to tell "no signal and nothing downloaded" apart from "no signal but
+  /// you have this area", which are different things to say to somebody.
+  bool hasAnyRegionFor(MapStyle style) => _regions.values.any(
+      (r) => r.status == DownloadStatus.completed && r.style == style);
 
   Future<List<int>?> getOfflineTile(int z, int x, int y) async {
     for (final region in _regions.values) {
