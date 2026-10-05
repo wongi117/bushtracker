@@ -14,6 +14,7 @@ import 'package:bush_track/theme/app_colors.dart';
 import 'package:bush_track/features/map/services/photo_geotagging_service.dart';
 import 'package:bush_track/features/map/presentation/photo_pin_screen.dart';
 import 'package:bush_track/core/widgets/safe_sheet.dart';
+import 'package:bush_track/features/map/widgets/pin_photo_image.dart';
 
 class ARCompassScreen extends ConsumerStatefulWidget {
   const ARCompassScreen({super.key});
@@ -650,12 +651,16 @@ class _ARPinBubble extends StatelessWidget {
               waypoint.thumbnailPath!.isNotEmpty)
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: Image.network(
-                waypoint.thumbnailPath!,
+              // Was Image.network on what is a local reference -- a file name
+              // under the photo directory, or a data URI. Neither is a URL, so
+              // this could only ever fall through to the error builder and show
+              // the icon box instead of the photo. PinPhotoImage is the one
+              // place that knows how to turn either form into a picture.
+              child: PinPhotoImage(
+                reference: waypoint.thumbnailPath!,
                 width: double.infinity,
                 height: 56,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => _iconBox(),
+                showLabel: false,
               ),
             )
           else

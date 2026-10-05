@@ -24,6 +24,7 @@ import 'package:bush_track/features/map/providers/marker_visibility_provider.dar
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
 import 'package:bush_track/features/tracking/providers/track_target_provider.dart';
 import 'package:bush_track/theme/app_colors.dart';
+import 'package:bush_track/core/services/photo_file_store.dart';
 
 /// Print the computed AR geometry to the log while testing.
 ///
@@ -51,6 +52,10 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
   bool _saving = false;
 
   late ARCompassService _arService;
+
+  /// Resolves a photo reference to bytes, whether it is a file on disk or
+  /// a data URI left over from before the photo migration.
+  final PhotoFileStore _photoStore = PhotoFileStore();
 
   // Decoded thumbnails for AR overlay: waypoint.id → ui.Image
   final Map<int, ui.Image> _wpImages = {};
@@ -413,26 +418,44 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
     }
   }
 
-  /// Fire-and-forget thumbnail loader for AR overlay
+  /// Fire-and-forget thumbnail loader for the AR overlay.
+  ///
+  /// This used to skip any reference that did not start with `data:image`,
+  /// which was fine while every photo lived in the database as base64 -- and
+  /// stopped working the moment the photo migration moved them onto disk. Every
+  /// waypoint then failed that check, so no floating thumbnail was drawn at all
+  /// and AR showed bare markers. Both forms are handled now: a file reference
+  /// for anything migrated or saved since, and a data URI for a photo from an
+  /// older build whose file write never happened.
   void _preloadWpImages(List<Waypoint> waypoints) {
     for (final wp in waypoints) {
       if (wp.id == null) continue;
       if (_wpImages.containsKey(wp.id) || _loadingIds.contains(wp.id)) continue;
-      final first = wp.photoPaths?.isNotEmpty == true ? wp.photoPaths!.first : null;
-      if (first == null || !first.startsWith('data:image')) continue;
+      final refs = wp.photoPaths;
+      final first = (refs != null && refs.isNotEmpty) ? refs.first : null;
+      if (first == null || first.isEmpty) continue;
       _loadingIds.add(wp.id!);
       _decodeImage(wp.id!, first);
     }
   }
 
-  Future<void> _decodeImage(int id, String dataUri) async {
+  /// Decode whichever form the reference is in.
+  ///
+  /// The id stays in [_loadingIds] after a failure, so a photo whose file is
+  /// genuinely missing is attempted once rather than on every camera frame.
+  Future<void> _decodeImage(int id, String reference) async {
     try {
-      final comma = dataUri.indexOf(',');
-      final bytes = base64Decode(dataUri.substring(comma + 1));
-      final codec = await ui.instantiateImageCodec(bytes, targetWidth: 80, targetHeight: 80);
+      final bytes = PhotoFileStore.isDataUri(reference)
+          ? PhotoFileStore.decodeDataUri(reference)
+          : await _photoStore.read(reference);
+      if (bytes == null) return;
+      final codec = await ui.instantiateImageCodec(bytes,
+          targetWidth: 80, targetHeight: 80);
       final frame = await codec.getNextFrame();
       if (mounted) setState(() => _wpImages[id] = frame.image);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('AR thumbnail decode failed for waypoint $id: $e');
+    }
   }
 
   @override
