@@ -264,6 +264,15 @@ class OfflineMapManager {
   static int effectiveMaxZoom(MapStyle style, int requested) =>
       requested < style.maxUsefulZoom ? requested : style.maxUsefulZoom;
 
+  /// The lowest zoom to download, given the capped ceiling.
+  ///
+  /// Capping the ceiling alone inverts the range: the Trail preset asks for
+  /// z15-19, Sentinel-2 caps at 14, and z15-14 enumerates no tiles at all. The
+  /// region then "completed" instantly with nothing in it and reported success,
+  /// while the map stayed blank offline -- which is exactly what it did.
+  static int effectiveMinZoom(MapStyle style, int requested, int cappedMax) =>
+      requested > cappedMax ? cappedMax : requested;
+
   static List<_Tile> _tilesForBounds(LatLngBounds b, int minZ, int maxZ) {
     final tiles = <_Tile>[];
     for (int z = minZ; z <= maxZ; z++) {
@@ -282,8 +291,9 @@ class OfflineMapManager {
 
   SizeEstimate estimate(LatLngBounds bounds, int minZoom, int maxZoom, MapStyle style) {
     // Same clamp as the download, so the figure shown is the one that happens.
+    final cappedMax = effectiveMaxZoom(style, maxZoom);
     final tiles = _tilesForBounds(
-        bounds, minZoom, effectiveMaxZoom(style, maxZoom));
+        bounds, effectiveMinZoom(style, minZoom, cappedMax), cappedMax);
     final bytesPerTile = style == MapStyle.satellite ? 65 * 1024 : 35 * 1024;
     return SizeEstimate(tiles.length, tiles.length * bytesPerTile);
   }
@@ -304,14 +314,26 @@ class OfflineMapManager {
     // region claiming a zoom it never downloaded would serve gaps instead of
     // letting the network fill them in.
     final cappedMax = effectiveMaxZoom(style, maxZoom);
-    final tiles = _tilesForBounds(bounds, minZoom, cappedMax);
+    final cappedMin = effectiveMinZoom(style, minZoom, cappedMax);
+    final tiles = _tilesForBounds(bounds, cappedMin, cappedMax);
+
+    // A region with no tiles in it must not be recorded as a successful
+    // download. It reports completed the instant it starts, takes no storage,
+    // serves nothing, and looks identical on screen to a region that worked --
+    // so the map stays blank offline with nothing saying why.
+    if (tiles.isEmpty) {
+      throw StateError(
+          'Nothing to download: ${style.label} has no tiles between z$cappedMin '
+          'and z$cappedMax for that area.');
+    }
+
     final id = DateTime.now().millisecondsSinceEpoch.toString();
 
     final region = OfflineMapRegion(
       id: id,
       name: name,
       bounds: bounds,
-      minZoom: minZoom,
+      minZoom: cappedMin,
       maxZoom: cappedMax,
       style: style,
       totalTiles: tiles.length,
@@ -530,7 +552,11 @@ class OfflineMapManager {
   Future<void> _loadRegions() async {
     try {
       final file = File('$_tilesDir/regions.json');
-      if (!await file.exists()) return;
+      if (!await file.exists()) {
+        debugPrint('Offline: no regions.json at $_tilesDir '
+            '-- nothing has been downloaded on this install');
+        return;
+      }
       final list = jsonDecode(await file.readAsString()) as List;
       for (final item in list) {
         final r = OfflineMapRegion.fromJson(item as Map<String, dynamic>);
@@ -539,6 +565,21 @@ class OfflineMapManager {
           r.status = DownloadStatus.paused;
         }
         _regions[r.id] = r;
+      }
+
+      // Logged once per launch, because "offline does not work" has several
+      // causes that look identical on screen -- no region, a region for a
+      // different provider, an interrupted download -- and this one line tells
+      // them apart without needing a debugger attached in the field.
+      if (_regions.isEmpty) {
+        debugPrint('Offline: regions.json held no regions');
+      } else {
+        for (final r in _regions.values) {
+          debugPrint('Offline region "${r.name}" style=${r.style.name} '
+              'z${r.minZoom}-${r.maxZoom} status=${r.status.name} '
+              'tiles=${r.downloadedTiles}/${r.totalTiles} '
+              'failed=${r.failedTiles} ${r.formattedSize}');
+        }
       }
     } catch (e) {
       debugPrint('Load regions error: $e');

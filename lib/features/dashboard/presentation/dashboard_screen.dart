@@ -195,6 +195,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   /// [_retryingTileProvider] is a field.
   final Map<MapStyle, TileProvider> _offlineFirstProviders = {};
 
+  /// Last value logged, so the diagnostic fires on change rather than per frame.
+  MapStyle? _loggedOfflineStyle;
+  bool _loggedOfflineStyleOnce = false;
+
   /// Wraps the network provider so a downloaded tile is used before the
   /// network. Null style -- no downloadable source serves this exact layer --
   /// gives the plain network provider back.
@@ -468,6 +472,18 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     // Matched on the exact template, so the tiles on disk are guaranteed to be
     // the same imagery from the same provider as the layer being drawn.
     final offlineStyle = OfflineMapManager.styleServing(baseTileUrl);
+    // Logged only when it changes, not every frame: this build runs about once
+    // a second. Says whether the layer on screen has an offline source at all,
+    // which is the other half of diagnosing a blank map with no signal.
+    // The "once" flag matters: null is both the initial value and the most
+    // important case to report, so comparing against it alone would stay silent
+    // exactly when the layer has no offline source.
+    if (!_loggedOfflineStyleOnce || offlineStyle != _loggedOfflineStyle) {
+      _loggedOfflineStyleOnce = true;
+      _loggedOfflineStyle = offlineStyle;
+      debugPrint('Offline: layer $baseTileUrl -> '
+          '${offlineStyle == null ? 'NO offline source' : 'served by ${offlineStyle.name}'}');
+    }
 
     return Scaffold(
       body: Stack(
@@ -577,7 +593,17 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                           maxNativeZoom: maxNativeZoom,
                           minZoom: 3.0,
                           tileSize: 256,
-                          retinaMode: RetinaMode.isHighDensity(context),
+                          // Only where the provider serves a retina tile
+                          // itself, which is what {r} in the template means.
+                          // Without it, flutter_map *simulates* retina: it
+                          // adds 1 to zoomOffset, takes 1 off maxNativeZoom
+                          // and fetches four tiles per displayed tile. That
+                          // quadruples data use on a metered phone, and it
+                          // shifts the zoom levels being requested away from
+                          // the ones an offline region actually downloaded --
+                          // so a correct region still misses.
+                          retinaMode: baseTileUrl.contains('{r}') &&
+                              RetinaMode.isHighDensity(context),
                           // Tiles fetched beyond the viewport. Was 3, which
                           // pre-loads three rings of tiles that may never be
                           // looked at — free against Esri and OSM, billed per

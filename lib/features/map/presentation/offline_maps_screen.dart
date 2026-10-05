@@ -110,16 +110,29 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
     final p = _presets[_presetIndex];
 
     setState(() => _downloading = true);
-    await _manager.startDownload(
-      name: name,
-      bounds: _selectedBounds!,
-      minZoom: p.minZoom,
-      maxZoom: p.maxZoom,
-      style: _style,
-    );
-    if (mounted) {
+    try {
+      await _manager.startDownload(
+        name: name,
+        bounds: _selectedBounds!,
+        minZoom: p.minZoom,
+        maxZoom: p.maxZoom,
+        style: _style,
+      );
+      if (mounted) {
+        setState(() => _downloading = false);
+        _tabs.animateTo(1);
+      }
+    } catch (e) {
+      // An unstarted download has to say so. It used to be unguarded, so a
+      // failure here would have thrown into the button press and left the
+      // spinner running forever with no message.
+      if (!mounted) return;
       setState(() => _downloading = false);
-      _tabs.animateTo(1);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(e is StateError ? e.message : 'Download failed: $e'),
+        backgroundColor: AppColors.statusRed,
+        duration: const Duration(seconds: 6),
+      ));
     }
   }
 

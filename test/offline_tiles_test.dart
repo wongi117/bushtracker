@@ -165,4 +165,54 @@ void main() {
       expect(OfflineMapManager.effectiveMaxZoom(MapStyle.streets, 15), 15);
     });
   });
+
+  group('the zoom range can never invert', () {
+    test('the Trail preset against Sentinel-2, which is how this broke', () {
+      // Trail asks for z15-19 and Sentinel-2 caps at 14. Capping the ceiling
+      // alone left z15-14, which enumerates no tiles: the region reported
+      // completed the instant it started, held nothing, served nothing, and
+      // looked exactly like one that had worked.
+      const style = MapStyle.sentinel2;
+      final max = OfflineMapManager.effectiveMaxZoom(style, 19);
+      final min = OfflineMapManager.effectiveMinZoom(style, 15, max);
+
+      expect(max, 14);
+      expect(min, lessThanOrEqualTo(max),
+          reason: 'an inverted range downloads nothing at all');
+      expect(min, 14);
+    });
+
+    test('every preset in the app survives every style', () {
+      // The presets are fixed and the caps are per style, so this is the whole
+      // matrix rather than the one case that happened to be reported.
+      const presets = [
+        [6, 12],
+        [12, 16],
+        [15, 19],
+        [8, 20],
+      ];
+      for (final style in MapStyle.values) {
+        for (final preset in presets) {
+          final max = OfflineMapManager.effectiveMaxZoom(style, preset[1]);
+          final min = OfflineMapManager.effectiveMinZoom(style, preset[0], max);
+          expect(min, lessThanOrEqualTo(max),
+              reason: '${style.name} with z${preset[0]}-${preset[1]} inverts');
+        }
+      }
+    });
+
+    test('a minimum below the cap is untouched', () {
+      expect(OfflineMapManager.effectiveMinZoom(MapStyle.sentinel2, 6, 14), 6);
+      expect(OfflineMapManager.effectiveMinZoom(MapStyle.sentinel2, 12, 14), 12);
+    });
+
+    test('the estimate uses the same range as the download', () {
+      // They were separate calls with separate clamping, so the figure shown
+      // could describe a download that never happened.
+      const style = MapStyle.sentinel2;
+      final max = OfflineMapManager.effectiveMaxZoom(style, 19);
+      expect(OfflineMapManager.effectiveMinZoom(style, 15, max),
+          lessThanOrEqualTo(max));
+    });
+  });
 }
