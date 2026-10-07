@@ -490,6 +490,13 @@ class DatabaseService {
     ''');
   }
   
+  static Future<bool> _hasTable(DatabaseExecutor db, String table) async {
+    final rows = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        [table]);
+    return rows.isNotEmpty;
+  }
+
   // Helper to get storage for table
   List<Map<String, dynamic>> _getTable(String table) {
     return _webStorage.putIfAbsent(table, () => []);
@@ -687,6 +694,60 @@ class DatabaseService {
     return await _db!.query('mesh_peers', orderBy: 'last_seen DESC');
   }
   
+  // Drawing operations (Phase 4.2)
+
+  Future<int> insertDrawing(Map<String, dynamic> drawing) async {
+    if (_db == null) {
+      final data = Map<String, dynamic>.from(drawing);
+      data['id'] = _webIdCounter++;
+      _getTable('drawings').add(data);
+      return data['id'];
+    }
+    return await _db!.insert('drawings', drawing);
+  }
+
+  Future<int> updateDrawing(Map<String, dynamic> drawing) async {
+    final id = drawing['id'] as int;
+    if (_db == null) {
+      final list = _getTable('drawings');
+      final idx = list.indexWhere((e) => e['id'] == id);
+      if (idx >= 0) list[idx] = Map<String, dynamic>.from(drawing);
+      return idx >= 0 ? 1 : 0;
+    }
+    return await _db!
+        .update('drawings', drawing, where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Live drawings, oldest first so later ones draw on top.
+  Future<List<Map<String, dynamic>>> getDrawings() async {
+    if (_db == null) {
+      final list = _getTable('drawings')
+          .where((e) => e['deleted_at'] == null)
+          .toList()
+        ..sort((a, b) =>
+            (a['created_at'] ?? 0).compareTo(b['created_at'] ?? 0));
+      return list.map((e) => Map<String, dynamic>.from(e)).toList();
+    }
+    return await _db!.query('drawings',
+        where: 'deleted_at IS NULL', orderBy: 'created_at ASC, id ASC');
+  }
+
+  /// A tombstone, not a DELETE: the row stays so the deletion can sync.
+  Future<int> deleteDrawing(int id) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (_db == null) {
+      for (final row in _getTable('drawings')) {
+        if (row['id'] == id) {
+          row['deleted_at'] = now;
+          row['updated_at'] = now;
+        }
+      }
+      return 1;
+    }
+    return await _db!.update('drawings', {'deleted_at': now, 'updated_at': now},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
   // Field file operations
   Future<int> insertFieldFile(Map<String, dynamic> file) async {
     if (_db == null) {
@@ -752,6 +813,15 @@ class DatabaseService {
           }
         }
       }
+      final now = DateTime.now().millisecondsSinceEpoch;
+      for (final row in _getTable('drawings')) {
+        if (row['file_id'] != id) continue;
+        if (withContents) {
+          row['deleted_at'] = now;
+        } else {
+          row['file_id'] = null;
+        }
+      }
       return 1;
     }
 
@@ -764,6 +834,20 @@ class DatabaseService {
           await txn.update(table, {'file_id': null},
               where: 'file_id = ?', whereArgs: [id]);
         }
+      }
+      // Drawings too. Left out, they would stay filed under a project that no
+      // longer exists -- in no project's list and not in Unsorted either,
+      // which on a field phone reads as lost work. Tombstoned rather than
+      // deleted, like every other drawing delete.
+      if (await _hasTable(txn, 'drawings')) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        await txn.update(
+            'drawings',
+            withContents
+                ? {'deleted_at': now, 'updated_at': now}
+                : {'file_id': null, 'updated_at': now},
+            where: 'file_id = ? AND deleted_at IS NULL',
+            whereArgs: [id]);
       }
       return await txn.delete('field_files', where: 'id = ?', whereArgs: [id]);
     });
@@ -783,6 +867,9 @@ class DatabaseService {
           pins: n('waypoints'),
           zones: n('geofences'),
           trails: n('trails'),
+          drawings: _getTable('drawings')
+              .where((e) => e['file_id'] == id && e['deleted_at'] == null)
+              .length,
           notes: n('file_notes'));
     }
 
@@ -792,10 +879,20 @@ class DatabaseService {
       return (rows.first['c'] as int?) ?? 0;
     }
 
+    var drawings = 0;
+    if (await _hasTable(_db!, 'drawings')) {
+      final rows = await _db!.rawQuery(
+          'SELECT COUNT(*) AS c FROM drawings '
+          'WHERE file_id = ? AND deleted_at IS NULL',
+          [id]);
+      drawings = (rows.first['c'] as int?) ?? 0;
+    }
+
     return ProjectContents(
       pins: await n('waypoints'),
       zones: await n('geofences'),
       trails: await n('trails'),
+      drawings: drawings,
       notes: await n('file_notes'),
     );
   }
@@ -954,17 +1051,19 @@ class ProjectContents {
     this.pins = 0,
     this.zones = 0,
     this.trails = 0,
+    this.drawings = 0,
     this.notes = 0,
   });
 
   final int pins;
   final int zones;
   final int trails;
+  final int drawings;
   final int notes;
 
   /// Notes are excluded: they belong to the project and go with it either way,
   /// so they are not part of what the user is being asked to risk.
-  int get fieldItems => pins + zones + trails;
+  int get fieldItems => pins + zones + trails + drawings;
 
   bool get isEmpty => fieldItems == 0;
 
@@ -974,6 +1073,7 @@ class ProjectContents {
       if (pins > 0) '$pins ${pins == 1 ? 'pin' : 'pins'}',
       if (zones > 0) '$zones ${zones == 1 ? 'boundary' : 'boundaries'}',
       if (trails > 0) '$trails ${trails == 1 ? 'trail' : 'trails'}',
+      if (drawings > 0) '$drawings ${drawings == 1 ? 'drawing' : 'drawings'}',
     ];
     if (parts.isEmpty) return 'nothing';
     if (parts.length == 1) return parts.first;

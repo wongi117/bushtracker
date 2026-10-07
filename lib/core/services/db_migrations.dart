@@ -40,7 +40,7 @@ class DbMigrations {
   const DbMigrations._();
 
   /// The version the code expects. Bump this when adding a migration.
-  static const int currentVersion = 5;
+  static const int currentVersion = 6;
 
   /// Every step, in order. A gap in the numbering is a bug, and
   /// [assertWellFormed] catches it in the tests rather than on a phone.
@@ -64,6 +64,11 @@ class DbMigrations {
           to: 5,
           describe: 'projects: colour, archive, sort order',
           run: _v5Projects,
+        ),
+        Migration(
+          to: 6,
+          describe: 'drawings: lines and freehand',
+          run: _v6Drawings,
         ),
       ];
 
@@ -239,6 +244,37 @@ class DbMigrations {
 
     await db.execute('CREATE INDEX IF NOT EXISTS idx_field_files_archived '
         'ON field_files(archived_at)');
+  }
+
+  /// Lines and freehand drawings (Phase 4.2), as the plan's schema has them.
+  ///
+  /// A new table, so there is nothing on a handset to check before creating
+  /// it, and IF NOT EXISTS makes a rerun harmless. Points are JSON
+  /// `[[lat, lon], ...]` -- see Drawing.encodePoints for why not GeoJSON's
+  /// order. `uuid` is filled in by the app when the drawing is made, so there
+  /// is no backfill to do.
+  static Future<void> _v6Drawings(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS drawings(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uuid TEXT,
+        file_id INTEGER,
+        kind TEXT NOT NULL,
+        name TEXT,
+        notes TEXT,
+        colour TEXT,
+        width REAL,
+        points TEXT NOT NULL,
+        created_at INTEGER,
+        updated_at INTEGER,
+        deleted_at INTEGER,
+        created_by_uuid TEXT
+      )
+    ''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_drawings_file ON drawings(file_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_drawings_uuid ON drawings(uuid)');
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
