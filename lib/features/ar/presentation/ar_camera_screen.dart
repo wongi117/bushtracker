@@ -10,6 +10,7 @@ import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image/image.dart' as img;
 import 'package:latlong2/latlong.dart';
+import 'package:bush_track/core/services/photo_capture_service.dart';
 import 'package:bush_track/core/models/waypoint.dart';
 import 'package:bush_track/core/services/heading/heading_provider.dart';
 import 'package:bush_track/features/ai/presentation/identify_result_sheet.dart';
@@ -385,7 +386,11 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
 
     setState(() => _saving = true);
     try {
-      final base64Uri = 'data:image/jpeg;base64,${base64Encode(compressed)}';
+      // A file, like every other capture path now. This used to write the
+      // base64 twice -- as the photo and again as the thumbnail -- so each AR
+      // shot put the best part of a megabyte into the pin's row.
+      final reference =
+          await PhotoCaptureService.keep(compressed, store: _photoStore);
 
       // One step, and it hands back the pin it made.
       //
@@ -395,8 +400,8 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
       await ref.read(locationProvider.notifier).addPhotoWaypoint(
             lat: lat ?? 0.0,
             lon: lon ?? 0.0,
-            photoPath: base64Uri,
-            thumbnailPath: base64Uri,
+            photoPath: reference,
+            thumbnailPath: reference,
             label: details.name,
             notes: details.notes,
             type: WaypointType.pinage,

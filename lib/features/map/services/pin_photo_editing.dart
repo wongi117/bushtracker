@@ -72,14 +72,28 @@ class PinPhotoEditing {
     if (source == null || !context.mounted) return null;
 
     onBusy?.call(true);
+    // Read before the camera opens. Each shot is saved while the camera still
+    // has the screen, and a ref from a sheet that has gone by then cannot be
+    // read at all.
+    final notifier = ref.read(locationProvider.notifier);
+    var next = current;
     try {
-      final added = source == _Source.camera
-          ? await PhotoCaptureService.fromCamera()
-          : await PhotoCaptureService.fromGallery();
+      final List<String> added;
+      if (source == _Source.camera) {
+        // Saved shot by shot, so a run cut short -- Android reclaiming the app
+        // behind the camera, a crash, a flat battery -- keeps what it took.
+        added = await PhotoCaptureService.fromCamera(onShot: (reference) async {
+          next = [...next, reference];
+          await _persist(notifier, waypoint, next);
+        });
+      } else {
+        added = await PhotoCaptureService.fromGallery();
+        if (added.isNotEmpty) {
+          next = [...current, ...added];
+          await _persist(notifier, waypoint, next);
+        }
+      }
       if (added.isEmpty) return null;
-
-      final next = [...current, ...added];
-      await _persist(ref, waypoint, next);
 
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -137,15 +151,15 @@ class PinPhotoEditing {
     if (yes != true) return null;
 
     final next = [...current]..removeAt(index);
-    await _persist(ref, waypoint, next);
+    await _persist(ref.read(locationProvider.notifier), waypoint, next);
     return next;
   }
 
   static Future<void> _persist(
-      WidgetRef ref, Waypoint waypoint, List<String> photos) async {
+      LocationNotifier notifier, Waypoint waypoint, List<String> photos) async {
     final id = waypoint.id;
     if (id == null) return;
-    await ref.read(locationProvider.notifier).setWaypointPhotos(id, photos);
+    await notifier.setWaypointPhotos(id, photos);
     // Keep the object the caller was handed in step with what was written, so
     // anything still holding it sees the same photos.
     waypoint.photoPaths = photos;

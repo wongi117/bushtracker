@@ -19,8 +19,8 @@ void main() {
     String? title,
     String? notes,
     DateTime? takenAt,
-    Future<List<String>?> Function()? onAdd,
-    Future<List<String>?> Function(int)? onDelete,
+    Future<List<String>?> Function(List<String>)? onAdd,
+    Future<List<String>?> Function(List<String>, int)? onDelete,
   }) async {
     await tester.pumpWidget(MaterialApp(
       home: PinPhotoViewer(
@@ -132,8 +132,8 @@ void main() {
     testWidgets('both appear when they are given', (tester) async {
       await pump(tester,
           images: photos(2),
-          onAdd: () async => null,
-          onDelete: (_) async => null);
+          onAdd: (_) async => null,
+          onDelete: (_, __) async => null);
       expect(find.byIcon(Icons.add_a_photo_outlined), findsOneWidget);
       expect(find.byIcon(Icons.delete_outline), findsOneWidget);
     });
@@ -145,7 +145,7 @@ void main() {
         tester,
         images: images,
         initialIndex: 2,
-        onDelete: (i) async {
+        onDelete: (_, i) async {
           images = [...images]..removeAt(i);
           return images;
         },
@@ -165,7 +165,7 @@ void main() {
       await pump(
         tester,
         images: photos(1),
-        onDelete: (_) async => <String>[],
+        onDelete: (_, __) async => <String>[],
       );
       await tester.tap(find.byIcon(Icons.delete_outline));
       await tester.pumpAndSettle();
@@ -176,7 +176,7 @@ void main() {
       await pump(
         tester,
         images: photos(2),
-        onAdd: () async => [...photos(2), 'data:image/jpeg;base64,ZZZZ'],
+        onAdd: (current) async => [...current, 'data:image/jpeg;base64,ZZZZ'],
       );
       await tester.tap(find.byIcon(Icons.add_a_photo_outlined));
       await tester.pumpAndSettle();
@@ -184,10 +184,74 @@ void main() {
     });
 
     testWidgets('a cancelled delete changes nothing', (tester) async {
-      await pump(tester, images: photos(3), onDelete: (_) async => null);
+      await pump(tester, images: photos(3), onDelete: (_, __) async => null);
       await tester.tap(find.byIcon(Icons.delete_outline));
       await tester.pumpAndSettle();
       expect(find.text('1 / 3'), findsOneWidget);
+    });
+  });
+
+  // Both sheets used to save from their own copy of the list, which does not
+  // move while this viewer is open. So the second add in here was saved as the
+  // original photos plus the second batch -- the first batch gone -- and a
+  // delete after an add took the new photos with it. [saved] stands in for the
+  // database: each callback writes what it was handed plus its change, exactly
+  // as PinPhotoEditing does.
+  group('a run of changes in the viewer keeps every photo', () {
+    var n = 0;
+    String shot() => 'data:image/jpeg;base64,${'Q' * 4 * ++n}';
+
+    testWidgets('two adds keep both', (tester) async {
+      var saved = photos(1);
+      await pump(tester, images: saved, onAdd: (current) async {
+        return saved = [...current, shot()];
+      });
+
+      await tester.tap(find.byIcon(Icons.add_a_photo_outlined));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.add_a_photo_outlined));
+      await tester.pumpAndSettle();
+
+      expect(saved, hasLength(3));
+      expect(find.text('3 / 3'), findsOneWidget);
+    });
+
+    testWidgets('a delete after an add keeps the added photo', (tester) async {
+      var saved = photos(2);
+      await pump(
+        tester,
+        images: saved,
+        onAdd: (current) async => saved = [...current, shot()],
+        onDelete: (current, i) async => saved = [...current]..removeAt(i),
+      );
+
+      await tester.tap(find.byIcon(Icons.add_a_photo_outlined));
+      await tester.pumpAndSettle();
+      final added = saved.last;
+      // Back to the first and delete it.
+      await tester.drag(find.byType(PageView), const Offset(1000, 0));
+      await tester.pumpAndSettle();
+      await tester.drag(find.byType(PageView), const Offset(1000, 0));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.pumpAndSettle();
+
+      expect(saved, hasLength(2));
+      expect(saved, contains(added));
+    });
+
+    testWidgets('the callback is handed what is on screen', (tester) async {
+      final seen = <int>[];
+      var saved = photos(1);
+      await pump(tester, images: saved, onAdd: (current) async {
+        seen.add(current.length);
+        return saved = [...current, shot()];
+      });
+      for (var i = 0; i < 3; i++) {
+        await tester.tap(find.byIcon(Icons.add_a_photo_outlined));
+        await tester.pumpAndSettle();
+      }
+      expect(seen, [1, 2, 3]);
     });
   });
 

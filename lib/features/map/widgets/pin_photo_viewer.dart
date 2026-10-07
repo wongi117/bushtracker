@@ -35,13 +35,22 @@ class PinPhotoViewer extends StatefulWidget {
 
   final DateTime? takenAt;
 
-  /// Add more photos. Returns the new list, or null if nothing was added.
-  /// Omit to show no add button — which is how a read-only pin is handled once
-  /// there are shared pins to be read-only about.
-  final Future<List<String>?> Function()? onAdd;
+  /// Add more photos to [current], the list as this viewer shows it right now.
+  /// Returns the new list, or null if nothing was added. Omit to show no add
+  /// button — which is how a read-only pin is handled once there are shared
+  /// pins to be read-only about.
+  ///
+  /// The list is passed in rather than left to the caller, because the caller
+  /// is the sheet underneath and its copy does not move until this viewer
+  /// closes. Both sheets built on their own copy: a second add here was saved
+  /// as the first list plus the second photo, so each add in here replaced
+  /// the one before it -- and a delete after an add removed the new photos.
+  final Future<List<String>?> Function(List<String> current)? onAdd;
 
-  /// Remove the photo at an index. Returns the new list, or null if cancelled.
-  final Future<List<String>?> Function(int index)? onDelete;
+  /// Remove the photo at [index] of [current]. Returns the new list, or null
+  /// if cancelled. Same reason for taking the list.
+  final Future<List<String>?> Function(List<String> current, int index)?
+      onDelete;
 
   @override
   State<PinPhotoViewer> createState() => _PinPhotoViewerState();
@@ -207,7 +216,7 @@ class _PinPhotoViewerState extends State<PinPhotoViewer> {
 
   Future<void> _add() async {
     setState(() => _busy = true);
-    final next = await widget.onAdd!.call();
+    final next = await widget.onAdd!.call(List.unmodifiable(_photos));
     if (!mounted) return;
     setState(() {
       _busy = false;
@@ -222,7 +231,8 @@ class _PinPhotoViewerState extends State<PinPhotoViewer> {
 
   Future<void> _delete() async {
     setState(() => _busy = true);
-    final next = await widget.onDelete!.call(_index);
+    final next =
+        await widget.onDelete!.call(List.unmodifiable(_photos), _index);
     if (!mounted) return;
     setState(() {
       _busy = false;
@@ -311,8 +321,8 @@ Future<List<String>?> openPinPhotoViewer(
   String? title,
   String? notes,
   DateTime? takenAt,
-  Future<List<String>?> Function()? onAdd,
-  Future<List<String>?> Function(int index)? onDelete,
+  Future<List<String>?> Function(List<String> current)? onAdd,
+  Future<List<String>?> Function(List<String> current, int index)? onDelete,
 }) async {
   final before = photos.length;
   final out = await Navigator.push<List<String>>(

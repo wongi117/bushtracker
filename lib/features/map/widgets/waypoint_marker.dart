@@ -1,9 +1,8 @@
-import 'dart:convert';
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import '../../../core/models/waypoint.dart';
 import 'color_picker.dart';
+import 'pin_photo_image.dart';
+import 'pin_photo_viewer.dart';
 import 'package:bush_track/core/widgets/safe_sheet.dart';
 
 /// The pin's sheet: distance and bearing from you, plus Edit, Track and
@@ -44,41 +43,6 @@ void showWaypointMenu(
             },
       onColorChanged: onColorChanged,
       onIconChanged: onIconChanged,
-    ),
-  );
-}
-
-/// The stored photo as bytes, if this waypoint has one.
-///
-/// Photos are kept as `data:image/jpeg;base64,...` strings, so the prefix
-/// has to come off before decoding. Bad or truncated data returns null
-/// rather than throwing inside a build.
-Uint8List? _photoBytes(Waypoint waypoint) {
-  final raw = waypoint.thumbnailPath ??
-      (waypoint.photoPaths?.isNotEmpty == true
-          ? waypoint.photoPaths!.first
-          : null);
-  if (raw == null || raw.isEmpty) return null;
-  final marker = raw.indexOf('base64,');
-  if (marker < 0) return null;
-  try {
-    return base64Decode(raw.substring(marker + 7));
-  } catch (_) {
-    return null;
-  }
-}
-
-/// The photo on its own, big, on a black ground.
-void _showFullPhoto(BuildContext context, Uint8List bytes) {
-  showDialog<void>(
-    context: context,
-    barrierColor: Colors.black87,
-    builder: (ctx) => GestureDetector(
-      onTap: () => Navigator.pop(ctx),
-      child: InteractiveViewer(
-        maxScale: 5,
-        child: Center(child: Image.memory(bytes)),
-      ),
     ),
   );
 }
@@ -296,24 +260,14 @@ class _WaypointMenuSheet extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
-          // The photo, when there is one.
+          // The photos, when there are any.
           //
-          // A photo pin showed its name and distance but not the picture —
-          // which is the whole reason for taking it. Tap to see it full size.
-          if (_photoBytes(waypoint) != null) ...[
-            GestureDetector(
-              onTap: () => _showFullPhoto(context, _photoBytes(waypoint)!),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.memory(
-                  _photoBytes(waypoint)!,
-                  height: 160,
-                  width: double.infinity,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                ),
-              ),
-            ),
+          // This showed one: the thumbnail or the first photo, and only if it
+          // was still base64 -- so a pin with several showed one, and a pin
+          // whose photos had moved to disk showed none. All of them now, in
+          // the same viewer the other sheets use.
+          if (waypoint.hasPhotos) ...[
+            WaypointPhotoStrip(waypoint: waypoint),
             const SizedBox(height: 12),
           ],
 
@@ -551,6 +505,98 @@ class _WaypointMenuSheet extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Every photo on a pin: the current one large, the rest as a strip.
+@visibleForTesting
+class WaypointPhotoStrip extends StatefulWidget {
+  final Waypoint waypoint;
+  const WaypointPhotoStrip({super.key, required this.waypoint});
+
+  @override
+  State<WaypointPhotoStrip> createState() => _WaypointPhotoStripState();
+}
+
+class _WaypointPhotoStripState extends State<WaypointPhotoStrip> {
+  int _index = 0;
+
+  List<String> get _photos => widget.waypoint.photoPaths ?? const [];
+
+  void _open(int i) => openPinPhotoViewer(
+        context,
+        photos: _photos,
+        initialIndex: i,
+        title: widget.waypoint.label,
+        notes: widget.waypoint.notes,
+        takenAt: widget.waypoint.timestamp,
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final photos = _photos;
+    if (photos.isEmpty) return const SizedBox.shrink();
+    final i = _index.clamp(0, photos.length - 1);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        GestureDetector(
+          onTap: () => _open(i),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: SizedBox(
+              height: 160,
+              child: Stack(fit: StackFit.expand, children: [
+                PinPhotoImage(reference: photos[i], fit: BoxFit.cover),
+                if (photos.length > 1)
+                  Positioned(
+                    right: 8,
+                    bottom: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.6),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text('${i + 1} / ${photos.length}',
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 11)),
+                    ),
+                  ),
+              ]),
+            ),
+          ),
+        ),
+        if (photos.length > 1) ...[
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 48,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: photos.length,
+              itemBuilder: (_, t) => GestureDetector(
+                key: ValueKey('waypoint-thumb-$t'),
+                onTap: () => setState(() => _index = t),
+                child: Container(
+                  width: 48,
+                  margin: const EdgeInsets.only(right: 6),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: t == i ? Colors.white : Colors.transparent,
+                      width: 2,
+                    ),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: PinPhotoImage(reference: photos[t], fit: BoxFit.cover),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

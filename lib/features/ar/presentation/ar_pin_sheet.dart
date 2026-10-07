@@ -365,10 +365,11 @@ class _ArPinSheetState extends ConsumerState<_ArPinSheet> {
       title: wp.label ?? 'Pin',
       notes: wp.notes,
       takenAt: wp.timestamp,
-      onAdd: () => PinPhotoEditing.addPhotos(context, ref,
-          waypoint: wp, current: _photos),
-      onDelete: (i) => PinPhotoEditing.confirmRemove(context, ref,
-          waypoint: wp, current: _photos, index: i),
+      // The viewer's list, not _photos: ours does not move until it closes.
+      onAdd: (current) => PinPhotoEditing.addPhotos(context, ref,
+          waypoint: wp, current: current),
+      onDelete: (current, i) => PinPhotoEditing.confirmRemove(context, ref,
+          waypoint: wp, current: current, index: i),
     );
     if (next != null && mounted) setState(() => _photos = next);
   }
