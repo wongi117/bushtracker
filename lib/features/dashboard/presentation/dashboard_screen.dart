@@ -195,6 +195,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   /// [_retryingTileProvider] is a field.
   final Map<MapStyle, TileProvider> _offlineFirstProviders = {};
 
+  /// Same reason, for the downloaded-only layer drawn underneath.
+  final Map<MapStyle, TileProvider> _underlayProviders = {};
+
   /// Last value logged, so the diagnostic fires on change rather than per frame.
   MapStyle? _loggedOfflineStyle;
   bool _loggedOfflineStyleOnce = false;
@@ -455,7 +458,23 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
     // Stacked upward from the sheet: attribution, then compass, then locate.
     // Sizes are the widgets' own, so the gaps hold at any text scale.
-    const attributionHeight = 16.0;
+    // Downloaded imagery drawn under a layer that has no offline copy of its
+    // own (Mapbox), so that with no signal the download shows through instead
+    // of blank squares -- without the user switching layers by hand. Read off
+    // the phone only; see DownloadedOnlyTileProvider.
+    final satelliteNow = ref.watch(satelliteSourceProvider);
+    final layerUrl = _mapStyleIndex == 0
+        ? satelliteNow.urlTemplate
+        : _tileUrls[_mapStyleIndex];
+    final underlay = kIsWeb ||
+            OfflineMapManager.styleServing(layerUrl) != null
+        ? null
+        : OfflineMapManager().underlayStyle(imagery: _mapStyleIndex == 0);
+    // Its licence wants the credit wherever it is seen. Online the layer above
+    // covers it; offline it is what is on screen, so it gets a line of its own.
+    final creditUnderlay =
+        underlay != null && !ref.watch(connectivityProvider).isConnected;
+    final attributionHeight = creditUnderlay ? 28.0 : 16.0;
     const compassSize = 60.0;
     const locateSize = 52.0;
     final attributionBottom = stackBase;
@@ -463,9 +482,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     final locateBottom = compassBottom + compassSize + 8;
 
     // The satellite slot is swapped by setting; the other two are fixed.
-    final satellite = ref.watch(satelliteSourceProvider);
-    final baseTileUrl =
-        _mapStyleIndex == 0 ? satellite.urlTemplate : _tileUrls[_mapStyleIndex];
+    final satellite = satelliteNow;
+    final baseTileUrl = layerUrl;
     final maxNativeZoom = _mapStyleIndex == 0
         ? satellite.maxNativeZoom
         : _tileMaxNativeZoom[_mapStyleIndex];
@@ -568,6 +586,22 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                         },
                       ),
                       children: [
+                        if (underlay != null)
+                          TileLayer(
+                            // Required by TileLayer, never requested: the
+                            // provider reads downloaded files and nothing else.
+                            urlTemplate: underlay.urlTemplate,
+                            tileProvider: _underlayProviders.putIfAbsent(
+                                underlay,
+                                () => DownloadedOnlyTileProvider(
+                                    style: underlay)),
+                            maxZoom: 19.0,
+                            maxNativeZoom: underlay.maxUsefulZoom,
+                            minZoom: 3.0,
+                            tileSize: 256,
+                            panBuffer: 1,
+                            keepBuffer: 8,
+                          ),
                         // Tile layer with OpenStreetMap
                         TileLayer(
                           urlTemplate: baseTileUrl,
@@ -1403,11 +1437,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                       const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   color: Colors.black.withValues(alpha: 0.45),
                   child: Text(
-                    _mapStyleIndex == 0
-                        ? '${ref.watch(satelliteSourceProvider).attribution}  ·  tap to swap'
-                        : _mapStyleIndex == 1
-                            ? '© OpenTopoMap (CC-BY-SA)'
-                            : '© OpenStreetMap contributors',
+                    (_mapStyleIndex == 0
+                            ? '${ref.watch(satelliteSourceProvider).attribution}  ·  tap to swap'
+                            : _mapStyleIndex == 1
+                                ? '© OpenTopoMap (CC-BY-SA)'
+                                : '© OpenStreetMap contributors') +
+                        (creditUnderlay
+                            ? '\nOffline: ${underlay.attribution}'
+                            : ''),
+                    textAlign: TextAlign.right,
                     style: TextStyle(
                         color: Colors.white.withValues(alpha: 0.6),
                         fontSize: 8.5),

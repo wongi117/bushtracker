@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/painting.dart';
 import 'package:flutter_map/flutter_map.dart';
 
@@ -69,5 +71,36 @@ class OfflineFirstTileProvider extends TileProvider {
   void dispose() {
     fallback.dispose();
     super.dispose();
+  }
+}
+
+/// Downloaded tiles only. Never the network.
+///
+/// For drawing a downloaded region *underneath* a layer that has no offline
+/// copy of its own -- Mapbox satellite, whose terms allow offline storage only
+/// through their SDK. Online, the layer above covers this completely. Offline,
+/// wherever the layer above has no tile, the download shows through instead
+/// of a blank square, with no switching of layers and no guessing at whether
+/// there is signal: it is decided tile by tile.
+///
+/// Reported as "when we are offline the maps are blury until im online and
+/// have to manually switch maps". Never fetching is the point -- a tile it
+/// does not hold is transparent, so this costs nothing online and cannot be
+/// mistaken for a source of its own.
+class DownloadedOnlyTileProvider extends TileProvider {
+  DownloadedOnlyTileProvider({required this.style});
+
+  final MapStyle style;
+
+  /// A 1x1 fully transparent PNG, for every tile not on the phone.
+  static final MemoryImage transparent = MemoryImage(base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='));
+
+  @override
+  ImageProvider getImage(TileCoordinates coordinates, TileLayer options) {
+    final file = OfflineMapManager()
+        .tileFileFor(style, coordinates.z, coordinates.x, coordinates.y);
+    if (file != null) return FileImage(file);
+    return transparent;
   }
 }

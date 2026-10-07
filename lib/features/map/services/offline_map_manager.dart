@@ -90,6 +90,16 @@ extension MapStyleExt on MapStyle {
         _ => true,
       };
 
+  /// The credit its terms require wherever it is on screen.
+  ///
+  /// Sentinel-2's must name the data as modified (CC BY 4.0); worded as EOX
+  /// state it, and identical to SatelliteSource.sentinel2's.
+  String get attribution => switch (this) {
+        MapStyle.sentinel2 =>
+          'Sentinel-2 cloudless by EOX (modified Copernicus Sentinel data)',
+        _ => '© MapTiler © OpenStreetMap contributors',
+      };
+
   /// Whether this source can be fetched at all from this build.
   ///
   /// The MapTiler styles need MAPTILER_KEY, and a build without it gets every
@@ -556,7 +566,7 @@ class OfflineMapManager {
 
   // ─── Offline tile serving ────────────────────────────────────────────────────
 
-  /// The file holding this tile, if a completed region covers it.
+  /// The file holding this tile, if a downloaded region has it on disk.
   ///
   /// Synchronous on purpose. flutter_map's TileProvider.getImage must return an
   /// ImageProvider immediately, so an async existence check cannot be used --
@@ -564,18 +574,22 @@ class OfflineMapManager {
   /// the downloader, was never called from anywhere and offline maps have
   /// never actually worked.
   ///
-  /// Coverage is decided from the region's bounds and zoom range, using the
-  /// same tile arithmetic the download used to enumerate them, rather than by
-  /// touching the filesystem. A completed region with a tile missing therefore
-  /// shows a gap rather than falling back to the network; that is the trade for
-  /// being able to answer synchronously, and it only applies to regions marked
-  /// completed.
+  /// Bounds and zoom narrow it to the regions that could hold the tile; a
+  /// synchronous stat then says whether this one does. That stat used to be
+  /// skipped, trusting a "completed" region to hold every tile in its box --
+  /// so a region with tiles missing drew holes instead of falling back to the
+  /// network, and once incomplete regions were honestly marked failed, the
+  /// tiles they *did* hold were not served at all. Every tile on the test phone
+  /// was in a region like that. One stat per tile load, not per frame.
+  ///
+  /// A region still downloading is skipped: its newest file may be half
+  /// written.
   File? tileFileFor(MapStyle style, int z, int x, int y) {
     final dir = _tilesDir;
     if (dir == null) return null;
 
     for (final region in _regions.values) {
-      if (region.status != DownloadStatus.completed) continue;
+      if (!_mayServe(region)) continue;
       if (region.style != style) continue;
       if (z < region.minZoom || z > region.maxZoom) continue;
 
@@ -587,9 +601,26 @@ class OfflineMapManager {
       if (x < sw.x || x > ne.x) continue;
       if (y < ne.y || y > sw.y) continue;
 
-      return File('$dir/${region.id}/${z}_${x}_$y');
+      final file = File('$dir/${region.id}/${z}_${x}_$y');
+      if (file.existsSync()) return file;
     }
     return null;
+  }
+
+  static bool _mayServe(OfflineMapRegion r) =>
+      r.downloadedTiles > 0 &&
+      (r.status == DownloadStatus.completed ||
+          r.status == DownloadStatus.failed ||
+          r.status == DownloadStatus.paused);
+
+  /// Points the manager at a directory and a set of regions without
+  /// path_provider, which a test does not have. Pass null to detach.
+  @visibleForTesting
+  void attachForTest(String? tilesDir, [List<OfflineMapRegion> regions = const []]) {
+    _tilesDir = tilesDir;
+    _regions
+      ..clear()
+      ..addEntries(regions.map((r) => MapEntry(r.id, r)));
   }
 
   /// The downloadable style that serves *exactly* this URL template, if any.
@@ -618,6 +649,39 @@ class OfflineMapManager {
   /// you have this area", which are different things to say to somebody.
   bool hasAnyRegionFor(MapStyle style) => _regions.values.any(
       (r) => r.status == DownloadStatus.completed && r.style == style);
+
+  /// Which download to draw under a layer that has no offline copy of its own.
+  ///
+  /// Like for like first: satellite imagery under a satellite layer, a map
+  /// under a map. Failing that, anything downloaded at all -- Sentinel-2 under
+  /// a topo map with no signal beats a blank screen. Null when nothing has
+  /// been downloaded.
+  static MapStyle? underlayFor({
+    required bool imagery,
+    required Iterable<MapStyle> downloaded,
+  }) {
+    final have = downloaded.toSet();
+    const imageryFirst = [MapStyle.sentinel2, MapStyle.satellite];
+    const mapsFirst = [
+      MapStyle.topo,
+      MapStyle.outdoor,
+      MapStyle.streets,
+      MapStyle.dark,
+    ];
+    final order = imagery
+        ? [...imageryFirst, ...mapsFirst]
+        : [...mapsFirst, ...imageryFirst];
+    for (final s in order) {
+      if (have.contains(s)) return s;
+    }
+    return null;
+  }
+
+  /// [underlayFor], over what is actually downloaded and complete.
+  MapStyle? underlayStyle({required bool imagery}) => underlayFor(
+        imagery: imagery,
+        downloaded: _regions.values.where(_mayServe).map((r) => r.style),
+      );
 
   Future<List<int>?> getOfflineTile(int z, int x, int y) async {
     for (final region in _regions.values) {
