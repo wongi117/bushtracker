@@ -414,6 +414,7 @@ the phone.
 - [ ] Connections: find, request, accept, decline, remove, block
 - [ ] Shares with view/edit
 - [ ] Shared with me, showing who shared it
+- [ ] Public pins (asked for 7 Oct): shires, rangers and tourism bodies publish pins with photos that any traveller sees, to bring visitors to a town. Needs a decision on who may publish (verified organisations only?), moderation of photos, and that heritage and protected-zone data can never be made public by this route.
 - [ ] RLS policies and the ten test cases above
 - [ ] Outbox carries shares, requests, edits
 - [ ] Conflict resolution UI
