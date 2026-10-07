@@ -3,6 +3,7 @@ import 'package:sqflite_common/sqlite_api.dart';
 
 import 'package:bush_track/core/models/photo_paths_codec.dart';
 import 'package:bush_track/core/services/photo_file_store.dart';
+import 'package:bush_track/core/services/oversize_rows.dart';
 
 /// What a migration run did, or would do.
 @immutable
@@ -96,9 +97,14 @@ class PhotoMigration {
   Future<PhotoMigrationReport> migrate() => _run(write: true);
 
   Future<PhotoMigrationReport> _run({required bool write}) async {
-    final rows = await db.query(
+    // Read through OversizeRows. A plain query here threw on the one row this
+    // migration most needed to shrink -- a pin past Android's 2 MB row window
+    // -- so the step failed on every launch and the row could never be fixed.
+    final rows = await OversizeRows.query(
+      db,
       'waypoints',
-      columns: ['id', 'photo_paths'],
+      columns: const ['id', 'photo_paths'],
+      bigColumns: const ['photo_paths'],
       where: "photo_paths IS NOT NULL AND photo_paths != ''",
     );
 
@@ -218,7 +224,9 @@ class PhotoMigration {
   Future<int> rollback() async {
     if (!await _backupExists()) return 0;
 
-    final saved = await db.query(backupTable);
+    // The backup holds the original, oversized text; same window, same read.
+    final saved = await OversizeRows.query(db, backupTable,
+        bigColumns: const ['photo_paths'], idColumn: 'waypoint_id');
     var restored = 0;
     for (final row in saved) {
       final id = row['waypoint_id'] as int?;
@@ -242,7 +250,8 @@ class PhotoMigration {
 
   /// Every file name the database still refers to, for an orphan scan.
   Future<Set<String>> referencedFiles() async {
-    final rows = await db.query('waypoints', columns: ['photo_paths']);
+    final rows = await OversizeRows.query(db, 'waypoints',
+        columns: const ['photo_paths'], bigColumns: const ['photo_paths']);
     final names = <String>{};
     for (final row in rows) {
       final photos = PhotoPathsCodec.decode(row['photo_paths']);

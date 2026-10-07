@@ -175,6 +175,15 @@ step, every step idempotent. Two rules that are easy to break:
   at version 4 -- retrying and failing the same upgrade on every launch, with nothing on
   screen saying why.
 
+**Android cannot read a row over ~2 MB.** Query results come back through a
+CursorWindow; one oversized row makes the *whole query* throw "Row too big to fit
+into CursorWindow". A pin with 16 base64 photos (5.7 MB) did that on the phone:
+no waypoint loaded at all, and the photo migration threw on the very row it
+existed to shrink, every launch. Desktop and test SQLite have no window, so tests
+never see it. Read columns that can grow (`photo_paths`, `thumbnail_path`)
+through `OversizeRows`, and never store blobs in a row -- photos go through
+`PhotoCaptureService.keep` to the file store.
+
 **Unsorted is a view, not a row.** `FieldFile.unsortedId` is `-1` and is *never* written to
 `file_id`; unfiled work is `file_id IS NULL`. Writing `-1` would file items under a project
 that does not exist, hiding them from every project list **and** from the Unsorted view. Any

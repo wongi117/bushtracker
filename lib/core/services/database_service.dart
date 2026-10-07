@@ -7,6 +7,7 @@ import 'package:sqflite_common/sqflite.dart';
 import 'package:path/path.dart';
 import 'db_migrations.dart';
 import 'photo_migration.dart';
+import 'oversize_rows.dart';
 
 import 'native_db_factory_stub.dart'
     if (dart.library.io) 'native_db_factory_io.dart';
@@ -512,7 +513,11 @@ class DatabaseService {
       list.sort((a, b) => (b['timestamp'] ?? 0).compareTo(a['timestamp'] ?? 0));
       return list.map((e) => Map<String, dynamic>.from(e)).toList();
     }
-    return await _db!.query('waypoints', orderBy: 'timestamp DESC');
+    // Guarded: one pin whose photos outgrew Android's 2 MB row window made
+    // this throw, and then no waypoint loaded at all. See OversizeRows.
+    return await OversizeRows.query(_db!, 'waypoints',
+        bigColumns: const ['photo_paths', 'thumbnail_path'],
+        orderBy: 'timestamp DESC');
   }
   
   Future<int> deleteWaypoint(int id) async {
@@ -804,7 +809,9 @@ class DatabaseService {
   Future<Set<String>> referencedPhotoPaths() async {
     final rows = _db == null
         ? _getTable('waypoints')
-        : await _db!.query('waypoints', columns: ['photo_paths']);
+        : await OversizeRows.query(_db!, 'waypoints',
+            columns: const ['photo_paths'],
+            bigColumns: const ['photo_paths']);
     final out = <String>{};
     for (final row in rows) {
       final raw = row['photo_paths'];
