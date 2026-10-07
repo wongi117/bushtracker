@@ -3,14 +3,9 @@ import 'package:flutter_map/flutter_map.dart';
 
 import 'package:bush_track/core/models/waypoint.dart';
 import 'package:bush_track/core/utils/geo_geometry.dart';
+import 'package:bush_track/features/drawing/presentation/pen_picker.dart';
 import 'package:bush_track/features/drawing/services/freehand.dart';
 import 'package:bush_track/theme/app_colors.dart';
-
-/// Pen colours: picked to stand out on satellite imagery and on the topo map.
-const freehandColours = ['#FF6B00', '#FF1744', '#FFEA00', '#00E5FF', '#FFFFFF'];
-
-/// Thin, medium, thick, in logical pixels.
-const freehandWidths = [2.0, 4.0, 7.0];
 
 /// The session's strokes, and the one under the finger, as map layers.
 List<Widget> buildFreehandLayers(FreehandSession? session) {
@@ -113,49 +108,12 @@ class FreehandPanel extends StatelessWidget {
                 ),
               ]),
               const SizedBox(height: 10),
-              Row(children: [
-                for (final c in freehandColours)
-                  GestureDetector(
-                    key: ValueKey('freehand-colour-$c'),
-                    onTap: () => onColour(c),
-                    child: Container(
-                      width: 28,
-                      height: 28,
-                      margin: const EdgeInsets.only(right: 8),
-                      decoration: BoxDecoration(
-                        color: WaypointColors.fromHex(c),
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: session.colour == c
-                              ? Colors.white
-                              : Colors.white24,
-                          width: session.colour == c ? 3 : 1,
-                        ),
-                      ),
-                    ),
-                  ),
-                const Spacer(),
-                for (final w in freehandWidths)
-                  GestureDetector(
-                    key: ValueKey('freehand-width-${w.round()}'),
-                    onTap: () => onWidth(w),
-                    child: Container(
-                      width: 34,
-                      height: 28,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: session.width == w
-                              ? AppColors.primaryOrange
-                              : Colors.transparent,
-                        ),
-                      ),
-                      child: Container(
-                          width: 20, height: w, color: Colors.white),
-                    ),
-                  ),
-              ]),
+              PenPicker(
+                colour: session.colour,
+                width: session.width,
+                onColour: onColour,
+                onWidth: onWidth,
+              ),
               const SizedBox(height: 8),
               Row(children: [
                 IconButton(

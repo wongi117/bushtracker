@@ -38,6 +38,7 @@ import 'package:bush_track/features/geofence/presentation/zone_drawing.dart';
 import 'package:bush_track/features/drawing/models/drawing.dart';
 import 'package:bush_track/features/drawing/presentation/line_drawing.dart';
 import 'package:bush_track/features/drawing/presentation/freehand_drawing.dart';
+import 'package:bush_track/features/drawing/presentation/pen_picker.dart';
 import 'package:bush_track/features/drawing/services/freehand.dart';
 import 'package:bush_track/features/drawing/providers/drawings_provider.dart';
 import 'package:bush_track/features/drawing/services/line_geometry.dart';
@@ -195,6 +196,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
   /// A freehand drawing session, or null.
   FreehandSession? _freehand;
+
+  /// The line tool's pen. Kept between lines, so a run of fences drawn in
+  /// one colour does not need the colour picked each time.
+  String _lineColour = '#FF6B00';
+  double _lineWidth = 4;
 
   /// The map's own coordinate space, for turning a finger position on screen
   /// back into a position on the ground while dragging a zone bigger.
@@ -865,13 +871,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                           draft: _lineDraft,
                           editingId: _editingDrawing?.id,
                           showLabels: _currentZoom >= 13,
-                          onVertexDragTo: _dragLineVertex,
-                          onVertexDragEnd: _endLineVertexDrag,
-                          onVertexRemove: (i) => setState(() {
-                            _lineDraft?.remove(i);
-                            _lineSnappedTo = null;
-                          }),
-                          onMidpointTap: _insertLineVertex,
+                          draftColour: _lineColour,
+                          draftWidth: _lineWidth,
                         ),
                         ...buildFreehandLayers(_freehand),
 
@@ -948,6 +949,31 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                 onPanUpdate: (d) => _freehandAt(d.globalPosition),
                 onPanEnd: (_) => _endFreehandStroke(),
                 onPanCancel: () => setState(() => _freehand?.cancelStroke()),
+              ),
+            ),
+
+          // The line's points and + buttons, above the map. As markers inside
+          // it, a drag that began on a point moved the whole map instead (seen
+          // on the phone). Up here a touch on a handle never reaches the map;
+          // a touch anywhere else falls through to it as before.
+          if (_lineDraft != null && _mapInitialized && !_is3DMode)
+            Positioned.fill(
+              child: LineHandles(
+                vertices: [
+                  for (final p in _lineDraft!.points)
+                    mapOffsetOf(_mapController.camera, p),
+                ],
+                midpoints: [
+                  for (final m in _lineDraft!.midpoints)
+                    mapOffsetOf(_mapController.camera, m),
+                ],
+                onDragTo: _dragLineVertex,
+                onDragEnd: _endLineVertexDrag,
+                onRemove: (i) => setState(() {
+                  _lineDraft?.remove(i);
+                  _lineSnappedTo = null;
+                }),
+                onInsert: _insertLineVertex,
               ),
             ),
 
@@ -1684,6 +1710,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                 canUndo: _lineDraft!.canUndo,
                 editing: _editingDrawing != null,
                 snappedTo: _lineSnappedTo,
+                colour: _lineColour,
+                width: _lineWidth,
+                onColour: (c) => setState(() => _lineColour = c),
+                onWidth: (w) => setState(() => _lineWidth = w),
                 onUndo: () => setState(() {
                   _lineDraft!.undo();
                   _lineSnappedTo = null;
@@ -2684,6 +2714,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
       _freehand = null;
       _editingDrawing = editing;
       _lineDraft = LineDraft(editing?.points ?? const []);
+      if (editing != null) {
+        _lineColour = editing.colour;
+        _lineWidth = editing.width;
+      }
       _lineSnappedTo = null;
     });
     if (editing == null) {
@@ -2791,7 +2825,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     final editing = _editingDrawing;
 
     if (editing != null) {
-      await notifier.save(editing.copyWith(points: points));
+      await notifier.save(editing.copyWith(
+          points: points, colour: _lineColour, width: _lineWidth));
       if (!mounted) return;
       _cancelLineDrawing();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -2810,6 +2845,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     final saved = await notifier.add(Drawing(
       kind: DrawingKind.line,
       name: name.isEmpty ? null : name,
+      colour: _lineColour,
+      width: _lineWidth,
       points: points,
       // Filed under the open project, as a new pin would be.
       fileId: ref.read(filesProvider).activeFileId,
@@ -2876,12 +2913,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     return best;
   }
 
-  void _showDrawingSheet(Drawing d) {
+  void _showDrawingSheet(Drawing drawing) {
+    var d = drawing;
     final legs = d.points.length - 1;
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF0F0F1A),
-      builder: (ctx) => SafeArea(
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setSheet) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
           child: Column(
@@ -2897,7 +2935,23 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               Text(
                   '${formatDistance(d.lengthMetres)} · $legs ${legs == 1 ? 'leg' : 'legs'}',
                   style: const TextStyle(color: Colors.white60)),
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
+              // Recolour in place: saved as it is picked, nothing to confirm.
+              PenPicker(
+                colour: d.colour,
+                width: d.width,
+                onColour: (c) async {
+                  d = d.copyWith(colour: c);
+                  setSheet(() {});
+                  await ref.read(drawingsProvider.notifier).save(d);
+                },
+                onWidth: (w) async {
+                  d = d.copyWith(width: w);
+                  setSheet(() {});
+                  await ref.read(drawingsProvider.notifier).save(d);
+                },
+              ),
+              const SizedBox(height: 8),
               Row(children: [
                 if (d.kind == DrawingKind.line)
                 TextButton.icon(
@@ -2923,7 +2977,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             ],
           ),
         ),
-      ),
+      )),
     );
   }
 

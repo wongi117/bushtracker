@@ -6,6 +6,8 @@ import 'package:bush_track/features/drawing/presentation/line_drawing.dart';
 import 'package:bush_track/features/drawing/services/line_geometry.dart';
 import 'package:bush_track/features/files/services/project_scope.dart';
 import 'package:bush_track/features/map/providers/marker_visibility_provider.dart';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -42,6 +44,10 @@ void main() {
               onUndo: () {},
               onCancel: () {},
               onDone: () {},
+              colour: '#FF6B00',
+              width: 4,
+              onColour: (_) {},
+              onWidth: (_) {},
             ),
           ),
         ),
@@ -87,37 +93,6 @@ void main() {
           ),
         ));
 
-    testWidgets('a handle on every point and a + on every leg', (tester) async {
-      await pump(
-          tester,
-          buildDrawingMapLayers(
-            drawings: const [],
-            draft: LineDraft([leonora, east, north]),
-            onMidpointTap: (_) {},
-          ));
-      for (var i = 0; i < 3; i++) {
-        expect(find.byKey(ValueKey('line-vertex-$i')), findsOneWidget);
-      }
-      expect(find.byKey(const ValueKey('line-midpoint-0')), findsOneWidget);
-      expect(find.byKey(const ValueKey('line-midpoint-1')), findsOneWidget);
-    });
-
-    testWidgets('tapping a + asks for a vertex in that leg', (tester) async {
-      int? asked;
-      await pump(
-          tester,
-          buildDrawingMapLayers(
-            drawings: const [],
-            draft: LineDraft([leonora, east, north]),
-            onMidpointTap: (i) => asked = i,
-          ));
-      await tester.tap(find.byKey(const ValueKey('line-midpoint-1')));
-      // The map listens for double taps, so a single tap is only settled once
-      // the double-tap window has passed.
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(asked, 2, reason: 'between vertices 1 and 2');
-    });
-
     test('the line being edited is not also drawn as its saved self', () {
       final saved = Drawing(
           id: 7, kind: DrawingKind.line, points: [leonora, east]);
@@ -135,6 +110,106 @@ void main() {
           lines(buildDrawingMapLayers(
               drawings: [saved], draft: LineDraft(saved.points), editingId: 7)),
           1);
+    });
+  });
+
+  group('handles sit exactly on their points, at any rotation', () {
+    // mapOffsetOf is the inverse of the offsetToCrs that the finger already
+    // goes through. If the two disagree, a handle is drawn somewhere other
+    // than where dragging it would put the point.
+    for (final rotation in [0.0, 30.0, 137.0, -90.0]) {
+      test('rotated $rotation°', () {
+        final camera = MapCamera(
+          crs: const Epsg3857(),
+          center: leonora,
+          zoom: 15,
+          rotation: rotation,
+          nonRotatedSize: const math.Point(400, 800),
+        );
+        expect(mapOffsetOf(camera, leonora), const Offset(200, 400));
+        for (final p in [east, north, LatLng(-28.875, 121.325)]) {
+          final back = camera.offsetToCrs(mapOffsetOf(camera, p));
+          expect(const Distance()(back, p), lessThan(0.05), reason: '$p');
+        }
+      });
+    }
+  });
+
+  // On the phone a drag that started on a point moved the whole map: the
+  // handles were markers inside the map's own gesture handling. They are now
+  // drawn above the map, and these hold that against a real FlutterMap.
+  group('dragging a point does not move the map', () {
+    late MapController controller;
+    late List<Offset> dragged;
+    late List<int> inserted;
+
+    Future<void> pump(WidgetTester tester) async {
+      controller = MapController();
+      dragged = [];
+      inserted = [];
+      Widget tree() => MaterialApp(
+        home: Stack(children: [
+          FlutterMap(
+            mapController: controller,
+            options: const MapOptions(initialCenter: leonora, initialZoom: 16),
+            children: const [],
+          ),
+          Positioned.fill(
+            child: Builder(builder: (context) {
+              final draft = LineDraft([leonora, east]);
+              return LineHandles(
+                vertices: [
+                  for (final p in draft.points)
+                    mapOffsetOf(controller.camera, p),
+                ],
+                midpoints: [
+                  for (final m in draft.midpoints)
+                    mapOffsetOf(controller.camera, m),
+                ],
+                onDragTo: (i, g) => dragged.add(g),
+                onDragEnd: (_) {},
+                onRemove: (_) {},
+                onInsert: inserted.add,
+              );
+            }),
+          ),
+        ]),
+      );
+      // The map has no size until it is laid out, so the handles are placed
+      // again once it has -- as the dashboard does, which shows them only
+      // after the map is ready and rebuilds on every camera move.
+      await tester.pumpWidget(tree());
+      await tester.pump();
+      await tester.pumpWidget(tree());
+    }
+
+    testWidgets('a drag on a point moves the point and not the map',
+        (tester) async {
+      await pump(tester);
+      final before = controller.camera.center;
+      await tester.drag(
+          find.byKey(const ValueKey('line-vertex-1')), const Offset(0, 120));
+      await tester.pumpAndSettle();
+
+      expect(dragged, isNotEmpty, reason: 'the point is told where to go');
+      expect(controller.camera.center, before, reason: 'the map stays put');
+    });
+
+    testWidgets('a drag on open ground still pans the map', (tester) async {
+      // The other half: the handles must not swallow the map either.
+      await pump(tester);
+      final before = controller.camera.center;
+      await tester.dragFrom(const Offset(60, 500), const Offset(0, -150));
+      await tester.pumpAndSettle();
+
+      expect(dragged, isEmpty);
+      expect(controller.camera.center, isNot(before));
+    });
+
+    testWidgets('a + answers at once, with no double-tap wait', (tester) async {
+      await pump(tester);
+      await tester.tap(find.byKey(const ValueKey('line-midpoint-0')));
+      expect(inserted, [1]);
     });
   });
 

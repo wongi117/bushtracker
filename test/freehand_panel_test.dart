@@ -73,8 +73,8 @@ void main() {
     double? w;
     await pump(tester, FreehandSession(),
         colour: (v) => c = v, width: (v) => w = v);
-    await tester.tap(find.byKey(const ValueKey('freehand-colour-#00E5FF')));
-    await tester.tap(find.byKey(const ValueKey('freehand-width-7')));
+    await tester.tap(find.byKey(const ValueKey('pen-colour-#00E5FF')));
+    await tester.tap(find.byKey(const ValueKey('pen-width-7')));
     expect(c, '#00E5FF');
     expect(w, 7.0);
   });
