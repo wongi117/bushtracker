@@ -37,6 +37,8 @@ import 'package:bush_track/features/geofence/presentation/geofence_screen.dart';
 import 'package:bush_track/features/geofence/presentation/zone_drawing.dart';
 import 'package:bush_track/features/drawing/models/drawing.dart';
 import 'package:bush_track/features/drawing/presentation/line_drawing.dart';
+import 'package:bush_track/features/drawing/presentation/freehand_drawing.dart';
+import 'package:bush_track/features/drawing/services/freehand.dart';
 import 'package:bush_track/features/drawing/providers/drawings_provider.dart';
 import 'package:bush_track/features/drawing/services/line_geometry.dart';
 import 'package:bush_track/features/geofence/providers/geofence_provider.dart';
@@ -190,6 +192,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
   /// What the last tap snapped to, so the panel can say so.
   String? _lineSnappedTo;
+
+  /// A freehand drawing session, or null.
+  FreehandSession? _freehand;
 
   /// The map's own coordinate space, for turning a finger position on screen
   /// back into a position on the ground while dragging a zone bigger.
@@ -868,6 +873,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                           }),
                           onMidpointTap: _insertLineVertex,
                         ),
+                        ...buildFreehandLayers(_freehand),
 
                         // Target Pin
                         if (_targetPin != null)
@@ -929,6 +935,21 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                     ),
                   ),
           ), // RepaintBoundary
+
+          // Freehand: while Draw is on, a finger on the map is a stroke, not a
+          // pan. Sits directly above the map and under every control, so
+          // nothing else on screen -- SOS above all -- is ever covered by it.
+          if (_freehand != null && _freehand!.drawing && !_is3DMode)
+            Positioned.fill(
+              child: GestureDetector(
+                key: const ValueKey('freehand-canvas'),
+                behavior: HitTestBehavior.opaque,
+                onPanStart: (d) => _freehandAt(d.globalPosition, start: true),
+                onPanUpdate: (d) => _freehandAt(d.globalPosition),
+                onPanEnd: (_) => _endFreehandStroke(),
+                onPanCancel: () => setState(() => _freehand?.cancelStroke()),
+              ),
+            ),
 
           // Loading indicators
           if (!_mapInitialized || _tilesLoading)
@@ -1631,6 +1652,27 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               ),
             ),
 
+          // Freehand controls
+          if (_freehand != null)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: FreehandPanel(
+                session: _freehand!,
+                onDrawingChanged: (on) => setState(() {
+                  _freehand!
+                    ..cancelStroke()
+                    ..drawing = on;
+                }),
+                onColour: (c) => setState(() => _freehand!.colour = c),
+                onWidth: (w) => setState(() => _freehand!.width = w),
+                onUndo: () => setState(() => _freehand!.undo()),
+                onCancel: _cancelFreehand,
+                onDone: _saveFreehand,
+              ),
+            ),
+
           // Line drawing controls
           if (_lineDraft != null)
             Positioned(
@@ -1795,6 +1837,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                 openFileName: ref.watch(filesProvider).activeFile?.name,
                 onDrawZone: _startZoneDrawing,
                 onDrawLine: _startLineDrawing,
+                onDrawFreehand: _startFreehand,
                 onZones: _showZones,
                 zoneCount: geofenceState.geofences.length,
                 deadmanArmed: ref.watch(aiControlProvider).deadmanArmed,
@@ -2402,6 +2445,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
       return;
     }
 
+    // Freehand in Pan mode: a tap is not a stroke, and not anything else.
+    if (_freehand != null) return;
+
     if (_showMeasurementTool && _measurementKey.currentState != null) {
       _measurementKey.currentState!.handleMapTap(point);
       return;
@@ -2470,7 +2516,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
   Future<void> _onMapLongPress(LatLng point) async {
     // Drawing: a long press is never a dropped pin.
-    if (_lineDraft != null) return;
+    if (_lineDraft != null || _freehand != null) return;
 
     // Long-press a saved line to edit or delete it, as with trails.
     final drawing = _findNearestDrawing(point);
@@ -2635,6 +2681,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     setState(() {
       _showMeasurementTool = false;
       _zoneDraft = null;
+      _freehand = null;
       _editingDrawing = editing;
       _lineDraft = LineDraft(editing?.points ?? const []);
       _lineSnappedTo = null;
@@ -2755,7 +2802,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
       return;
     }
 
-    final name = await _askLineName(LineMeasure.totalMetres(points));
+    final name = await _askDrawingName(
+        'Save line · ${formatDistance(LineMeasure.totalMetres(points))}',
+        hint: 'Name (optional), e.g. north fence');
     // Backing out of the name keeps the line on screen to carry on with.
     if (name == null || !mounted) return;
     final saved = await notifier.add(Drawing(
@@ -2776,23 +2825,22 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     }
   }
 
-  Future<String?> _askLineName(double metres) {
+  Future<String?> _askDrawingName(String title, {required String hint}) {
     final controller = TextEditingController();
     return showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1A1A2E),
-        title: Text('Save line · ${formatDistance(metres)}',
-            style: const TextStyle(color: Colors.white)),
+        title: Text(title, style: const TextStyle(color: Colors.white)),
         content: TextField(
           controller: controller,
           autofocus: true,
           style: const TextStyle(color: Colors.white),
           textInputAction: TextInputAction.done,
           onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
-          decoration: const InputDecoration(
-            hintText: 'Name (optional), e.g. north fence',
-            hintStyle: TextStyle(color: Colors.white38),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: const TextStyle(color: Colors.white38),
           ),
         ),
         actions: [
@@ -2840,7 +2888,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(d.name ?? 'Line',
+              Text(d.name ?? (d.kind == DrawingKind.line ? 'Line' : 'Drawing'),
                   style: const TextStyle(
                       color: Colors.white,
                       fontSize: 18,
@@ -2851,6 +2899,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                   style: const TextStyle(color: Colors.white60)),
               const SizedBox(height: 16),
               Row(children: [
+                if (d.kind == DrawingKind.line)
                 TextButton.icon(
                   onPressed: () {
                     Navigator.pop(ctx);
@@ -2902,6 +2951,66 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     }
   }
 
+  // ── Freehand (4.2) ────────────────────────────────────────────────────────
+
+  void _startFreehand() {
+    setState(() {
+      _showMeasurementTool = false;
+      _zoneDraft = null;
+      _lineDraft = null;
+      _editingDrawing = null;
+      _freehand = FreehandSession();
+    });
+  }
+
+  void _cancelFreehand() => setState(() => _freehand = null);
+
+  void _freehandAt(Offset global, {bool start = false}) {
+    final session = _freehand;
+    final p = _globalToLatLng(global);
+    if (session == null || p == null) return;
+    setState(() => start ? session.beginStroke(p) : session.extendStroke(p));
+  }
+
+  /// Keep the stroke, simplified to what two screen pixels cover at this zoom:
+  /// it looks as it did under the finger, at a fraction of the points.
+  void _endFreehandStroke() {
+    final session = _freehand;
+    if (session == null) return;
+    final tolerance = _metresForPixels(2).clamp(0.05, 50.0);
+    setState(() => session.endStroke(tolerance));
+  }
+
+  Future<void> _saveFreehand() async {
+    final session = _freehand;
+    if (session == null || session.strokes.isEmpty) return;
+    final name = await _askDrawingName(
+        'Save drawing · ${formatDistance(session.totalMetres)}',
+        hint: 'Name (optional), e.g. burn edge');
+    if (name == null || !mounted) return;
+
+    final notifier = ref.read(drawingsProvider.notifier);
+    final fileId = ref.read(filesProvider).activeFileId;
+    // One drawing per stroke: each can then be deleted on its own later.
+    for (final stroke in session.strokes) {
+      await notifier.add(Drawing(
+        kind: DrawingKind.freehand,
+        name: name.isEmpty ? null : name,
+        colour: session.colour,
+        width: session.width,
+        points: stroke,
+        fileId: fileId,
+      ));
+    }
+    if (!mounted) return;
+    final n = session.strokes.length;
+    setState(() => _freehand = null);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('Saved $n ${n == 1 ? 'stroke' : 'strokes'}'),
+      backgroundColor: AppColors.primaryOrange,
+    ));
+  }
+
   /// Start drawing a zone. Closes anything that also wants map taps, so a
   /// corner tap cannot be claimed by the measuring tool at the same time.
   void _startZoneDrawing() {
@@ -2909,6 +3018,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
       _showMeasurementTool = false;
       _lineDraft = null;
       _editingDrawing = null;
+      _freehand = null;
       _zoneDraft = const ZoneDraft();
     });
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -4787,6 +4897,7 @@ class _HamburgerDrawer extends StatelessWidget {
   final String? openFileName;
   final VoidCallback onDrawZone;
   final VoidCallback onDrawLine;
+  final VoidCallback onDrawFreehand;
   final VoidCallback onZones;
   final int zoneCount;
   final bool deadmanArmed;
@@ -4841,6 +4952,7 @@ class _HamburgerDrawer extends StatelessWidget {
     required this.openFileName,
     required this.onDrawZone,
     required this.onDrawLine,
+    required this.onDrawFreehand,
     required this.onZones,
     required this.zoneCount,
     required this.deadmanArmed,
@@ -5050,6 +5162,14 @@ class _HamburgerDrawer extends StatelessWidget {
                           'Measure and mark a line',
                           'Tap out a line point by point. Every leg shows its length and bearing, and a tap near a pin snaps to it. Long-press a saved line to edit or delete it.',
                           () => _go(onDrawLine)),
+                      _item(
+                          context,
+                          Icons.gesture,
+                          const Color(0xFFFF6B00),
+                          'Draw Freehand',
+                          'Sketch on the map',
+                          'Draw with your finger: a burn edge, a washout, a route you mean to take. Switch to Pan to move the map between strokes; Undo takes off the last stroke.',
+                          () => _go(onDrawFreehand)),
                       _item(
                           context,
                           Icons.layers_outlined,
