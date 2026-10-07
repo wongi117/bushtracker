@@ -481,7 +481,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     if (!_loggedOfflineStyleOnce || offlineStyle != _loggedOfflineStyle) {
       _loggedOfflineStyleOnce = true;
       _loggedOfflineStyle = offlineStyle;
-      debugPrint('Offline: layer $baseTileUrl -> '
+      // Query string dropped: it carries the access token.
+      debugPrint('Offline: layer ${baseTileUrl.split('?').first} -> '
           '${offlineStyle == null ? 'NO offline source' : 'served by ${offlineStyle.name}'}');
     }
 

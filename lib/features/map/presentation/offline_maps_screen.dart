@@ -26,6 +26,15 @@ const _presets = [
   _ZoomPreset('Max Detail', 'Street level', 8, 20),
 ];
 
+/// What the picker draws under the selection box unless the user asks to see
+/// the imagery itself.
+///
+/// Sentinel-2 is bare imagery with no names on it, and the MapTiler styles
+/// draw nothing at all in a build without their key -- so choosing an area to
+/// download meant guessing at unlabelled ground. OpenStreetMap is what the
+/// main map already uses for streets. It is only viewed here, never downloaded.
+const _namesTemplate = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 class OfflineMapsScreen extends ConsumerStatefulWidget {
@@ -42,7 +51,12 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
   final _mapController = MapController();
 
   int _presetIndex = 1;
-  MapStyle _style = MapStyle.streets;
+  MapStyle _style =
+      MapStyle.streets.isAvailable ? MapStyle.streets : MapStyle.sentinel2;
+  bool _showImagery = false;
+  // Set once the user picks a tab, so opening on My Maps after the regions
+  // load cannot pull them off a tab they already chose.
+  bool _tabTouched = false;
   String _regionName = '';
   bool _downloading = false;
   LatLngBounds? _selectedBounds;
@@ -55,9 +69,18 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
   void initState() {
     super.initState();
     _tabs = TabController(length: 2, vsync: this);
+    // Rebuild on tab change so the back handler knows where it is.
+    _tabs.addListener(() {
+      if (mounted) setState(() {});
+    });
     _manager.initialize().then((_) {
       _refreshStorage();
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      // Open on the downloads when there are any. Always opening on Download
+      // left them a tab away, and Back left the screen entirely, so the only
+      // way to find them was to download something again.
+      if (!_tabTouched && _manager.regions.isNotEmpty) _tabs.index = 1;
+      setState(() {});
     });
     _progressSub = _manager.downloadProgress.listen((p) {
       if (!mounted) return;
@@ -106,7 +129,7 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
     if (_selectedBounds == null) return;
     final name = _regionName.trim().isNotEmpty
         ? _regionName.trim()
-        : 'Region ${_manager.regions.length + 1}';
+        : OfflineMapManager.defaultRegionName(_style, _selectedBounds!);
     final p = _presets[_presetIndex];
 
     setState(() => _downloading = true);
@@ -139,11 +162,20 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
   @override
   Widget build(BuildContext context) {
     final loc = ref.watch(locationProvider);
+    final regions = _manager.regions;
     final center = loc.stats.currentLat != null
         ? LatLng(loc.stats.currentLat!, loc.stats.currentLon!)
-        : const LatLng(0, 20);
+        : regions.isNotEmpty
+            ? regions.first.bounds.center
+            : const LatLng(0, 20);
 
-    return Scaffold(
+    // Back from Download goes to the downloads first, then out.
+    return PopScope(
+      canPop: _tabs.index == 1 || regions.isEmpty || kIsWeb,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _tabs.animateTo(1);
+      },
+      child: Scaffold(
       backgroundColor: const Color(0xFF0A0A0F),
       appBar: AppBar(
         backgroundColor: const Color(0xFF0F0F1A),
@@ -153,6 +185,7 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
             style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.w600)),
         bottom: TabBar(
           controller: _tabs,
+          onTap: (_) => _tabTouched = true,
           indicatorColor: AppColors.primaryOrange,
           labelColor: AppColors.primaryOrange,
           unselectedLabelColor: Colors.white38,
@@ -168,6 +201,7 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
           _buildDownloadTab(center),
           _buildMyMapsTab(),
         ],
+      ),
       ),
     );
   }
@@ -272,19 +306,32 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
             ),
             children: [
               TileLayer(
-                urlTemplate: _style.urlTemplate,
+                urlTemplate: _showImagery ? _style.urlTemplate : _namesTemplate,
+                maxNativeZoom: _showImagery ? _style.maxUsefulZoom : 19,
                 maxZoom: 20,
+                userAgentPackageName: 'au.com.futuregenai.pinagemaps',
               ),
+              // What is already downloaded, so a new area can be placed
+              // against it instead of guessed at.
+              if (_manager.regions.isNotEmpty)
+                PolygonLayer(polygons: [
+                  for (final r in _manager.regions)
+                    Polygon(
+                      points: _corners(r.bounds),
+                      borderColor: _statusColor(r.status),
+                      borderStrokeWidth: 1.5,
+                      color: _statusColor(r.status).withValues(alpha: 0.08),
+                      isFilled: true,
+                      label: r.name,
+                      labelStyle: GoogleFonts.outfit(
+                          color: Colors.black87, fontSize: 10, fontWeight: FontWeight.w600),
+                    ),
+                ]),
               // Download region overlay
               if (_selectedBounds != null)
                 PolygonLayer(polygons: [
                   Polygon(
-                    points: [
-                      _selectedBounds!.northWest,
-                      _selectedBounds!.northEast,
-                      _selectedBounds!.southEast,
-                      _selectedBounds!.southWest,
-                    ],
+                    points: _corners(_selectedBounds!),
                     color: AppColors.primaryOrange.withValues(alpha: 0.15),
                     borderColor: AppColors.primaryOrange,
                     borderStrokeWidth: 2,
@@ -305,16 +352,38 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
               child: Text('Download area', style: GoogleFonts.outfit(color: AppColors.primaryOrange, fontSize: 11)),
             ),
           ),
+          Positioned(
+            top: 8, right: 8,
+            child: _previewToggle(),
+          ),
         ],
       ),
     );
   }
 
   Widget _buildStyleSelector() {
+    final missing = MapStyle.values.where((s) => !s.isAvailable).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildStyleChips(),
+        if (missing.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            '${missing.map((s) => s.label).join(', ')} need a MapTiler key, '
+            'which this build does not have.',
+            style: GoogleFonts.outfit(color: Colors.white38, fontSize: 11),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildStyleChips() {
     return Wrap(
       spacing: 8,
       runSpacing: 8,
-      children: MapStyle.values.map((s) {
+      children: MapStyle.values.where((s) => s.isAvailable).map((s) {
         final selected = s == _style;
         return GestureDetector(
           onTap: () => setState(() { _style = s; _recalcEstimate(); }),
@@ -403,7 +472,9 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
     return TextField(
       style: GoogleFonts.outfit(color: Colors.white),
       decoration: InputDecoration(
-        hintText: 'e.g. Kakadu National Park',
+        hintText: _selectedBounds == null
+            ? 'e.g. Kakadu National Park'
+            : OfflineMapManager.defaultRegionName(_style, _selectedBounds!),
         hintStyle: GoogleFonts.outfit(color: Colors.white30),
         filled: true,
         fillColor: Colors.white.withValues(alpha: 0.05),
@@ -512,7 +583,9 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
         else
           Expanded(
             child: ListView.builder(
-              padding: const EdgeInsets.all(16),
+              // viewPadding: the last card sat under the navigation bar.
+              padding: EdgeInsets.fromLTRB(
+                  16, 16, 16, 16 + MediaQuery.viewPaddingOf(context).bottom),
               itemCount: regions.length,
               itemBuilder: (ctx, i) => _buildRegionCard(regions[i]),
             ),
@@ -564,8 +637,11 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
     final isActive = status == DownloadStatus.downloading;
     final isPaused = status == DownloadStatus.paused;
     final isDone = status == DownloadStatus.completed;
+    final isFailed = status == DownloadStatus.failed;
 
-    return Container(
+    return GestureDetector(
+      onTap: () => _showRegion(region),
+      child: Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -598,7 +674,7 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
               _chip(Icons.layers, region.style.label),
               _chip(Icons.zoom_in, 'z${region.minZoom}–${region.maxZoom}'),
               _chip(Icons.grid_4x4, '${region.totalTiles} tiles'),
-              if (isDone) _chip(Icons.save, region.formattedSize),
+              if (isDone || isFailed) _chip(Icons.save, region.formattedSize),
             ],
           ),
           if (!isDone) ...[
@@ -619,13 +695,28 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
                   ? 'Downloading… $downloaded / $total tiles'
                   : isPaused
                       ? 'Paused — $downloaded / $total tiles'
-                      : '${status.name} — $downloaded / $total tiles',
-              style: GoogleFonts.outfit(color: Colors.white38, fontSize: 11),
+                      : isFailed
+                          ? _failedText(region, downloaded, total)
+                          : '${status.name} — $downloaded / $total tiles',
+              style: GoogleFonts.outfit(
+                  color: isFailed ? Colors.redAccent : Colors.white38, fontSize: 11),
             ),
           ],
         ],
       ),
+      ),
     );
+  }
+
+  /// A failed region says what is missing and what can be done about it --
+  /// it used to show a green dot and "completed" over 0 KB.
+  String _failedText(OfflineMapRegion region, int downloaded, int total) {
+    if (!region.style.isAvailable) {
+      return 'Nothing saved — this build has no MapTiler key. Delete it.';
+    }
+    return downloaded == 0
+        ? 'Nothing saved — tap ↻ to try again with signal'
+        : 'Incomplete — ${total - downloaded} of $total tiles missing. Tap ↻ to fetch them.';
   }
 
   Widget _buildRegionActions(OfflineMapRegion region, DownloadStatus status) {
@@ -639,6 +730,11 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
           }),
         if (status == DownloadStatus.paused)
           _iconBtn(Icons.play_arrow, Colors.greenAccent, () {
+            _manager.resumeDownload(region.id);
+            setState(() {});
+          }),
+        if (status == DownloadStatus.failed && region.style.isAvailable)
+          _iconBtn(Icons.refresh, Colors.greenAccent, () {
             _manager.resumeDownload(region.id);
             setState(() {});
           }),
@@ -675,6 +771,46 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
     }
   }
 
+  Future<void> _showRegion(OfflineMapRegion region) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0F0F1A),
+      builder: (_) => _RegionSheet(region: region, manager: _manager),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Widget _previewToggle() {
+    Widget seg(String text, bool imagery) {
+      final on = _showImagery == imagery;
+      return GestureDetector(
+        onTap: () => setState(() => _showImagery = imagery),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: on ? AppColors.primaryOrange : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(text, style: GoogleFonts.outfit(
+              color: on ? Colors.black : Colors.white70,
+              fontSize: 11, fontWeight: FontWeight.w600)),
+        ),
+      );
+    }
+    return Container(
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        seg('Names', false),
+        seg('Imagery', true),
+      ]),
+    );
+  }
+
   // ─── Helpers ──────────────────────────────────────────────────────────────────
 
   Widget _sectionLabel(String text) => Text(text,
@@ -691,8 +827,11 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
     ],
   );
 
-  Widget _statusDot(DownloadStatus s) {
-    final color = s == DownloadStatus.completed
+  Widget _statusDot(DownloadStatus s) => Container(width: 8, height: 8,
+      decoration: BoxDecoration(shape: BoxShape.circle, color: _statusColor(s)));
+
+  Color _statusColor(DownloadStatus s) {
+    return s == DownloadStatus.completed
         ? Colors.greenAccent
         : s == DownloadStatus.downloading
             ? AppColors.primaryOrange
@@ -701,8 +840,6 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
                 : s == DownloadStatus.failed
                     ? Colors.red
                     : Colors.white24;
-    return Container(width: 8, height: 8,
-        decoration: BoxDecoration(shape: BoxShape.circle, color: color));
   }
 
   Widget _chip(IconData icon, String text) => Row(
@@ -731,5 +868,113 @@ class _OfflineMapsScreenState extends ConsumerState<OfflineMapsScreen>
       case MapStyle.dark:      return Icons.dark_mode;
       case MapStyle.sentinel2: return Icons.satellite_alt;
     }
+  }
+}
+
+List<LatLng> _corners(LatLngBounds b) =>
+    [b.northWest, b.northEast, b.southEast, b.southWest];
+
+// ─── Region sheet ─────────────────────────────────────────────────────────────
+
+/// Where a downloaded region is, and a name for it.
+///
+/// The list said "Region 4, Sentinel-2, z12–14" and nothing about which piece
+/// of ground that was.
+class _RegionSheet extends StatefulWidget {
+  final OfflineMapRegion region;
+  final OfflineMapManager manager;
+  const _RegionSheet({required this.region, required this.manager});
+
+  @override
+  State<_RegionSheet> createState() => _RegionSheetState();
+}
+
+class _RegionSheetState extends State<_RegionSheet> {
+  late final _name = TextEditingController(text: widget.region.name);
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    await widget.manager.renameRegion(widget.region.id, _name.text);
+    if (mounted) Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final r = widget.region;
+    final media = MediaQuery.of(context);
+    return Padding(
+      // viewInsets for the keyboard, viewPadding for the navigation bar.
+      padding: EdgeInsets.only(
+          bottom: media.viewInsets.bottom + media.viewPadding.bottom),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            height: 260,
+            child: FlutterMap(
+              options: MapOptions(
+                initialCameraFit: CameraFit.bounds(
+                    bounds: r.bounds, padding: const EdgeInsets.all(32)),
+                maxZoom: 20,
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate: _namesTemplate,
+                  maxNativeZoom: 19,
+                  maxZoom: 20,
+                  userAgentPackageName: 'au.com.futuregenai.pinagemaps',
+                ),
+                PolygonLayer(polygons: [
+                  Polygon(
+                    points: _corners(r.bounds),
+                    borderColor: AppColors.primaryOrange,
+                    borderStrokeWidth: 2,
+                    color: AppColors.primaryOrange.withValues(alpha: 0.12),
+                    isFilled: true,
+                  ),
+                ]),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _name,
+                    style: GoogleFonts.outfit(color: Colors.white),
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => _save(),
+                    decoration: InputDecoration(
+                      labelText: 'Name',
+                      labelStyle: GoogleFonts.outfit(color: Colors.white38),
+                      filled: true,
+                      fillColor: Colors.white.withValues(alpha: 0.05),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                ElevatedButton(
+                  onPressed: _save,
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryOrange),
+                  child: Text('Save',
+                      style: GoogleFonts.outfit(
+                          color: Colors.white, fontWeight: FontWeight.w600)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

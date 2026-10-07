@@ -89,6 +89,17 @@ extension MapStyleExt on MapStyle {
         // forbid it this is the one place to switch them off.
         _ => true,
       };
+
+  /// Whether this source can be fetched at all from this build.
+  ///
+  /// The MapTiler styles need MAPTILER_KEY, and a build without it gets every
+  /// request refused. That used to be invisible: the picker showed a blank
+  /// map, the download "completed" with 0 KB, and the auto region did the same
+  /// unasked on first fix.
+  bool get isAvailable => switch (this) {
+        MapStyle.sentinel2 => true,
+        _ => ApiConfig.maptilerKey.isNotEmpty,
+      };
 }
 
 class _Tile {
@@ -219,6 +230,10 @@ class OfflineMapManager {
   final Map<String, OfflineMapRegion> _regions = {};
   final Map<String, bool> _pauseFlags = {};
   final Map<String, bool> _cancelFlags = {};
+  // Regions with workers alive, parked on a pause or fetching. Resuming one of
+  // these only lifts the pause; starting a second run as well put two sets of
+  // workers on the same tiles, each counting them.
+  final Set<String> _running = {};
 
   final _progressCtrl = StreamController<DownloadProgress>.broadcast();
   Stream<DownloadProgress> get downloadProgress => _progressCtrl.stream;
@@ -285,6 +300,43 @@ class OfflineMapManager {
       }
     }
     return tiles;
+  }
+
+  /// How a download that has run to the end should be recorded.
+  ///
+  /// Completed means every tile is on disk. [tileFileFor] trusts a completed
+  /// region to cover its whole box without touching the filesystem, so a
+  /// region with tiles missing must not claim it: the map would draw holes
+  /// where the network could have filled them, and the list would show a green
+  /// dot over a download that saved nothing -- which is what three regions on
+  /// the test phone were doing, one of them 0 of 765 tiles.
+  static DownloadStatus finishedStatus({required int downloaded, required int failed}) =>
+      downloaded > 0 && failed == 0 ? DownloadStatus.completed : DownloadStatus.failed;
+
+  /// Fixes up a region read back from disk.
+  ///
+  /// A download running when the app closed has no workers any more, so it is
+  /// paused, not downloading. And builds before [finishedStatus] marked every
+  /// finished run completed however many tiles failed; correcting that here
+  /// means a region already on a phone stops claiming ground it holds no tiles
+  /// for, without anyone having to download it again.
+  static void correctLoaded(OfflineMapRegion r) {
+    if (r.status == DownloadStatus.downloading) {
+      r.status = DownloadStatus.paused;
+    } else if (r.status == DownloadStatus.completed) {
+      r.status = finishedStatus(downloaded: r.downloadedTiles, failed: r.failedTiles);
+    }
+  }
+
+  /// A name that says where and what, for when the user does not give one.
+  ///
+  /// "Region 7" told nobody anything; with five of them in the list there was
+  /// no way to know which was which.
+  static String defaultRegionName(MapStyle style, LatLngBounds bounds) {
+    final c = bounds.center;
+    final lat = '${c.latitude.abs().toStringAsFixed(2)}°${c.latitude < 0 ? 'S' : 'N'}';
+    final lon = '${c.longitude.abs().toStringAsFixed(2)}°${c.longitude < 0 ? 'W' : 'E'}';
+    return '${style.label} · $lat $lon';
   }
 
   // ─── Estimation ─────────────────────────────────────────────────────────────
@@ -356,10 +408,16 @@ class OfflineMapManager {
     _emitProgress(_regions[id]!);
   }
 
+  /// Carries on a paused download, or retries the missing tiles of a failed
+  /// one. Either way only tiles not already on disk are fetched.
   void resumeDownload(String id) {
     _pauseFlags[id] = false;
-    if (_regions[id]?.status == DownloadStatus.paused) {
+    _cancelFlags[id] = false;
+    final s = _regions[id]?.status;
+    if (s == DownloadStatus.paused || s == DownloadStatus.failed) {
       _regions[id]!.status = DownloadStatus.downloading;
+      _emitProgress(_regions[id]!);
+      if (_running.contains(id)) return;
       final tiles = _tilesForBounds(
         _regions[id]!.bounds,
         _regions[id]!.minZoom,
@@ -376,6 +434,13 @@ class OfflineMapManager {
     _emitProgress(_regions[id]!);
   }
 
+  Future<void> renameRegion(String id, String name) async {
+    final r = _regions[id];
+    if (r == null || name.trim().isEmpty) return;
+    r.name = name.trim();
+    await _saveRegions();
+  }
+
   Future<void> deleteRegion(String id) async {
     cancelDownload(id);
     final dir = Directory('$_tilesDir/$id');
@@ -390,12 +455,39 @@ class OfflineMapManager {
 
   Future<void> _runDownload(OfflineMapRegion region, List<_Tile> tiles) async {
     final id = region.id;
+    if (!_running.add(id)) return;
+    try {
+      await _runWorkers(region, tiles);
+    } finally {
+      _running.remove(id);
+    }
+  }
+
+  Future<void> _runWorkers(OfflineMapRegion region, List<_Tile> tiles) async {
+    final id = region.id;
     final dir = Directory('$_tilesDir/$id');
     await dir.create(recursive: true);
 
-    // Skip already-downloaded tiles on resume
-    final startIdx = region.downloadedTiles.clamp(0, tiles.length);
-    final remaining = tiles.sublist(startIdx);
+    // Fetch only what is not on disk yet. This used to skip the first
+    // downloadedTiles entries of the list, which is wrong as soon as anything
+    // fails or five workers finish out of order -- and retrying a failed
+    // region needs exactly this anyway.
+    final remaining = <_Tile>[];
+    for (final t in tiles) {
+      if (!await File('${dir.path}/${t.z}_${t.x}_${t.y}').exists()) remaining.add(t);
+    }
+    region.downloadedTiles = tiles.length - remaining.length;
+    region.failedTiles = 0;
+
+    // Failures were counted and never explained, so 365 missing tiles left no
+    // trace of why. The first few per run are enough to tell a refused key
+    // from a timeout from no signal.
+    var failuresLogged = 0;
+    void logFailure(_Tile t, Object why) {
+      if (failuresLogged++ < 3) {
+        debugPrint('Offline "${region.name}" tile z${t.z}/${t.x}/${t.y} failed: $why');
+      }
+    }
 
     const workers = 5;
     int sharedCursor = 0;
@@ -422,9 +514,11 @@ class OfflineMapManager {
             region.storedBytes += resp.bodyBytes.length;
           } else {
             region.failedTiles++;
+            logFailure(tile, 'HTTP ${resp.statusCode}');
           }
-        } catch (_) {
+        } catch (e) {
           region.failedTiles++;
+          logFailure(tile, e);
         }
         if ((region.downloadedTiles + region.failedTiles) % 10 == 0) {
           _emitProgress(region);
@@ -434,9 +528,17 @@ class OfflineMapManager {
 
     await Future.wait(List.generate(workers, (_) => safeWorker()));
 
+    // A pause leaves the workers parked rather than finished, so reaching here
+    // means the list ran out or the region was cancelled.
     if (_cancelFlags[id] != true) {
-      region.status = DownloadStatus.completed;
-      region.completedAt = DateTime.now();
+      region.status = finishedStatus(
+          downloaded: region.downloadedTiles, failed: region.failedTiles);
+      if (region.status == DownloadStatus.completed) {
+        region.completedAt = DateTime.now();
+      }
+      debugPrint('Offline "${region.name}" finished ${region.status.name}: '
+          '${region.downloadedTiles}/${region.totalTiles} saved, '
+          '${region.failedTiles} failed');
     }
     _emitProgress(region);
     await _saveRegions();
@@ -560,10 +662,7 @@ class OfflineMapManager {
       final list = jsonDecode(await file.readAsString()) as List;
       for (final item in list) {
         final r = OfflineMapRegion.fromJson(item as Map<String, dynamic>);
-        // Mark any in-progress downloads as failed (interrupted by app close)
-        if (r.status == DownloadStatus.downloading) {
-          r.status = DownloadStatus.paused;
-        }
+        correctLoaded(r);
         _regions[r.id] = r;
       }
 
@@ -604,6 +703,9 @@ class OfflineMapManager {
   /// named "Auto Region" already exists or is downloading.
   Future<void> autoDetectAndDownloadRegion(LatLng position) async {
     if (kIsWeb) return;
+    // Without a key every tile is refused; this then recorded a 765-tile
+    // region holding nothing, started without the user asking.
+    if (!MapStyle.outdoor.isAvailable) return;
     await initialize();
 
     // Skip if we already have a completed or in-progress auto region

@@ -11,7 +11,10 @@
 // overlap at all, so even with the read side connected a downloaded region
 // could never have matched the layer on screen.
 import 'package:bush_track/features/map/services/offline_map_manager.dart';
+import 'package:bush_track/core/config/api_config.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:latlong2/latlong.dart';
 
 void main() {
   group('a downloaded region can only serve the layer it actually holds', () {
@@ -213,6 +216,114 @@ void main() {
       final max = OfflineMapManager.effectiveMaxZoom(style, 19);
       expect(OfflineMapManager.effectiveMinZoom(style, 15, max),
           lessThanOrEqualTo(max));
+    });
+  });
+
+  // Three regions on the test phone showed a green dot and "completed":
+  // Auto Region 0 of 765 tiles, Region 2 0 of 151, Region 3 237 of 602. The
+  // map trusts a completed region to cover its whole box, so it drew holes
+  // where the network could have filled them.
+  group('completed means every tile is on disk', () {
+    DownloadStatus finish(int downloaded, int failed) =>
+        OfflineMapManager.finishedStatus(downloaded: downloaded, failed: failed);
+
+    test('nothing saved is a failure, not a success', () {
+      expect(finish(0, 765), DownloadStatus.failed);
+      expect(finish(0, 151), DownloadStatus.failed);
+    });
+
+    test('some tiles missing is a failure too', () {
+      expect(finish(237, 365), DownloadStatus.failed);
+      expect(finish(601, 1), DownloadStatus.failed);
+    });
+
+    test('every tile saved is completed', () {
+      expect(finish(647, 0), DownloadStatus.completed);
+    });
+
+    test('an empty run is never completed', () {
+      expect(finish(0, 0), DownloadStatus.failed);
+    });
+  });
+
+  group('regions saved by older builds are corrected on load', () {
+    OfflineMapRegion stored(DownloadStatus status, int downloaded, int failed) =>
+        OfflineMapRegion(
+          id: '1',
+          name: 'Region 3',
+          bounds: LatLngBounds(const LatLng(-29, 121), const LatLng(-28.8, 121.4)),
+          minZoom: 12,
+          maxZoom: 14,
+          style: MapStyle.sentinel2,
+          totalTiles: downloaded + failed,
+          downloadedTiles: downloaded,
+          failedTiles: failed,
+          status: status,
+          createdAt: DateTime(2026, 10, 5),
+        );
+
+    test('a "completed" region with tiles missing becomes failed', () {
+      final r = stored(DownloadStatus.completed, 237, 365);
+      OfflineMapManager.correctLoaded(r);
+      expect(r.status, DownloadStatus.failed);
+    });
+
+    test('a genuinely complete region is left alone', () {
+      final r = stored(DownloadStatus.completed, 647, 0);
+      OfflineMapManager.correctLoaded(r);
+      expect(r.status, DownloadStatus.completed);
+    });
+
+    test('a download interrupted by closing the app is paused', () {
+      final r = stored(DownloadStatus.downloading, 100, 0);
+      OfflineMapManager.correctLoaded(r);
+      expect(r.status, DownloadStatus.paused);
+    });
+
+    test('and the corrected region no longer claims coverage', () {
+      // The point of the correction: tileFileFor only serves completed
+      // regions, so a failed one lets the network fill the gaps.
+      final r = stored(DownloadStatus.completed, 0, 151);
+      OfflineMapManager.correctLoaded(r);
+      expect(r.status, isNot(DownloadStatus.completed));
+    });
+  });
+
+  group('a source with no key is not offered', () {
+    test('Sentinel-2 needs no key', () {
+      expect(MapStyle.sentinel2.isAvailable, isTrue);
+    });
+
+    test('the MapTiler styles follow MAPTILER_KEY', () {
+      // A build without the key had every MapTiler tile refused: a blank
+      // picker, and downloads that "completed" holding 0 KB.
+      for (final s in MapStyle.values.where((s) => s != MapStyle.sentinel2)) {
+        expect(s.isAvailable, ApiConfig.maptilerKey.isNotEmpty, reason: s.name);
+      }
+    });
+  });
+
+  group('a region is named for where it is', () {
+    final leonora = LatLngBounds(
+        const LatLng(-28.95, 121.28), const LatLng(-28.81, 121.38));
+
+    test('south and east read as S and E, from the centre of the box', () {
+      expect(OfflineMapManager.defaultRegionName(MapStyle.sentinel2, leonora),
+          'Satellite (Sentinel-2) · 28.88°S 121.33°E');
+    });
+
+    test('north and west read as N and W', () {
+      final b = LatLngBounds(const LatLng(51.4, -0.2), const LatLng(51.6, 0.0));
+      expect(OfflineMapManager.defaultRegionName(MapStyle.sentinel2, b),
+          endsWith('51.50°N 0.10°W'));
+    });
+
+    test('two places get two names', () {
+      // "Region 6" and "Region 7" told nobody which was which.
+      final kalgoorlie = LatLngBounds(
+          const LatLng(-30.80, 121.40), const LatLng(-30.70, 121.52));
+      expect(OfflineMapManager.defaultRegionName(MapStyle.sentinel2, leonora),
+          isNot(OfflineMapManager.defaultRegionName(MapStyle.sentinel2, kalgoorlie)));
     });
   });
 }
