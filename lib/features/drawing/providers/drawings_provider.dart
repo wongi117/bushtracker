@@ -32,6 +32,9 @@ class DrawingsNotifier extends StateNotifier<List<Drawing>> {
   /// to draw, and would sit in a project's list as a blank entry.
   Future<Drawing?> add(Drawing drawing) async {
     if (drawing.points.length < 2) return null;
+    if (drawing.fileId == FieldFile.unsortedId) {
+      drawing = drawing.copyWith(clearFile: true);
+    }
     final saved =
         drawing.copyWith(id: await _db.insertDrawing(drawing.toMap()));
     if (mounted) state = [...state, saved];

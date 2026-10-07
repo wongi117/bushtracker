@@ -35,6 +35,10 @@ import 'package:bush_track/core/utils/geo_geometry.dart'
     show formatArea, formatDistance;
 import 'package:bush_track/features/geofence/presentation/geofence_screen.dart';
 import 'package:bush_track/features/geofence/presentation/zone_drawing.dart';
+import 'package:bush_track/features/drawing/models/drawing.dart';
+import 'package:bush_track/features/drawing/presentation/line_drawing.dart';
+import 'package:bush_track/features/drawing/providers/drawings_provider.dart';
+import 'package:bush_track/features/drawing/services/line_geometry.dart';
 import 'package:bush_track/features/geofence/providers/geofence_provider.dart';
 import 'package:bush_track/features/chat/presentation/ai_chat_screen.dart'
     show showAIChat;
@@ -176,6 +180,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   /// The zone being drawn, or null when not drawing. Held here because the
   /// corners come from taps on the map.
   ZoneDraft? _zoneDraft;
+
+  /// The line being drawn or edited (Phase 4.2), or null when not drawing.
+  LineDraft? _lineDraft;
+
+  /// The saved drawing being edited, so saving updates it rather than adding
+  /// a second copy on top of it.
+  Drawing? _editingDrawing;
+
+  /// What the last tap snapped to, so the panel can say so.
+  String? _lineSnappedTo;
 
   /// The map's own coordinate space, for turning a finger position on screen
   /// back into a position on the ground while dragging a zone bigger.
@@ -834,6 +848,25 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                           draft: _zoneDraft,
                           showLabels: _currentZoom >= 11,
                           onRadiusDragTo: _resizeZoneDraftTo,
+                        ),
+
+                        // Drawings (4.2): above zones, under the pins.
+                        ...buildDrawingMapLayers(
+                          drawings: ref
+                              .watch(drawingsProvider)
+                              .where((d) =>
+                                  visibility.showsDrawing(fileId: d.fileId))
+                              .toList(),
+                          draft: _lineDraft,
+                          editingId: _editingDrawing?.id,
+                          showLabels: _currentZoom >= 13,
+                          onVertexDragTo: _dragLineVertex,
+                          onVertexDragEnd: _endLineVertexDrag,
+                          onVertexRemove: (i) => setState(() {
+                            _lineDraft?.remove(i);
+                            _lineSnappedTo = null;
+                          }),
+                          onMidpointTap: _insertLineVertex,
                         ),
 
                         // Target Pin
@@ -1598,6 +1631,26 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               ),
             ),
 
+          // Line drawing controls
+          if (_lineDraft != null)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: LineDrawPanel(
+                points: _lineDraft!.points,
+                canUndo: _lineDraft!.canUndo,
+                editing: _editingDrawing != null,
+                snappedTo: _lineSnappedTo,
+                onUndo: () => setState(() {
+                  _lineDraft!.undo();
+                  _lineSnappedTo = null;
+                }),
+                onCancel: _cancelLineDrawing,
+                onDone: _saveLineDraft,
+              ),
+            ),
+
           // Measurement Tool
           if (_showMeasurementTool)
             MeasurementTool(
@@ -1741,6 +1794,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                 hiddenCount: ref.watch(markerVisibilityProvider).hiddenCount,
                 openFileName: ref.watch(filesProvider).activeFile?.name,
                 onDrawZone: _startZoneDrawing,
+                onDrawLine: _startLineDrawing,
                 onZones: _showZones,
                 zoneCount: geofenceState.geofences.length,
                 deadmanArmed: ref.watch(aiControlProvider).deadmanArmed,
@@ -2342,6 +2396,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
       return;
     }
 
+    // Same for a line: every tap is a point, whatever is under it.
+    if (_lineDraft != null) {
+      _addLinePoint(point);
+      return;
+    }
+
     if (_showMeasurementTool && _measurementKey.currentState != null) {
       _measurementKey.currentState!.handleMapTap(point);
       return;
@@ -2409,6 +2469,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   }
 
   Future<void> _onMapLongPress(LatLng point) async {
+    // Drawing: a long press is never a dropped pin.
+    if (_lineDraft != null) return;
+
+    // Long-press a saved line to edit or delete it, as with trails.
+    final drawing = _findNearestDrawing(point);
+    if (drawing != null) {
+      _showDrawingSheet(drawing);
+      return;
+    }
+
     // Long-press near a trail ? edit it instead of dropping a pin
     final trailState = ref.read(trailProvider);
     final near = _findNearestTrail(point, trailState.trails);
@@ -2553,11 +2623,292 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
         radiusMetres: metres.clamp(kZoneMinRadius, kZoneMaxRadius)));
   }
 
+  // ── Drawing lines (4.2) ───────────────────────────────────────────────────
+
+  /// About a fingertip, in logical pixels: the reach of a snap, and of a
+  /// long-press on a saved line.
+  static const double _fingertipPixels = 36;
+
+  /// Start a new line, or reopen [editing] to move, add and remove points.
+  /// Closes anything else that wants map taps.
+  void _startLineDrawing({Drawing? editing}) {
+    setState(() {
+      _showMeasurementTool = false;
+      _zoneDraft = null;
+      _editingDrawing = editing;
+      _lineDraft = LineDraft(editing?.points ?? const []);
+      _lineSnappedTo = null;
+    });
+    if (editing == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Tap the map to place points. A tap near a pin snaps to it.'),
+        duration: Duration(seconds: 3),
+        backgroundColor: AppColors.primaryOrange,
+      ));
+    }
+  }
+
+  void _cancelLineDrawing() => setState(() {
+        _lineDraft = null;
+        _editingDrawing = null;
+        _lineSnappedTo = null;
+      });
+
+  /// Ground distance covered by [pixels] across the middle of the map, at the
+  /// current zoom. Turns "a fingertip" into metres for the snapping arithmetic,
+  /// which knows nothing about screens.
+  double _metresForPixels(double pixels) {
+    final box = _mapAreaKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return 0;
+    final c = box.size.center(Offset.zero);
+    final camera = _mapController.camera;
+    return const Distance()(camera.offsetToCrs(c),
+        camera.offsetToCrs(c + Offset(pixels, 0)));
+  }
+
+  LatLng? _globalToLatLng(Offset global) {
+    final box = _mapAreaKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return null;
+    return _mapController.camera.offsetToCrs(box.globalToLocal(global));
+  }
+
+  /// Pins and the ends of other lines, as far as they are on the map.
+  List<SnapTarget> _lineSnapTargets() {
+    final visibility = ref.read(markerVisibilityProvider);
+    return [
+      for (final w in ref.read(locationProvider).waypoints)
+        if (w.latitude != null &&
+            w.longitude != null &&
+            visibility.showsPin(id: w.id, fileId: w.fileId))
+          SnapTarget(LatLng(w.latitude!, w.longitude!),
+              label: (w.label?.trim().isNotEmpty ?? false) ? w.label! : 'a pin'),
+      for (final d in ref.read(drawingsProvider))
+        if (d.id != _editingDrawing?.id &&
+            d.points.length >= 2 &&
+            visibility.showsDrawing(fileId: d.fileId)) ...[
+          SnapTarget(d.points.first,
+              label: 'the start of ${d.name ?? 'a line'}'),
+          SnapTarget(d.points.last, label: 'the end of ${d.name ?? 'a line'}'),
+        ],
+    ];
+  }
+
+  /// [p], or the target it lands within a fingertip of. Records what it
+  /// snapped to, so the panel can say -- a snap nobody was told about looks
+  /// like the point landing in the wrong place.
+  LatLng _snap(LatLng p) {
+    final hit = Snapping.nearest(
+        p, _lineSnapTargets(), _metresForPixels(_fingertipPixels));
+    _lineSnappedTo = hit?.label;
+    return hit?.point ?? p;
+  }
+
+  void _addLinePoint(LatLng point) =>
+      setState(() => _lineDraft?.add(_snap(point)));
+
+  void _insertLineVertex(int index) {
+    final draft = _lineDraft;
+    if (draft == null || index < 1 || index > draft.midpoints.length) return;
+    setState(() {
+      draft.insert(index, draft.midpoints[index - 1]);
+      _lineSnappedTo = null;
+    });
+  }
+
+  void _dragLineVertex(int index, Offset global) {
+    final p = _globalToLatLng(global);
+    if (p == null || _lineDraft == null) return;
+    setState(() {
+      _lineDraft!.drag(index, p);
+      _lineSnappedTo = null;
+    });
+  }
+
+  /// A dragged point snaps where it is let go, inside the same undo step.
+  void _endLineVertexDrag(int index) {
+    final draft = _lineDraft;
+    if (draft == null || !draft.isDragging || index >= draft.points.length) {
+      return;
+    }
+    setState(() {
+      draft.drag(index, _snap(draft.points[index]));
+      draft.endDrag();
+    });
+  }
+
+  Future<void> _saveLineDraft() async {
+    final draft = _lineDraft;
+    if (draft == null || draft.points.length < 2) return;
+    final points = draft.points;
+    final notifier = ref.read(drawingsProvider.notifier);
+    final editing = _editingDrawing;
+
+    if (editing != null) {
+      await notifier.save(editing.copyWith(points: points));
+      if (!mounted) return;
+      _cancelLineDrawing();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Saved "${editing.name ?? 'line'}" · '
+            '${formatDistance(LineMeasure.totalMetres(points))}'),
+        backgroundColor: AppColors.primaryOrange,
+      ));
+      return;
+    }
+
+    final name = await _askLineName(LineMeasure.totalMetres(points));
+    // Backing out of the name keeps the line on screen to carry on with.
+    if (name == null || !mounted) return;
+    final saved = await notifier.add(Drawing(
+      kind: DrawingKind.line,
+      name: name.isEmpty ? null : name,
+      points: points,
+      // Filed under the open project, as a new pin would be.
+      fileId: ref.read(filesProvider).activeFileId,
+    ));
+    if (!mounted) return;
+    _cancelLineDrawing();
+    if (saved != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Saved "${saved.name ?? 'line'}" · '
+            '${formatDistance(saved.lengthMetres)}'),
+        backgroundColor: AppColors.primaryOrange,
+      ));
+    }
+  }
+
+  Future<String?> _askLineName(double metres) {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        title: Text('Save line · ${formatDistance(metres)}',
+            style: const TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: const TextStyle(color: Colors.white),
+          textInputAction: TextInputAction.done,
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+          decoration: const InputDecoration(
+            hintText: 'Name (optional), e.g. north fence',
+            hintStyle: TextStyle(color: Colors.white38),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Back', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryOrange),
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Save', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The saved line within a fingertip of [p], nearest first.
+  Drawing? _findNearestDrawing(LatLng p) {
+    final visibility = ref.read(markerVisibilityProvider);
+    var reach = _metresForPixels(_fingertipPixels);
+    Drawing? best;
+    for (final d in ref.read(drawingsProvider)) {
+      if (d.points.length < 2) continue;
+      if (!visibility.showsDrawing(fileId: d.fileId)) continue;
+      final m = LineMeasure.distanceToLineMetres(p, d.points);
+      if (m <= reach) {
+        best = d;
+        reach = m;
+      }
+    }
+    return best;
+  }
+
+  void _showDrawingSheet(Drawing d) {
+    final legs = d.points.length - 1;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0F0F1A),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(d.name ?? 'Line',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              Text(
+                  '${formatDistance(d.lengthMetres)} · $legs ${legs == 1 ? 'leg' : 'legs'}',
+                  style: const TextStyle(color: Colors.white60)),
+              const SizedBox(height: 16),
+              Row(children: [
+                TextButton.icon(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _startLineDrawing(editing: d);
+                  },
+                  icon: const Icon(Icons.edit, color: AppColors.primaryOrange),
+                  label: const Text('Edit points',
+                      style: TextStyle(color: AppColors.primaryOrange)),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    await _confirmDeleteDrawing(d);
+                  },
+                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                  label: const Text('Delete',
+                      style: TextStyle(color: Colors.redAccent)),
+                ),
+              ]),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDeleteDrawing(Drawing d) async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        title: Text('Delete "${d.name ?? 'this line'}"?',
+            style: const TextStyle(color: Colors.white)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+    if (yes == true && d.id != null) {
+      await ref.read(drawingsProvider.notifier).delete(d.id!);
+    }
+  }
+
   /// Start drawing a zone. Closes anything that also wants map taps, so a
   /// corner tap cannot be claimed by the measuring tool at the same time.
   void _startZoneDrawing() {
     setState(() {
       _showMeasurementTool = false;
+      _lineDraft = null;
+      _editingDrawing = null;
       _zoneDraft = const ZoneDraft();
     });
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -4435,6 +4786,7 @@ class _HamburgerDrawer extends StatelessWidget {
   /// The open field file's name, or null when none is open.
   final String? openFileName;
   final VoidCallback onDrawZone;
+  final VoidCallback onDrawLine;
   final VoidCallback onZones;
   final int zoneCount;
   final bool deadmanArmed;
@@ -4488,6 +4840,7 @@ class _HamburgerDrawer extends StatelessWidget {
     required this.hiddenCount,
     required this.openFileName,
     required this.onDrawZone,
+    required this.onDrawLine,
     required this.onZones,
     required this.zoneCount,
     required this.deadmanArmed,
@@ -4689,6 +5042,14 @@ class _HamburgerDrawer extends StatelessWidget {
                           'Flag an area',
                           'Draw a circle, or tap out a boundary corner by corner around a site, hazard or heritage area. You get told when you cross in or out of it.',
                           () => _go(onDrawZone)),
+                      _item(
+                          context,
+                          Icons.timeline,
+                          const Color(0xFFFF6B00),
+                          'Draw Line',
+                          'Measure and mark a line',
+                          'Tap out a line point by point. Every leg shows its length and bearing, and a tap near a pin snaps to it. Long-press a saved line to edit or delete it.',
+                          () => _go(onDrawLine)),
                       _item(
                           context,
                           Icons.layers_outlined,

@@ -82,6 +82,13 @@ class MarkerVisibility {
     return id == null || !hiddenZones.contains(id);
   }
 
+  /// Should this drawing be drawn? Follows the project scope like everything
+  /// else, and steps aside while one pin or zone is soloed.
+  bool showsDrawing({int? fileId}) {
+    if (soloPinId != null || soloZoneId != null) return false;
+    return _inScope(fileId);
+  }
+
   bool _inScope(int? fileId) => scope.isVisible(fileId);
 
   /// How many things have been put away by hand. Does not count what a project

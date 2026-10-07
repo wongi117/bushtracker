@@ -52,6 +52,25 @@ class LineMeasure {
   static double bearing(LatLng a, LatLng b) =>
       (_distance.bearing(a, b) % 360 + 360) % 360;
 
+  /// How far [p] is from the nearest point of the open polyline [line].
+  ///
+  /// Open, not closed: geo_geometry's polygon-edge distance adds a closing
+  /// edge from the last point back to the first, which a line does not have.
+  static double distanceToLineMetres(LatLng p, List<LatLng> line) {
+    if (line.isEmpty) return double.infinity;
+    final plane = _LocalPlane.around([p, ...line]);
+    final xy = plane.project(p);
+    if (line.length == 1) return (xy - plane.project(line[0])).length;
+    var best = double.infinity;
+    for (var i = 1; i < line.length; i++) {
+      best = math.min(
+          best,
+          LineSimplifier._distanceToSegment(
+              xy, plane.project(line[i - 1]), plane.project(line[i])));
+    }
+    return best;
+  }
+
   /// Eight-point compass name for a bearing, for a label beside the number.
   static String compassPoint(double bearing) {
     const names = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
@@ -217,6 +236,9 @@ class LineDraft {
   List<LatLng> get points => List.unmodifiable(_history.last);
   bool get canUndo => _history.length > 1;
   bool get isEmpty => _history.last.isEmpty;
+
+  /// True between the first [drag] of a gesture and [endDrag].
+  bool get isDragging => _dragging;
 
   void _push(List<LatLng> next) {
     _dragging = false;
