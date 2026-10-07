@@ -391,6 +391,9 @@ the phone.
 - [ ] Airplane-mode test
 
 ### Phase 4.2 — Drawing tools
+
+_7 Oct: all six items built and unit-tested (81611ad, dff0882, 1ede920, 4c56eb0); built on today's map by decision, Option B left open. None ticked until each has been used on the phone, including an airplane-mode cold start._
+
 - [ ] Straight line: tap points, live per-segment and total length, per-segment bearing, undo, Done
 - [ ] Snap to nearby pins and waypoints
 - [ ] Edit afterwards: drag, add, remove vertices
