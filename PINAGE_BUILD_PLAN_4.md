@@ -376,18 +376,18 @@ the phone.
       — verified on the phone: `DB migrate 1 -> 2`, then 516 waypoints loaded, no
       exceptions, and with no network at the time so also a cold start offline
 - [x] UUIDs, `updated_at`, `deleted_at` on all syncable tables, backfilled
-- [ ] Photos out of table rows and onto disk, with migration of existing base64
+- [x] Photos out of table rows and onto disk, with migration of existing base64 — capture writes files too since 7 Oct; 16-photo pin rescued on the phone; airplane-mode cold start passed
 - [ ] Connectivity indicator
 - [ ] Outbox table and a queue runner with a pending badge
 
 ### Phase 4.1 — Projects
-- [ ] Project colour, archive, rename
-- [ ] Delete with confirm: "move contents to Unsorted" vs "delete everything"
-- [ ] Unsorted default
+- [x] Project colour, archive, rename
+- [x] Delete with confirm: "move contents to Unsorted" vs "delete everything"
+- [x] Unsorted default
 - [ ] Projects as folders, items grouped by type, search within a project
-- [ ] Move items, single and multi-select
+- [x] Move items, single and multi-select
 - [ ] One-toggle show/hide (partly exists)
-- [ ] Export project: GPX, KML, GeoJSON (new), photos as a zip
+- [x] Export project: GPX, KML, GeoJSON (new), photos as a zip
 - [ ] Airplane-mode test
 
 ### Phase 4.2 — Drawing tools
