@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image/image.dart' as img;
 import 'package:latlong2/latlong.dart';
 import 'package:bush_track/core/services/photo_capture_service.dart';
+import 'package:bush_track/core/models/geofence.dart';
 import 'package:bush_track/core/models/waypoint.dart';
 import 'package:bush_track/core/services/heading/heading_provider.dart';
 import 'package:bush_track/features/ai/presentation/identify_result_sheet.dart';
@@ -21,6 +22,11 @@ import 'package:bush_track/features/ar/services/ar_compass_service.dart';
 import 'package:bush_track/features/ar/presentation/ar_pin_sheet.dart';
 import 'package:bush_track/features/ar/services/ar_projection.dart';
 import 'package:bush_track/features/ar/services/ar_targets.dart';
+import 'package:bush_track/features/ar/services/ar_walls.dart';
+import 'package:bush_track/features/ar/presentation/ar_wall_painter.dart';
+import 'package:bush_track/features/geofence/presentation/zone_detail_sheet.dart';
+import 'package:bush_track/features/geofence/providers/geofence_provider.dart';
+import 'package:bush_track/features/geofence/services/zone_selection.dart';
 import 'package:bush_track/features/map/providers/marker_visibility_provider.dart';
 import 'package:bush_track/features/tracking/providers/location_provider.dart';
 import 'package:bush_track/features/tracking/providers/track_target_provider.dart';
@@ -155,6 +161,10 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
   /// drawn in one place but tappable in another reads as a tap being ignored.
   List<ArTarget> _targets = const [];
 
+  /// Zones standing up as walls this frame (4.5), kept for taps like
+  /// [_targets] so what is drawn and what is tappable are the same geometry.
+  ArWalls _walls = ArWalls.empty;
+
   /// Last lens bearing worth having. Null until one is measured.
   ///
   /// The stream sends `waiting` before the first fix and can drop back to
@@ -202,7 +212,13 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
   Future<void> _onArTap(Offset at) async {
     if (_capturedBytes != null) return; // reviewing a photo, not looking live
     final hit = hitTest(_targets, at);
-    if (hit == null) return;
+    if (hit == null) {
+      // No pin there: a wall, if one was tapped. Pins first, because they are
+      // drawn in front of the walls.
+      final zone = wallAt(_walls, at);
+      if (zone != null) await _showWallZone(zone);
+      return;
+    }
 
     HapticFeedback.selectionClick();
     await showArPinSheet(
@@ -211,6 +227,27 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
       onShowOnMap: () => Navigator.of(context)
         ..pop() // the sheet
         ..pop(), // the AR screen, back to the map
+    );
+  }
+
+  /// The same details the map shows for a zone, without the map's actions.
+  Future<void> _showWallZone(Geofence zone) async {
+    HapticFeedback.selectionClick();
+    final stats = ref.read(locationProvider).stats;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0F0F1A),
+      builder: (_) => ZoneDetailSheet(
+        zone: zone,
+        access: accessFor(zone),
+        inside: insideIfKnown(
+            zone,
+            stats.currentLat == null || stats.currentLon == null
+                ? null
+                : LatLng(stats.currentLat!, stats.currentLon!),
+            stats.currentAccuracyM),
+        showActions: false,
+      ),
     );
   }
 
@@ -566,8 +603,25 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
         pitchRad: pitchRad,
         rollRad: rollRad,
       );
+      // Zones as walls, under the same show/hide choice as on the map.
+      final visibility = ref.watch(markerVisibilityProvider);
+      _walls = buildArWalls(
+        zones: ref
+            .watch(geofenceProvider)
+            .geofences
+            .where((z) => visibility.showsZone(id: z.id, fileId: z.fileId)),
+        here: LatLng(currentLat, currentLon),
+        projection: ArProjection(
+          size: screen,
+          headingDeg: compassHeading,
+          pitchRad: pitchRad,
+          rollRad: rollRad,
+        ),
+        accuracyM: locationState.stats.currentAccuracyM,
+      );
     } else {
       _targets = const [];
+      _walls = ArWalls.empty;
     }
 
     return Scaffold(
@@ -631,6 +685,48 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
                           size: 26),
                     ],
                   ),
+                ),
+              ),
+            ),
+
+          // ── Zone walls (4.5), under the pins
+          if (_capturedBytes == null && _walls.panels.isNotEmpty)
+            IgnorePointer(
+              child: CustomPaint(
+                size: MediaQuery.of(context).size,
+                painter: ArWallPainter(_walls),
+              ),
+            ),
+
+          // Standing in a no-go zone: said plainly, at the top, only when the
+          // fix is good enough to know (see buildArWalls).
+          if (_capturedBytes == null && _walls.insideNoGo.isNotEmpty)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 74,
+              left: 16,
+              right: 16,
+              child: IgnorePointer(
+                child: Container(
+                  key: const ValueKey('ar-inside-no-go'),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xEEB71C1C),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(children: [
+                    const Icon(Icons.warning_amber_rounded,
+                        color: Colors.white),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'You are inside a no-go zone: '
+                        '${_walls.insideNoGo.map((z) => '${z.name} (${z.category.label})').join(', ')}',
+                        style: const TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ]),
                 ),
               ),
             ),

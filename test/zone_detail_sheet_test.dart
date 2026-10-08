@@ -26,7 +26,10 @@ void main() {
   );
 
   Future<ZoneSheetAction?> open(WidgetTester tester, ZoneAccess access,
-      {bool? inside, String? project, String tap = ''}) async {
+      {bool? inside,
+      String? project,
+      String tap = '',
+      bool actions = true}) async {
     ZoneSheetAction? chosen;
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
@@ -40,6 +43,7 @@ void main() {
                   access: access,
                   projectName: project,
                   inside: inside,
+                  showActions: actions,
                 ),
               );
             },
@@ -93,6 +97,15 @@ void main() {
   testWidgets('shared to edit: edit, but not delete', (tester) async {
     await open(tester, ZoneAccess.edit);
     expect(find.text('Edit corners'), findsOneWidget);
+    expect(find.byTooltip('Delete zone'), findsNothing);
+  });
+
+  testWidgets('through the camera: the facts, and no buttons', (tester) async {
+    await open(tester, ZoneAccess.owner, actions: false);
+    expect(find.text('Old shaft'), findsOneWidget);
+    expect(find.text('4.0 ha'), findsOneWidget);
+    expect(find.text('Track to'), findsNothing);
+    expect(find.text('Edit corners'), findsNothing);
     expect(find.byTooltip('Delete zone'), findsNothing);
   });
 

@@ -23,12 +23,17 @@ class ZoneDetailSheet extends StatelessWidget {
   /// case nothing is said rather than a guess.
   final bool? inside;
 
+  /// False where the actions make no sense, as through the AR camera: there
+  /// is no map there to edit corners on or track across.
+  final bool showActions;
+
   const ZoneDetailSheet({
     super.key,
     required this.zone,
     required this.access,
     this.projectName,
     this.inside,
+    this.showActions = true,
   });
 
   @override
@@ -94,6 +99,7 @@ class ZoneDetailSheet extends StatelessWidget {
                   key: ValueKey('zone-view-only'),
                   style: TextStyle(color: Colors.white54, fontSize: 12)),
             ],
+            if (showActions) ...[
             const SizedBox(height: 14),
             Row(children: [
               TextButton.icon(
@@ -120,6 +126,7 @@ class ZoneDetailSheet extends StatelessWidget {
                       color: Colors.redAccent),
                 ),
             ]),
+            ],
           ],
         ),
       ),
