@@ -35,6 +35,8 @@ import 'package:bush_track/core/utils/geo_geometry.dart'
     show formatArea, formatDistance;
 import 'package:bush_track/features/geofence/presentation/geofence_screen.dart';
 import 'package:bush_track/features/geofence/presentation/zone_drawing.dart';
+import 'package:bush_track/features/geofence/presentation/zone_detail_sheet.dart';
+import 'package:bush_track/features/geofence/services/zone_selection.dart';
 import 'package:bush_track/features/drawing/models/drawing.dart';
 import 'package:bush_track/features/drawing/presentation/line_drawing.dart';
 import 'package:bush_track/features/drawing/presentation/freehand_drawing.dart';
@@ -183,6 +185,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   /// The zone being drawn, or null when not drawing. Held here because the
   /// corners come from taps on the map.
   ZoneDraft? _zoneDraft;
+
+  /// A boundary's corners while it is drawn or edited, as a closed ring, so
+  /// they can be dragged, added and removed with undo -- the same handles as
+  /// the line tool. The draft's points follow it (see [_ringEdit]). Null for
+  /// a circle.
+  LineDraft? _zoneRing;
 
   /// The line being drawn or edited (Phase 4.2), or null when not drawing.
   LineDraft? _lineDraft;
@@ -977,6 +985,37 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               ),
             ),
 
+          // A boundary's corners, above the map for the same reason.
+          if (_zoneDraft != null &&
+              _zoneDraft!.shape == ZoneShape.polygon &&
+              _zoneRing != null &&
+              _mapInitialized &&
+              !_is3DMode)
+            Positioned.fill(
+              child: LineHandles(
+                vertices: [
+                  for (final p in _zoneRing!.points)
+                    mapOffsetOf(_mapController.camera, p),
+                ],
+                midpoints: [
+                  for (final m in _zoneRing!.midpoints)
+                    mapOffsetOf(_mapController.camera, m),
+                ],
+                onDragTo: (i, global) {
+                  final p = _globalToLatLng(global);
+                  if (p != null) _ringEdit((r) => r.drag(i, p));
+                },
+                onDragEnd: (_) => _ringEdit((r) => r.endDrag()),
+                onRemove: (i) => _ringEdit((r) => r.remove(i)),
+                onInsert: (i) {
+                  final mids = _zoneRing!.midpoints;
+                  if (i >= 1 && i <= mids.length) {
+                    _ringEdit((r) => r.insert(i, mids[i - 1]));
+                  }
+                },
+              ),
+            ),
+
           // Loading indicators
           if (!_mapInitialized || _tilesLoading)
             const Center(child: MapSkeletonLoader()),
@@ -1667,13 +1706,21 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
               bottom: 0,
               child: ZoneDrawPanel(
                 draft: _zoneDraft!,
-                onShapeChanged: (shape) =>
-                    setState(() => _zoneDraft = _zoneDraft!.withShape(shape)),
+                onShapeChanged: (shape) => setState(() {
+                  _zoneDraft = _zoneDraft!.withShape(shape);
+                  _zoneRing = shape == ZoneShape.polygon
+                      ? LineDraft(_zoneDraft!.points, true)
+                      : null;
+                }),
                 onRadiusChanged: (r) => setState(
                     () => _zoneDraft = _zoneDraft!.copyWith(radiusMetres: r)),
-                onUndo: () =>
-                    setState(() => _zoneDraft = _zoneDraft!.undoLastPoint()),
-                onCancel: () => setState(() => _zoneDraft = null),
+                onUndo: () => _zoneRing != null
+                    ? _ringEdit((r) => r.undo())
+                    : setState(() => _zoneDraft = _zoneDraft!.undoLastPoint()),
+                onCancel: () => setState(() {
+                  _zoneDraft = null;
+                  _zoneRing = null;
+                }),
                 onSave: _saveZoneDraft,
               ),
             ),
@@ -2465,7 +2512,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     // near a trail cannot open that trail's edit sheet instead.
     final draft = _zoneDraft;
     if (draft != null) {
-      setState(() => _zoneDraft = draft.withTap(point));
+      if (draft.shape == ZoneShape.polygon) {
+        _zoneRing ??= LineDraft(draft.points, true);
+        _ringEdit((r) => r.add(point));
+      } else {
+        setState(() => _zoneDraft = draft.withTap(point));
+      }
       return;
     }
 
@@ -2505,7 +2557,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     final near = _findNearestTrail(point, trailState.trails);
     if (near != null) {
       _showTrailEditSheet(near);
+      return;
     }
+
+    // Inside a zone, or on its edge: its details (4.3). Last, so a pin or a
+    // trail inside a zone is still what a tap on it opens.
+    final zone = _zoneAtTap(point);
+    if (zone != null) _openZoneSheet(zone);
   }
 
   /// The closest dropped pin to [tap], within a zoom-scaled tolerance, or null
@@ -2641,18 +2699,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     }
 
     if (action.resize) {
-      setState(() {
-        _showMeasurementTool = false;
-        _zoneDraft = ZoneDraft.from(zone);
-      });
-      _mapController.move(zone.centre, _zoomForRadius(zone.radiusMeters));
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(zone.isPolygon
-            ? 'Tap out new corners for ${zone.name}.'
-            : 'Drag the grip on the edge to resize ${zone.name}.'),
-        duration: const Duration(seconds: 3),
-        backgroundColor: AppColors.primaryOrange,
-      ));
+      _editZone(zone);
       return;
     }
 
@@ -3065,6 +3112,136 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     ));
   }
 
+  // ── Zones on the map (4.3) ────────────────────────────────────────────────
+
+  /// Change the boundary's corners and keep the draft in step with them.
+  void _ringEdit(void Function(LineDraft ring) change) {
+    final draft = _zoneDraft;
+    final ring = _zoneRing;
+    if (draft == null || ring == null) return;
+    setState(() {
+      change(ring);
+      _zoneDraft = draft.copyWith(points: ring.points);
+    });
+  }
+
+  /// The zone a tap means, among those the map is showing.
+  Geofence? _zoneAtTap(LatLng tap) {
+    final visibility = ref.read(markerVisibilityProvider);
+    return zoneAt(
+      tap,
+      ref
+          .read(geofenceProvider)
+          .geofences
+          .where((z) => visibility.showsZone(id: z.id, fileId: z.fileId)),
+      _metresForPixels(_fingertipPixels),
+    );
+  }
+
+  Future<void> _openZoneSheet(Geofence zone) async {
+    final stats = ref.read(locationProvider).stats;
+    // "You are inside" only when the fix can tell: with no fix, or a fix
+    // looser than the distance to the edge, the sheet says nothing rather
+    // than guess. A rough ±500 m fix beside a boundary cannot know.
+    final inside = insideIfKnown(
+        zone,
+        stats.currentLat == null || stats.currentLon == null
+            ? null
+            : LatLng(stats.currentLat!, stats.currentLon!),
+        stats.currentAccuracyM);
+    final projectName = zone.fileId == null
+        ? null
+        : ref
+            .read(filesProvider)
+            .files
+            .where((f) => f.id == zone.fileId)
+            .map((f) => f.name)
+            .firstOrNull;
+
+    final action = await showModalBottomSheet<ZoneSheetAction>(
+      context: context,
+      backgroundColor: const Color(0xFF0F0F1A),
+      builder: (_) => ZoneDetailSheet(
+        zone: zone,
+        access: accessFor(zone),
+        projectName: projectName,
+        inside: inside,
+      ),
+    );
+    if (action == null || !mounted) return;
+    switch (action) {
+      case ZoneSheetAction.track:
+        _startTrackingZone(zone);
+      case ZoneSheetAction.edit:
+        _editZone(zone);
+      case ZoneSheetAction.delete:
+        await _confirmDeleteZone(zone);
+    }
+  }
+
+  /// Reopen a zone on the map to change it: corners for a boundary, the grip
+  /// for a circle. Saving updates it in place, keeping everything else.
+  void _editZone(Geofence zone) {
+    if (!accessFor(zone).canEdit) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('This zone was shared with you to view only.'),
+      ));
+      return;
+    }
+    setState(() {
+      _showMeasurementTool = false;
+      _lineDraft = null;
+      _editingDrawing = null;
+      _freehand = null;
+      _zoneDraft = ZoneDraft.from(zone);
+      _zoneRing = zone.isPolygon ? LineDraft(zone.points, true, 3) : null;
+    });
+    if (zone.isPolygon && zone.points.length >= 2) {
+      _mapController.fitCamera(CameraFit.bounds(
+        bounds: LatLngBounds.fromPoints(zone.points),
+        padding: const EdgeInsets.fromLTRB(60, 120, 60, 320),
+      ));
+    } else {
+      _mapController.move(zone.centre, _zoomForRadius(zone.radiusMeters));
+    }
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(zone.isPolygon
+          ? 'Drag a corner to move it, tap + to add one, long-press to remove.'
+          : 'Drag the grip on the edge to resize ${zone.name}.'),
+      duration: const Duration(seconds: 3),
+      backgroundColor: AppColors.primaryOrange,
+    ));
+  }
+
+  Future<void> _confirmDeleteZone(Geofence zone) async {
+    final id = zone.id;
+    if (id == null || !accessFor(zone).canDelete) return;
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        title: Text('Delete "${zone.name}"?',
+            style: const TextStyle(color: Colors.white)),
+        content: const Text('Its alerts stop as well.',
+            style: TextStyle(color: Colors.white60)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child:
+                const Text('Delete', style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+    if (yes == true) {
+      await ref.read(geofenceProvider.notifier).deleteGeofence(id);
+    }
+  }
+
   /// Start drawing a zone. Closes anything that also wants map taps, so a
   /// corner tap cannot be claimed by the measuring tool at the same time.
   void _startZoneDrawing() {
@@ -3073,6 +3250,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
       _lineDraft = null;
       _editingDrawing = null;
       _freehand = null;
+      _zoneRing = null;
       _zoneDraft = const ZoneDraft();
     });
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(

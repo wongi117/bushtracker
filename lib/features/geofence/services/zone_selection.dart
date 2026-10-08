@@ -48,3 +48,15 @@ enum ZoneAccess {
 /// When it does, this must be decided from the database (RLS on the shared
 /// rows), not trusted from the UI: see CLAUDE.md, Supabase.
 ZoneAccess accessFor(Geofence zone) => ZoneAccess.owner;
+
+/// Whether [here] is inside [zone], or null when the fix cannot tell.
+///
+/// Null with no position, with unknown accuracy (reported as 0 or less), or
+/// when the fix is looser than the distance to the edge: a ±500 m fix 100 m
+/// from a boundary could be on either side of it, and saying "inside" would
+/// be a claim the phone cannot back. CLAUDE.md: with no fix, say nothing.
+bool? insideIfKnown(Geofence zone, LatLng? here, double accuracyMetres) {
+  if (here == null || accuracyMetres <= 0) return null;
+  if (accuracyMetres >= zone.distanceToEdgeMetres(here)) return null;
+  return zone.contains(here);
+}
