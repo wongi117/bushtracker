@@ -394,11 +394,11 @@ the phone.
 
 _7 Oct: all six items built and unit-tested (81611ad, dff0882, 1ede920, 4c56eb0); built on today's map by decision, Option B left open. None ticked until each has been used on the phone, including an airplane-mode cold start._
 
-- [ ] Straight line: tap points, live per-segment and total length, per-segment bearing, undo, Done
+- [x] Straight line: tap points, live per-segment and total length, per-segment bearing, undo, Done
 - [ ] Snap to nearby pins and waypoints
-- [ ] Edit afterwards: drag, add, remove vertices
-- [ ] Freehand: finger draw with the map locked, draw/pan toggle, undo
-- [ ] Ramer–Douglas–Peucker simplification with a tolerance in metres, tested for shape fidelity
+- [x] Edit afterwards: drag, add, remove vertices — drag fixed 8 Oct (handles above the map), confirmed on the phone
+- [x] Freehand: finger draw with the map locked, draw/pan toggle, undo
+- [x] Ramer–Douglas–Peucker simplification with a tolerance in metres, tested for shape fidelity
 - [ ] Stored as geographic coordinates, verified across zoom and rotation
 - [ ] Airplane-mode test
 
