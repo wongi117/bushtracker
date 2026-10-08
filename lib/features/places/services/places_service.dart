@@ -2,13 +2,38 @@ import 'dart:math' show atan2, cos, sin, sqrt;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
+import 'package:bush_track/core/config/api_config.dart';
+
+/// The place lookup could not be done -- as opposed to done and finding
+/// nothing.
+///
+/// Both used to come back as an empty list, so with the service down every
+/// search on the phone read "No results": a wrong answer, silently, in an app
+/// for places where the user may be relying on it. The screen now says which.
+class PlacesUnavailable implements Exception {
+  const PlacesUnavailable(this.reason);
+  final String reason;
+  @override
+  String toString() => 'PlacesUnavailable: $reason';
+}
+
 class PlacesService {
-  // Routes through Vercel serverless proxies to avoid CORS on Flutter Web.
-  static const _nominatimProxy = '/api/nominatim';
-  static const _overpassProxy  = '/api/overpass';
+  // Our own serverless proxies, which keep provider keys and usage policy on
+  // the server.
+  static const _nominatimPath = '/api/nominatim';
+  static const _overpassPath = '/api/overpass';
   static const _headers = <String, String>{};
+
+  /// Same-origin on web; the deployed site on the phone. These were relative
+  /// on every platform, and the phone has no origin to be relative to: every
+  /// call threw "No host specified in URI" and was swallowed. vision_service
+  /// already did this; these two were missed.
+  @visibleForTesting
+  static String proxied(String path) =>
+      kIsWeb ? path : '${ApiConfig.proxyBase}$path';
 
   /// Global text search via Nominatim — works for any town, city, landmark.
   static Future<List<Place>> searchPlaces(String query, {LatLng? proximity}) async {
@@ -20,10 +45,13 @@ class PlacesService {
         params['lat'] = proximity.latitude.toString();
         params['lon'] = proximity.longitude.toString();
       }
-      final url = Uri.parse(_nominatimProxy).replace(queryParameters: params);
+      final url = Uri.parse(proxied(_nominatimPath))
+          .replace(queryParameters: params);
       final response = await http.get(url, headers: _headers)
           .timeout(const Duration(seconds: 15));
-      if (response.statusCode != 200) return [];
+      if (response.statusCode != 200) {
+        throw PlacesUnavailable('search answered HTTP ${response.statusCode}');
+      }
 
       final data = jsonDecode(response.body) as List;
       return data.map((item) {
@@ -46,9 +74,11 @@ class PlacesService {
           openingHours: subtitle.isEmpty ? full.split(',').skip(1).take(2).join(', ') : subtitle,
         );
       }).toList();
+    } on PlacesUnavailable {
+      rethrow;
     } catch (e) {
       debugPrint('Nominatim search error: $e');
-      return [];
+      throw PlacesUnavailable('search failed: $e');
     }
   }
 
@@ -78,10 +108,14 @@ class PlacesService {
           ');out body 30;';
 
       final response = await http
-          .post(Uri.parse(_overpassProxy), body: query, headers: _headers)
+          .post(Uri.parse(proxied(_overpassPath)),
+              body: query, headers: _headers)
           .timeout(const Duration(seconds: 25));
 
-      if (response.statusCode != 200) return [];
+      if (response.statusCode != 200) {
+        throw PlacesUnavailable(
+            'nearby lookup answered HTTP ${response.statusCode}');
+      }
 
       final data     = jsonDecode(response.body) as Map<String, dynamic>;
       final elements = (data['elements'] as List? ?? []);
@@ -113,9 +147,11 @@ class PlacesService {
 
       places.sort((a, b) => a.distance.compareTo(b.distance));
       return places;
+    } on PlacesUnavailable {
+      rethrow;
     } catch (e) {
       debugPrint('Overpass error: $e');
-      return [];
+      throw PlacesUnavailable('nearby lookup failed: $e');
     }
   }
 

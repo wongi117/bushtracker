@@ -158,6 +158,13 @@ handset.
 *Recommendation:* fold it into the next pass rather than interrupting 4.0. Say the word if you
 want it sooner.
 
+*Fixed 8 Oct:* Nominatim had the same bug. Both now use `proxyBase` on the phone, and a
+failed lookup says so instead of reading "No results". Found while fixing it: **pinagemaps.com
+was returning 402 DEPLOYMENT_DISABLED** on every route (site, /api/ping, /api/vision), with the
+Vercel project `bush-track` showing `live: false`. Every proxied feature on the phone -- search,
+nearby places, plant and rock identification -- was down. A billing/plan matter for the owner;
+not changed from here.
+
 ## 3. Offline-first matrix
 
 Per the brief, every feature with a plain statement of what works with no signal.
