@@ -228,7 +228,16 @@ class Snapping {
 /// whole vertex drag: undoing a drag one frame at a time would take a hundred
 /// presses to put a vertex back.
 class LineDraft {
-  LineDraft([List<LatLng> initial = const []]) : _history = [List.of(initial)];
+  LineDraft([List<LatLng> initial = const [], this.closed = false, this.minPoints = 0])
+      : _history = [List.of(initial)];
+
+  /// A ring rather than a line: the last point joins back to the first, so
+  /// that closing edge gets a + of its own. Used for zone boundaries.
+  final bool closed;
+
+  /// Removing a point below this many is refused. A boundary being edited
+  /// keeps three, or it stops being an area.
+  final int minPoints;
 
   final List<List<LatLng>> _history;
   bool _dragging = false;
@@ -263,6 +272,7 @@ class LineDraft {
   void remove(int index) {
     final cur = _history.last;
     if (index < 0 || index >= cur.length) return;
+    if (cur.length <= minPoints) return;
     _push([...cur]..removeAt(index));
   }
 
@@ -287,12 +297,17 @@ class LineDraft {
 
   /// Where to offer a new vertex on each segment: its midpoint. Close enough
   /// to the true geodesic midpoint over anything drawn by hand.
+  ///
+  /// For a [closed] ring the last entry is the closing edge, and inserting at
+  /// its index (one past the last point) puts the new point between the last
+  /// and the first -- which is where the closing edge is.
   List<LatLng> get midpoints {
     final p = _history.last;
+    LatLng mid(LatLng a, LatLng b) =>
+        LatLng((a.latitude + b.latitude) / 2, (a.longitude + b.longitude) / 2);
     return [
-      for (var i = 1; i < p.length; i++)
-        LatLng((p[i - 1].latitude + p[i].latitude) / 2,
-            (p[i - 1].longitude + p[i].longitude) / 2),
+      for (var i = 1; i < p.length; i++) mid(p[i - 1], p[i]),
+      if (closed && p.length >= 3) mid(p.last, p.first),
     ];
   }
 }

@@ -199,6 +199,35 @@ class Geofence {
     }
   }
 
+  /// Round the edge, in metres: the boundary walked, or the circumference.
+  double get perimeterMetres => isPolygon
+      ? polygonPerimeterMetres(points)
+      : 2 * math.pi * radiusMeters;
+
+  /// This zone as a boundary with new corners, everything else kept.
+  ///
+  /// Reshaping a boundary used to rebuild it field by field through
+  /// [Geofence.polygon], which left out `fileId` -- so moving a corner took the
+  /// zone out of its project, the same trap as `updateWaypointColor` in
+  /// CLAUDE.md. Going through [copyWith] keeps every field by construction;
+  /// only the shape and what is derived from it (centre, nominal radius)
+  /// change, worked out by [Geofence.polygon] so that stays in one place.
+  Geofence withPolygon(List<LatLng> corners) {
+    final shape = Geofence.polygon(
+      name: name,
+      points: corners,
+      isActive: isActive,
+      createdAt: createdAt,
+    );
+    return copyWith(
+      shape: ZoneShape.polygon,
+      points: corners,
+      latitude: shape.latitude,
+      longitude: shape.longitude,
+      radiusMeters: shape.radiusMeters,
+    );
+  }
+
   Geofence copyWith({
     int? id,
     String? name,

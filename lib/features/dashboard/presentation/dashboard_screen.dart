@@ -3108,15 +3108,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                 shape: ZoneShape.circle,
                 points: const [],
               )
-            : Geofence.polygon(
-                id: was.id,
-                name: was.name,
-                points: draft.points,
-                isActive: was.isActive,
-                createdAt: was.createdAt,
-                category: was.category,
-                notes: was.notes,
-              );
+            // withPolygon, not a field-by-field rebuild: that dropped fileId
+            // and took a reshaped zone out of its project.
+            : was.withPolygon(draft.points);
         await ref.read(geofenceProvider.notifier).updateZone(updated);
         if (!mounted) return;
         setState(() => _zoneDraft = null);
