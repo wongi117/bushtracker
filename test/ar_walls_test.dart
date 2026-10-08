@@ -8,6 +8,7 @@ import 'package:bush_track/core/models/geofence.dart';
 import 'package:bush_track/features/ar/presentation/ar_wall_painter.dart';
 import 'package:bush_track/features/ar/services/ar_projection.dart';
 import 'package:bush_track/features/ar/services/ar_walls.dart';
+import 'package:bush_track/features/ar/services/camera_optics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 
@@ -269,5 +270,146 @@ void main() {
     final recorder = PictureRecorder();
     ArWallPainter(w).paint(Canvas(recorder), const Size(400, 800));
     recorder.endRecording().dispose();
+  });
+
+  group('the look asked for', () {
+    // A phone screen with the camera's real field of view, as the AR screen
+    // now builds it.
+    const phone = Size(411, 891);
+    final real = CameraOptics.fallback.horizontalFovDegFor(phone, 16 / 9);
+    ArProjection level() => ArProjection(
+        size: phone, headingDeg: 0, pitchRad: 0, horizontalFovDeg: real);
+
+    test('from 57 m, a large part of the screen', () {
+      // Centre 107 m north, half-width 50: the near face 57 m away.
+      final w = buildArWalls(
+          zones: [square(ZoneCategory.hazard, away: 107)],
+          here: here,
+          projection: level());
+      final near = w.panels.last;
+      expect(near.distanceM, closeTo(57, 1));
+      expect((near.bottomA.dy - near.topA.dy) / phone.height, greaterThan(0.33));
+    });
+
+    test('the base sits on the ground: just below the horizon at 57 m', () {
+      final p = level();
+      final w = buildArWalls(
+          zones: [square(ZoneCategory.hazard, away: 107)],
+          here: here,
+          projection: p);
+      final base = w.panels.last.bottomA.dy;
+      // Ground 57 m off is atan(1.5/57) below level: below the horizon, by
+      // the same amount the projection puts any ground point there.
+      expect(base, greaterThan(p.horizonY));
+      expect(base, closeTo(p.screenY(57), 2));
+    });
+
+    test('stripes on a no-go wall, none on an ordinary one', () {
+      final noGo = buildArWalls(
+          zones: [square(ZoneCategory.hazard, away: 107)],
+          here: here,
+          projection: level());
+      expect(noGo.panels.any((p) => p.stripes.isNotEmpty), isTrue);
+      final low = buildArWalls(
+          zones: [square(ZoneCategory.camp, away: 30, half: 20)],
+          here: here,
+          projection: level());
+      expect(low.panels.every((p) => p.stripes.isEmpty && p.glow == null),
+          isTrue);
+    });
+
+    test('every stripe lies on its own piece of wall', () {
+      final w = buildArWalls(
+          zones: [square(ZoneCategory.hazard, away: 107)],
+          here: here,
+          projection: level());
+      for (final p in w.panels) {
+        final box = p.path.getBounds().inflate(1);
+        for (final s in p.stripes) {
+          for (final o in s) {
+            expect(box.contains(o), isTrue);
+          }
+        }
+      }
+    });
+
+    test('stripes keep their real size: bigger on screen close up', () {
+      double stripeWidth(double away) {
+        final w = buildArWalls(
+            zones: [square(ZoneCategory.hazard, away: away)],
+            here: here,
+            projection: level());
+        final p = w.panels.last.stripes.isNotEmpty
+            ? w.panels.last
+            : w.panels.lastWhere((p) => p.stripes.isNotEmpty);
+        final xs = p.stripes.first.map((o) => o.dx);
+        return xs.reduce(math.max) - xs.reduce(math.min);
+      }
+
+      expect(stripeWidth(80), greaterThan(stripeWidth(300)));
+    });
+
+    test('a red tint on the ground in front of the wall', () {
+      final w = buildArWalls(
+          zones: [square(ZoneCategory.hazard, away: 107)],
+          here: here,
+          projection: level());
+      final g = w.panels.last.glow!;
+      // Base first, then the near edge: nearer ground is lower on screen.
+      expect(g[3].dy, greaterThan(g[0].dy));
+      expect(g[2].dy, greaterThan(g[1].dy));
+    });
+
+    test('the label is on the wall face, low down', () {
+      final w = buildArWalls(
+          zones: [square(ZoneCategory.hazard, away: 107)],
+          here: here,
+          projection: level());
+      final l = w.labels.single;
+      final p = w.panels.lastWhere((p) => p.distanceM <= w.panels.last.distanceM + 1);
+      expect(l.at.dy, lessThan(p.bottomA.dy));
+      expect(l.at.dy, greaterThan((p.bottomA.dy + p.topA.dy) / 2),
+          reason: 'in the lower half of the face');
+    });
+
+    test('readable text at any distance', () {
+      for (final d in [5.0, 57.0, 300.0, 1400.0]) {
+        final l = WallLabel(square(ZoneCategory.hazard), WallStyle.noGo,
+            Offset.zero, d);
+        expect(l.fontSize, inInclusiveRange(13, 22), reason: '$d m');
+      }
+      expect(
+          WallLabel(square(ZoneCategory.hazard), WallStyle.noGo, Offset.zero, 20)
+              .fontSize,
+          greaterThan(WallLabel(square(ZoneCategory.hazard), WallStyle.noGo,
+                  Offset.zero, 800)
+              .fontSize));
+    });
+
+    test('within 50 m it counts as near', () {
+      final near = buildArWalls(
+          zones: [square(ZoneCategory.hazard, away: 90)],
+          here: here,
+          projection: level());
+      expect(near.labels.single.isNear, isTrue);
+      expect(near.panels.last.isNear, isTrue);
+      final far = buildArWalls(
+          zones: [square(ZoneCategory.hazard, away: 300)],
+          here: here,
+          projection: level());
+      expect(far.labels.single.isNear, isFalse);
+    });
+
+    test('the painter draws stripes, glow and a pulse without throwing', () {
+      final w = buildArWalls(
+          zones: [square(ZoneCategory.hazard, away: 90)],
+          here: here,
+          projection: level());
+      for (final pulse in [0.0, 0.25, 0.5, 0.99]) {
+        final recorder = PictureRecorder();
+        ArWallPainter(w, pulse: pulse).paint(Canvas(recorder), phone);
+        recorder.endRecording().dispose();
+      }
+    });
   });
 }

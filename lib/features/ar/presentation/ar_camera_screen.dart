@@ -23,6 +23,7 @@ import 'package:bush_track/features/ar/presentation/ar_pin_sheet.dart';
 import 'package:bush_track/features/ar/services/ar_projection.dart';
 import 'package:bush_track/features/ar/services/ar_targets.dart';
 import 'package:bush_track/features/ar/services/ar_walls.dart';
+import 'package:bush_track/features/ar/services/camera_optics.dart';
 import 'package:bush_track/features/ar/presentation/ar_wall_painter.dart';
 import 'package:bush_track/features/geofence/presentation/zone_detail_sheet.dart';
 import 'package:bush_track/features/geofence/providers/geofence_provider.dart';
@@ -96,6 +97,9 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
     // screen there — but the heading now comes from the shared provider, so
     // there is nothing sensor-related left to set up here.
     if (kIsWeb) return;
+    CameraOptics.load().then((o) {
+      if (mounted) setState(() => _optics = o);
+    });
     _arService = ref.read(arCompassServiceProvider);
     _initCamera();
   }
@@ -165,6 +169,15 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
   /// [_targets] so what is drawn and what is tappable are the same geometry.
   ArWalls _walls = ArWalls.empty;
 
+  /// The camera's real field of view, read from the phone (see
+  /// CameraOptics). Until it arrives, a typical camera -- far closer than the
+  /// 65 degree guess this used to make.
+  CameraOptics _optics = CameraOptics.fallback;
+
+  /// No-go zones the phone was standing in last frame, so entering one can
+  /// buzz once rather than on every frame.
+  Set<Object> _insideNoGo = const {};
+
   /// Last lens bearing worth having. Null until one is measured.
   ///
   /// The stream sends `waiting` before the first fix and can drop back to
@@ -178,6 +191,15 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
   void _retake() {
     setState(() => _capturedBytes = null);
   }
+
+  /// The horizontal field of view for a screen of [size], from the camera's
+  /// own optics and the preview's shape, for every projection on this screen:
+  /// pins, walls, the drop-a-pin hold and the painter all have to agree.
+  double _fovFor(Size size) => _optics.horizontalFovDegFor(
+      size,
+      _controller?.value.isInitialized == true
+          ? _controller!.value.aspectRatio
+          : 16 / 9);
 
   /// Work out where every pin lands this frame.
   ///
@@ -199,6 +221,7 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
         headingDeg: headingDeg,
         pitchRad: pitchRad,
         rollRad: rollRad,
+        horizontalFovDeg: _fovFor(size),
       ),
       size: size,
       beamHeightM: _ARCameraPainter.beamHeightM,
@@ -228,6 +251,21 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
         ..pop() // the sheet
         ..pop(), // the AR screen, back to the map
     );
+  }
+
+  /// Buzz once on walking into a no-go zone, not on every frame inside it.
+  ///
+  /// After the frame, not during build: a side effect in build would fire
+  /// again on every rebuild.
+  void _noticeNoGoEntry() {
+    final now = {for (final z in _walls.insideNoGo) z.id ?? z.name};
+    final entered = now.difference(_insideNoGo).isNotEmpty;
+    _insideNoGo = now;
+    if (entered) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        HapticFeedback.vibrate();
+      });
+    }
   }
 
   /// The same details the map shows for a zone, without the map's actions.
@@ -295,6 +333,7 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
       headingDeg: _holdHeading,
       pitchRad: _holdPitch,
       rollRad: _holdRoll,
+      horizontalFovDeg: _fovFor(size),
     );
 
     final ground = projection.groundAt(at);
@@ -616,9 +655,11 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
           headingDeg: compassHeading,
           pitchRad: pitchRad,
           rollRad: rollRad,
+          horizontalFovDeg: _fovFor(screen),
         ),
         accuracyM: locationState.stats.currentAccuracyM,
       );
+      _noticeNoGoEntry();
     } else {
       _targets = const [];
       _walls = ArWalls.empty;
@@ -633,7 +674,19 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
           if (_capturedBytes != null)
             Image.memory(_capturedBytes!, fit: BoxFit.cover)
           else if (_cameraReady && _controller != null)
-            CameraPreview(_controller!)
+            // Covering the screen: scaled evenly and cropped, never stretched.
+            // Stretched, a degree was worth more pixels one way than the
+            // other, and nothing drawn over it could line up with the scene.
+            ClipRect(
+              child: FittedBox(
+                fit: BoxFit.cover,
+                child: SizedBox(
+                  width: 1,
+                  height: _controller!.value.aspectRatio,
+                  child: CameraPreview(_controller!),
+                ),
+              ),
+            )
           else
             const Center(child: CircularProgressIndicator(color: Color(0xFF7B2FFF))),
 
@@ -694,12 +747,28 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
             IgnorePointer(
               child: CustomPaint(
                 size: MediaQuery.of(context).size,
-                painter: ArWallPainter(_walls),
+                painter: ArWallPainter(_walls, pulse: _beam.value),
               ),
             ),
 
-          // Standing in a no-go zone: said plainly, at the top, only when the
-          // fix is good enough to know (see buildArWalls).
+          // Standing in a no-go zone: red at every edge of the view, a banner,
+          // and one buzz on the way in -- only when the fix is good enough to
+          // know (see buildArWalls).
+          if (_capturedBytes == null && _walls.insideNoGo.isNotEmpty)
+            const Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  key: ValueKey('ar-no-go-vignette'),
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      radius: 0.95,
+                      colors: [Color(0x00B71C1C), Color(0xA6B71C1C)],
+                      stops: [0.55, 1.0],
+                    ),
+                  ),
+                ),
+              ),
+            ),
           if (_capturedBytes == null && _walls.insideNoGo.isNotEmpty)
             Positioned(
               top: MediaQuery.of(context).padding.top + 74,
@@ -720,7 +789,7 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        'You are inside a no-go zone: '
+                        'You are INSIDE a No-Go zone: '
                         '${_walls.insideNoGo.map((z) => '${z.name} (${z.category.label})').join(', ')}',
                         style: const TextStyle(
                             color: Colors.white, fontWeight: FontWeight.w700),
@@ -761,6 +830,7 @@ class _ARCameraScreenState extends ConsumerState<ARCameraScreen>
                   pitchRad: pitchRad,
                   rollRad: rollRad,
                   debugGeometry: kDebugAr,
+                  horizontalFovDeg: _fovFor(MediaQuery.of(context).size),
                 ),
               ),
             ),
@@ -1146,7 +1216,11 @@ class _ARCameraPainter extends CustomPainter {
     this.pitchRad = 0,
     this.rollRad = 0,
     this.debugGeometry = false,
+    this.horizontalFovDeg = 65,
   });
+
+  /// From the screen, so the pins agree with the walls and the taps.
+  final double horizontalFovDeg;
 
   /// How tall a beam stands in the world, in metres.
   ///
@@ -1167,6 +1241,7 @@ class _ARCameraPainter extends CustomPainter {
       headingDeg: compassHeading,
       pitchRad: pitchRad,
       rollRad: rollRad,
+      horizontalFovDeg: horizontalFovDeg,
     );
 
     // Roll used to be handled by spinning the whole canvas, which turned the
