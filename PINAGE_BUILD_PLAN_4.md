@@ -377,8 +377,8 @@ the phone.
       exceptions, and with no network at the time so also a cold start offline
 - [x] UUIDs, `updated_at`, `deleted_at` on all syncable tables, backfilled
 - [x] Photos out of table rows and onto disk, with migration of existing base64 — capture writes files too since 7 Oct; 16-photo pin rescued on the phone; airplane-mode cold start passed
-- [ ] Connectivity indicator
-- [ ] Outbox table and a queue runner with a pending badge
+- [x] Connectivity indicator (3e4890c)
+- [x] Outbox table and a queue runner with a pending badge (cf07960)
 
 ### Phase 4.1 — Projects
 - [x] Project colour, archive, rename
@@ -403,9 +403,9 @@ _7 Oct: all six items built and unit-tested (81611ad, dff0882, 1ede920, 4c56eb0)
 - [ ] Airplane-mode test
 
 ### Phase 4.3 — Interactive boundaries on the map
-- [ ] Tap a boundary for the detail sheet
-- [ ] Vertex editing
-- [ ] Permission gating stubbed until 4.4, read-only path proven
+- [x] Tap a boundary for the detail sheet
+- [x] Vertex editing
+- [x] Permission gating stubbed until 4.4, read-only path proven (accessFor; view-only tested)
 - [ ] Airplane-mode test
 
 ### Phase 4.4 — Accounts, profiles, connections, sharing
@@ -425,11 +425,11 @@ _7 Oct: all six items built and unit-tested (81611ad, dff0882, 1ede920, 4c56eb0)
 - [ ] Airplane-mode test including cold start
 
 ### Phase 4.5 — Boundaries in AR
-- [ ] Render boundary edges along the ground in the boundary's colour
-- [ ] Name and distance to nearest edge
-- [ ] Inside/outside indicator
-- [ ] Tap for the same detail sheet
-- [ ] Cull beyond ~1.5 km and segment-clip to the view for frame rate
+- [x] Render boundary edges along the ground in the boundary's colour — no-go zones as 30 m striped walls, others knee-high within 20 m (asked for 8 Oct)
+- [x] Name and distance to nearest edge
+- [x] Inside/outside indicator — vignette, banner, one buzz; only when the fix can tell
+- [x] Tap for the same detail sheet
+- [x] Cull beyond ~1.5 km and segment-clip to the view for frame rate
 - [ ] Heritage hidden without permission, in AR as well as on the map
 - [ ] Airplane-mode test
 
